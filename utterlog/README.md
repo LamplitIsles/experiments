@@ -39,6 +39,8 @@ The picker receives named sessions whose normalized absolute `session_meta.paylo
 
 Names come from `session_index.jsonl`, joined by `session_meta.payload.id` (which currently agrees with `session_id`). The latest valid name entry is used. Unnamed sessions are omitted and reported; utterlog never invents a name from a prompt.
 
+Discovery filters by directory before validating candidate logs, so unrelated historical formats do not produce warnings. Headers are read with bounded concurrency; sorting reads backwards from each candidate log’s tail instead of loading its full conversation. The full log is read only after selection.
+
 Rows are ordered by the timestamp on the last complete record in each session log, newest first. That order is passed to `fzf` with sorting disabled. fzf searches the name field only and shows the activity time and a unique short session ID, so duplicate names remain distinguishable. Ambient `FZF_DEFAULT_OPTS`, `FZF_DEFAULT_OPTS_FILE`, and `FZF_DEFAULT_COMMAND` are cleared for this invocation.
 
 Press `Esc` or `Ctrl-C` in fzf to cancel without opening an editor; an empty query reports that no session matched. The command refuses noninteractive stdin/stdout rather than waiting indefinitely.

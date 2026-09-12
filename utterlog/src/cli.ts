@@ -292,23 +292,35 @@ function trailingLineIsUnfinished(lines: string[], index: number, hasTrailingNew
   return index === lines.length - 1 && !hasTrailingNewline;
 }
 
-function logActivity(text: string, meta: SessionMeta): number {
-  let activity = meta.timestampMs;
-  const lines = text.split("\n");
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    if (line.length === 0) continue;
-    let value: unknown;
-    try {
-      value = parseJsonLine(line);
-    } catch {
-      continue;
+async function logActivity(path: string, meta: SessionMeta): Promise<number> {
+  const file = await open(path, "r");
+  try {
+    const { size } = await file.stat();
+    let length = Math.min(size, 64 * 1024);
+    while (length > 0) {
+      const buffer = Buffer.allocUnsafe(length);
+      const start = size - length;
+      const { bytesRead } = await file.read(buffer, 0, length, start);
+      const text = buffer.subarray(0, bytesRead).toString("utf8");
+      // The first fragment may start inside a JSON record or UTF-8 character.
+      const lines = (start === 0 ? text : text.slice(text.indexOf("\n") + 1)).split("\n");
+      if (start === 0 || text.includes("\n")) {
+        for (let index = lines.length - 1; index >= 0; index -= 1) {
+          try {
+            const value = parseJsonLine(lines[index]);
+            if (isObject(value) && validTimestamp(value.timestamp)) return Date.parse(value.timestamp);
+          } catch {
+            // A running writer can leave an incomplete last record.
+          }
+        }
+      }
+      if (start === 0) break;
+      length = Math.min(size, length * 2);
     }
-    if (isObject(value) && validTimestamp(value.timestamp)) {
-      activity = Date.parse(value.timestamp);
-    }
+    return meta.timestampMs;
+  } finally {
+    await file.close();
   }
-  return activity;
 }
 
 async function discoverSessions(cwd: string, environment: Environment): Promise<DiscoveryResult> {
@@ -320,38 +332,40 @@ async function discoverSessions(cwd: string, environment: Environment): Promise<
   const unnamedIds = new Set<string>();
   const candidatesById = new Map<string, NamedSession>();
 
-  for (const path of files) {
+  async function inspectSession(path: string): Promise<void> {
     let meta: SessionMeta;
     try {
       const line = await firstLine(path);
       if (line.length === 0) {
         warnings.push(`ignored empty session log ${path}`);
-        continue;
+        return;
       }
       const value = parseJsonLine(line);
-      if (isSpawnedSessionMeta(value)) continue;
+      // Scope first: unrelated history is not an input to this invocation.
+      if (isObject(value) && value.type === "session_meta" && isObject(value.payload)
+        && nonEmptyString(value.payload.cwd) && normalizedCwd(value.payload.cwd) !== cwd) return;
+      if (isSpawnedSessionMeta(value)) return;
       meta = parseSessionMeta(value, path);
     } catch (error) {
       warnings.push(`ignored session log ${path}: ${errorMessage(error)}`);
-      continue;
+      return;
     }
-    if (!TOP_LEVEL_SOURCES.has(meta.source) || meta.threadSource !== "user") continue;
-    if (meta.cwd !== cwd) continue;
+    if (!TOP_LEVEL_SOURCES.has(meta.source) || meta.threadSource !== "user") return;
+    if (meta.cwd !== cwd) return;
 
     const name = names.get(meta.id);
     if (!name || name.name.trim().length === 0) {
       unnamedIds.add(meta.id);
-      continue;
+      return;
     }
 
-    let text: string;
+    let activityMs: number;
     try {
-      text = await readFile(path, "utf8");
+      activityMs = await logActivity(path, meta);
     } catch (error) {
       warnings.push(`ignored unreadable session log ${path}: ${errorMessage(error)}`);
-      continue;
+      return;
     }
-    const activityMs = logActivity(text, meta);
     const candidate: NamedSession = {
       id: meta.id,
       name: name.name,
@@ -363,6 +377,11 @@ async function discoverSessions(cwd: string, environment: Environment): Promise<
     if (!previous || candidate.activityMs > previous.activityMs || (candidate.activityMs === previous.activityMs && candidate.path > previous.path)) {
       candidatesById.set(candidate.id, candidate);
     }
+  }
+
+  // Bound open files while overlapping header reads across the local history.
+  for (let offset = 0; offset < files.length; offset += 16) {
+    await Promise.all(files.slice(offset, offset + 16).map(inspectSession));
   }
 
   const candidates = [...candidatesById.values()].sort(

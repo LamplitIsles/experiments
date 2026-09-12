@@ -339,6 +339,11 @@ describe("utterlog CLI", () => {
         createdAt: "not-a-source-time",
         activityAt: "2026-09-12T18:00:00.000Z",
       });
+      // Historical logs outside the requested directory are not candidates.
+      const unrelated = join(fixture.sessions, "unrelated-old.jsonl");
+      await writeFile(unrelated, JSON.stringify({
+        type: "session_meta", payload: { id: "old-session", cwd: fixture.root, source: "cli" },
+      }) + "\n");
       await writeIndex(fixture);
       await installFzf(fixture);
       const editorPath = await installEditor(fixture);
@@ -352,6 +357,7 @@ describe("utterlog CLI", () => {
       expect(result.stdout).toContain("1 unnamed");
       expect(result.stdout).not.toContain("Parent session");
       expect(result.stdout).not.toContain("Subagent session");
+      expect(result.stderr).not.toContain("unrelated-old.jsonl");
       expect(result.stderr).not.toContain(ids.subagent);
       expect(result.stderr).toContain(ids.malformed);
       expect(await readFile(oldestPath)).toEqual(before);
@@ -371,6 +377,32 @@ describe("utterlog CLI", () => {
       expect(args).toContain("--delimiter=\t");
       expect((await readFile(join(fixture.root, "fzf-env"), "utf8"))).toBe("\n\n\n");
       expect(await fileIfExists(join(fixture.root, "editor-capture.md"))).toContain("session 33333333");
+    });
+  });
+
+  test("sorts by a complete tail record across read blocks and ignores a partial append", async () => {
+    await withFixture(async (fixture) => {
+      await writeSession(fixture, {
+        id: ids.newest, cwd: fixture.cwd, name: "Newest", records: [
+          userText("hello", "2026-09-12T10:00:00Z"),
+          { type: "response_item", timestamp: "2026-09-12T15:00:00Z",
+            payload: { type: "custom_tool_call_output", output: "x".repeat(96 * 1024) } },
+        ],
+        trailing: '{"timestamp":"2026-09-12T23:00:00Z","unfinished":"' + "x".repeat(96 * 1024),
+      });
+      await writeSession(fixture, {
+        id: ids.oldest, cwd: fixture.cwd, name: "Older", activityAt: "2026-09-12T14:00:00Z",
+        indexUpdatedAt: "2026-09-12T23:59:00Z",
+      });
+      await writeIndex(fixture);
+      await installFzf(fixture);
+      const editor = await installEditor(fixture);
+      const result = await runTool(fixture, environment(fixture, editor, { UTTERLOG_FZF_STATUS: "130" }));
+      expect(result.code).toBe(0);
+      expect(result.stderr).toBe("");
+      const rows = (await readFile(join(fixture.root, "fzf-input"), "utf8")).split("\n");
+      expect(rows[0]).toStartWith("Newest\t2026-09-12 15:00:00Z");
+      expect(rows[1]).toStartWith("Older\t2026-09-12 14:00:00Z");
     });
   });
 
