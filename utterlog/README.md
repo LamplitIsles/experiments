@@ -2,36 +2,62 @@
 
 utterlog is a small Bun/TypeScript CLI for rereading named local Codex sessions. Run it in a project directory, choose a session in the built-in list, and read the selected conversation in a native OpenTUI Core terminal reader. The reader is read-only and follows the selected log while it changes.
 
-## Requirements and setup
+## Install from source
 
-- Bun 1.3 or newer
-- A terminal with native OpenTUI support
+You need [Bun](https://bun.sh/docs/installation) 1.3 or newer, Git, a terminal supported by OpenTUI, and local Codex session logs. This private package is installed from a checkout and is not published to npm. No Node.js installation or build step is needed.
 
-Install the package and its native OpenTUI dependency once:
-
-```sh
-cd /path/to/experiments/utterlog
-bun install
-```
-
-Run it from the directory whose sessions you want to read. The invocation keeps that caller directory for exact session matching:
+Clone the repository and install the command:
 
 ```sh
-cd /path/to/project
-bun /path/to/experiments/utterlog/src/cli.ts
-```
-
-To install the command globally from this private package:
-
-```sh
-bun add --global /absolute/path/to/experiments/utterlog
+git clone http://forgejo.localhost:17480/LamplitIsles/experiments.git
+cd experiments/utterlog
+bun install --frozen-lockfile
+bun add --global "$PWD"
 export PATH="$(bun pm bin -g):$PATH"
+utterlog --help
+```
+
+The clone URL above is this repository's local Forgejo address. If you are installing on another machine, use the clone URL reachable from that machine. If you already have a checkout, start at `cd experiments/utterlog` using its actual location.
+
+The PATH export applies to the current shell. For Bash or Zsh, add the same line to `~/.bashrc` or `~/.zshrc` so new terminals can find `utterlog` (Bun must already be on PATH):
+
+```sh
+export PATH="$(bun pm bin -g):$PATH"
+```
+
+Now change to the directory whose Codex sessions you want to read:
+
+```sh
+cd /path/to/your/project
 utterlog
 ```
 
-The `export` applies only to the current shell. On this host, `~/.local/bin` already exposes Bun's global bin directory, so shells with that directory on `PATH` can omit it.
+The current directory is matched exactly. Select a session with `j/k` or the arrow keys, then press `Enter` to read it. `b` or `Esc` returns to the list; `q` exits.
 
-`utterlog --help` prints the short usage summary. `EDITOR` is not read or required; there is no export, destination, or compatibility mode.
+The global command links to the source checkout and runs with Bun. Keep that checkout and its dependencies in place; moving or deleting them breaks the command. After moving the checkout, register it again with `bun add --global "$PWD"` from its `utterlog` directory.
+
+### Run without global installation
+
+After cloning and running `bun install --frozen-lockfile` in the package directory, invoke the source entry point from the directory you want to browse:
+
+```sh
+cd /path/to/your/project
+bun /absolute/path/to/experiments/utterlog/src/cli.ts
+```
+
+### Update a source installation
+
+From the same checkout, pull the latest source and refresh its dependencies:
+
+```sh
+cd /absolute/path/to/experiments
+git pull --ff-only
+cd utterlog
+bun install --frozen-lockfile
+utterlog --help
+```
+
+Restart `utterlog` to use the updated source. Reinstalling the global command is unnecessary while the checkout stays at the same path.
 
 ## Selection and scope
 
@@ -84,9 +110,9 @@ Missing storage or names, an unsupported/corrupt selected log, an empty transcri
 From this directory:
 
 ```sh
-bun install
-TZ=Asia/Taipei bun run typecheck
-TZ=Asia/Taipei bun test
+bun install --frozen-lockfile
+bun run typecheck
+bun run test
 ```
 
 The tests use isolated fake Codex homes, test-owned temporary logs, native OpenTUI in-memory frames, and a real terminal fixture. They do not read or modify real Codex state, credentials, installed executables, or services. Keep `.scratch/` planning material out of Git.
