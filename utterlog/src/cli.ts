@@ -1,8 +1,12 @@
 #!/usr/bin/env bun
 
-import { chmod, mkdtemp, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { open, readdir, readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { createConversationReader, createTerminalRenderer, type RendererFactory } from "./reader";
+
+import { pickSession, type PickerState } from "./picker";
+import type { CliRenderer } from "@opentui/core";
 
 type Environment = Record<string, string | undefined>;
 
@@ -17,7 +21,7 @@ export type RunOptions = {
   interactive?: boolean;
   stdout?: Output;
   stderr?: Output;
-  tempRoot?: string;
+  rendererFactory?: RendererFactory;
 };
 
 type JsonObject = Record<string, unknown>;
@@ -30,7 +34,7 @@ type SessionMeta = {
   timestampMs: number;
 };
 
-type NamedSession = {
+export type NamedSession = {
   id: string;
   name: string;
   cwd: string;
@@ -44,14 +48,14 @@ type DiscoveryResult = {
   warnings: string[];
 };
 
-type TranscriptMessage = {
+export type TranscriptMessage = {
   role: "user" | "assistant";
   phase?: string;
   timestampLabel: string;
   body: string;
 };
 
-type ParsedTranscript = {
+export type ParsedTranscript = {
   messages: TranscriptMessage[];
   errors: string[];
   warnings: string[];
@@ -59,7 +63,6 @@ type ParsedTranscript = {
 
 class CliError extends Error {}
 
-const FZF_COMMAND = "fzf";
 const TOP_LEVEL_SOURCES = new Set(["cli", "exec"]);
 const USER_FACING_ASSISTANT_PHASES = new Set(["commentary", "final_answer"]);
 const NON_USER_FACING_ASSISTANT_PHASES = new Set(["analysis", "reasoning"]);
@@ -103,12 +106,6 @@ function normalizedCwd(value: string): string {
   return process.platform === "win32" ? result.toLowerCase() : result;
 }
 
-function concreteEnvironment(environment: Environment): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(environment).filter((entry): entry is [string, string] => entry[1] !== undefined),
-  );
-}
-
 function print(output: Output, message: string): void {
   output.write(message);
 }
@@ -117,15 +114,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function formatTimestamp(timestampMs: number): string {
-  return new Date(timestampMs).toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "Z");
-}
-
-function localTimeZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || "local time";
-}
-
-function messageTimestamp(value: unknown): string {
+export function messageTimestamp(value: unknown): string {
   if (!validTimestamp(value)) return "unknown time";
   const parts = new Intl.DateTimeFormat("en-US", {
     day: "2-digit",
@@ -137,18 +126,6 @@ function messageTimestamp(value: unknown): string {
   }).formatToParts(new Date(value));
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}`;
-}
-
-function shortIdentity(id: string, length: number): string {
-  return id.slice(0, length);
-}
-
-function pickerName(name: string): string {
-  return name.replace(/[\t\r\n]/g, " ");
-}
-
-function metadataValue(value: string): string {
-  return value.replace(/[\r\n]/g, " ").replaceAll("`", "\\`");
 }
 
 function parseJsonLine(line: string): unknown {
@@ -323,7 +300,7 @@ async function logActivity(path: string, meta: SessionMeta): Promise<number> {
   }
 }
 
-async function discoverSessions(cwd: string, environment: Environment): Promise<DiscoveryResult> {
+export async function discoverSessions(cwd: string, environment: Environment): Promise<DiscoveryResult> {
   const configuredCodexHome = environment.CODEX_HOME?.trim();
   const codexHome = normalizedCwd(configuredCodexHome || join(homedir(), ".codex"));
   const sessionsRoot = join(codexHome, "sessions");
@@ -388,121 +365,6 @@ async function discoverSessions(cwd: string, environment: Environment): Promise<
     (left, right) => right.activityMs - left.activityMs || left.id.localeCompare(right.id),
   );
   return { candidates, unnamedCount: unnamedIds.size, warnings };
-}
-
-function identityTokenLength(candidates: NamedSession[]): number {
-  const minimum = Math.min(8, ...candidates.map((candidate) => candidate.id.length));
-  const maximum = Math.max(...candidates.map((candidate) => candidate.id.length));
-  for (let length = minimum; length <= maximum; length += 1) {
-    const tokens = candidates.map((candidate) => shortIdentity(candidate.id, length));
-    if (new Set(tokens).size === tokens.length) return length;
-  }
-  throw new CliError("session identities are not unique");
-}
-
-function pickerRows(candidates: NamedSession[]): Map<string, NamedSession> {
-  const length = identityTokenLength(candidates);
-  const rows = new Map<string, NamedSession>();
-  for (const candidate of candidates) {
-    rows.set(shortIdentity(candidate.id, length), candidate);
-  }
-  return rows;
-}
-
-async function pickSession(candidates: NamedSession[], cwd: string, environment: Environment): Promise<NamedSession | null | undefined> {
-  const rowsByToken = pickerRows(candidates);
-  const rows = [...rowsByToken.entries()].map(([token, candidate]) => {
-    return `${pickerName(candidate.name)}\t${formatTimestamp(candidate.activityMs)}\t${token}`;
-  });
-  const pickerEnvironment = concreteEnvironment({
-    ...environment,
-    FZF_DEFAULT_COMMAND: "",
-    FZF_DEFAULT_OPTS: "",
-    FZF_DEFAULT_OPTS_FILE: "",
-  });
-  let processHandle: Bun.PipedSubprocess;
-  try {
-    processHandle = Bun.spawn({
-      cmd: [FZF_COMMAND, "--no-sort", "--delimiter=\t", "--nth=1", "--accept-nth=3"],
-      cwd,
-      env: pickerEnvironment,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    processHandle.stdin.write(`${rows.join("\n")}\n`);
-    processHandle.stdin.end();
-  } catch (error) {
-    throw new CliError(`cannot start fzf: ${errorMessage(error)}`);
-  }
-
-  const stdoutPromise = new Response(processHandle.stdout).text();
-  const stderrPromise = new Response(processHandle.stderr).text();
-  const [status, output, errorOutput] = await Promise.all([
-    processHandle.exited,
-    stdoutPromise,
-    stderrPromise,
-  ]);
-  if (status === 1) return null;
-  if (status === 130) return undefined;
-  if (status !== 0) {
-    const detail = errorOutput.trim();
-    throw new CliError(`fzf failed with status ${status}${detail ? `: ${detail}` : ""}`);
-  }
-
-  const selectedLines = output.split(/\r?\n/).filter((line) => line.length > 0);
-  if (selectedLines.length !== 1) {
-    throw new CliError("fzf returned no session selection");
-  }
-  const token = selectedLines[0].trim();
-  const selected = rowsByToken.get(token);
-  if (!selected) throw new CliError("fzf returned an unknown session identity");
-  return selected;
-}
-
-export function parseEditorCommand(value: string): string[] {
-  const args: string[] = [];
-  let current = "";
-  let quote: "'" | '"' | undefined;
-  let escaped = false;
-  let hasToken = false;
-
-  for (const character of value) {
-    if (escaped) {
-      current += character;
-      escaped = false;
-      hasToken = true;
-      continue;
-    }
-    if (character === "\\" && quote !== "'") {
-      escaped = true;
-      hasToken = true;
-      continue;
-    }
-    if (quote) {
-      if (character === quote) quote = undefined;
-      else current += character;
-      continue;
-    }
-    if (character === "'" || character === '"') {
-      quote = character;
-      hasToken = true;
-    } else if (/\s/.test(character)) {
-      if (hasToken) {
-        args.push(current);
-        current = "";
-        hasToken = false;
-      }
-    } else {
-      current += character;
-      hasToken = true;
-    }
-  }
-  if (escaped) throw new CliError("EDITOR ends with an incomplete escape");
-  if (quote) throw new CliError("EDITOR contains an unfinished quote");
-  if (hasToken) args.push(current);
-  if (args.length === 0 || args[0].length === 0) throw new CliError("EDITOR does not contain an executable");
-  return args;
 }
 
 function lineParts(text: string): { lines: string[]; hasTrailingNewline: boolean } {
@@ -595,7 +457,7 @@ function assistantMessage(
   return { role: "assistant", phase: payload.phase, timestampLabel, body: parts.join("") };
 }
 
-function parseTranscript(text: string, expected: NamedSession): ParsedTranscript {
+export function parseTranscript(text: string, expected: NamedSession): ParsedTranscript {
   const messages: TranscriptMessage[] = [];
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -665,44 +527,15 @@ function parseTranscript(text: string, expected: NamedSession): ParsedTranscript
   return { messages, errors, warnings };
 }
 
-function renderTranscript(session: NamedSession, messages: TranscriptMessage[]): string {
-  let output = [
-    "# Utterlog transcript",
-    "",
-    `- Session name: \`${metadataValue(session.name)}\``,
-    `- Session ID: \`${metadataValue(session.id)}\``,
-    `- Working directory: \`${metadataValue(session.cwd)}\``,
-    `- Message times: local time (${localTimeZone()})`,
-    "",
-    "> Read-only snapshot captured when this session was selected.",
-    "",
-    "---",
-    "",
-    "",
-  ].join("\n");
-
-  messages.forEach((message, index) => {
-    const ordinal = index + 1;
-    const phase = message.phase ? `; phase=${message.phase}` : "";
-    const role = message.role === "user" ? "User" : "Assistant";
-    output += `<!-- utterlog: message ${ordinal}; role=${message.role}; time=${message.timestampLabel}${phase} -->\n`;
-    output += `## ${role} · ${message.timestampLabel} · message ${ordinal}\n\n`;
-    output += message.body;
-    output += message.body.endsWith("\n") ? "" : "\n";
-    output += "\n---\n\n";
-  });
-  return output;
-}
-
 function helpText(): string {
   return [
     "Usage: utterlog",
     "",
-    "Select a named Codex session for the current directory with fzf, then open",
-    "a read-only Markdown transcript in $EDITOR.",
+    "Select a named Codex session for the current directory, then read",
+    "its conversation in the integrated read-only terminal reader.",
     "",
     "The picker searches session names only. Sessions are ordered by the last",
-    "complete timestamp in their local session log. fzf and $EDITOR are required.",
+    "complete timestamp in their local session log. An interactive terminal is required.",
   ].join("\n") + "\n";
 }
 
@@ -712,45 +545,31 @@ function parseArguments(argv: string[]): { help: boolean } {
   throw new CliError(`unknown argument${argv.length === 1 ? `: ${argv[0]}` : "s"}; try --help`);
 }
 
-async function openSnapshot(
-  transcript: string,
-  cwd: string,
-  environment: Environment,
-  tempRoot: string,
-): Promise<void> {
-  const editorSpec = environment.EDITOR;
-  if (!editorSpec || editorSpec.trim().length === 0) throw new CliError("EDITOR is required");
-  const editor = parseEditorCommand(editorSpec);
-  const temporaryDirectory = await mkdtemp(join(tempRoot, "utterlog-"));
-  const snapshotPath = join(temporaryDirectory, "transcript.md");
+async function loadSelectedMessages(
+  selected: NamedSession,
+  reportWarning?: (warning: string) => void,
+): Promise<TranscriptMessage[]> {
+  let logText: string;
   try {
-    await chmod(temporaryDirectory, 0o700);
-    await writeFile(snapshotPath, transcript, { encoding: "utf8", mode: 0o600 });
-    await chmod(snapshotPath, 0o400);
-    let processHandle: Bun.Subprocess;
-    try {
-      processHandle = Bun.spawn({
-        cmd: [...editor, snapshotPath],
-        cwd,
-        env: concreteEnvironment(environment),
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-      });
-    } catch (error) {
-      throw new CliError(`cannot start editor: ${errorMessage(error)}`);
-    }
-    const status = await processHandle.exited;
-    if (status !== 0) throw new CliError(`editor exited with status ${status}`);
-  } finally {
-    await rm(temporaryDirectory, { recursive: true, force: true });
+    logText = await readFile(selected.path, "utf8");
+  } catch (error) {
+    throw new CliError(`cannot read selected session log: ${errorMessage(error)}`);
   }
+  const parsed = parseTranscript(logText, selected);
+  for (const warning of parsed.warnings) reportWarning?.(warning);
+  if (parsed.errors.length > 0) {
+    throw new CliError(`selected session is unsupported or corrupt:\n${parsed.errors.map((error) => `  ${error}`).join("\n")}`);
+  }
+  if (parsed.messages.length === 0) throw new CliError("selected session has no user-facing transcript");
+  return parsed.messages;
 }
 
 export async function run(options: RunOptions = {}): Promise<number> {
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   const environment: Environment = options.env ?? process.env;
+  let renderer: CliRenderer | undefined;
+  const pickerState: PickerState = { query: "" };
   try {
     const { help } = parseArguments(options.argv ?? process.argv.slice(2));
     if (help) {
@@ -758,50 +577,50 @@ export async function run(options: RunOptions = {}): Promise<number> {
       return 0;
     }
     const interactive = options.interactive ?? (process.stdin.isTTY === true && process.stdout.isTTY === true);
-    if (!interactive) throw new CliError("an interactive terminal is required to choose a session with fzf");
+    if (!interactive) throw new CliError("an interactive terminal is required to choose a session");
 
     const cwd = normalizedCwd(options.cwd ?? process.cwd());
-    const discovery = await discoverSessions(cwd, environment);
-    for (const warning of discovery.warnings) print(stderr, `utterlog: warning: ${warning}\n`);
-    if (discovery.candidates.length === 0) {
-      print(stdout, `No named Codex sessions found for ${cwd}.\n`);
-      if (discovery.unnamedCount > 0) {
-        print(stdout, `${discovery.unnamedCount} unnamed session log${discovery.unnamedCount === 1 ? "" : "s"} omitted.\n`);
+    while (true) {
+      const discovery = await discoverSessions(cwd, environment);
+      for (const warning of discovery.warnings) print(stderr, `utterlog: warning: ${warning}\n`);
+      if (discovery.candidates.length === 0) {
+        if (renderer && !renderer.isDestroyed) renderer.destroy();
+        print(stdout, `No named Codex sessions found for ${cwd}.\n`);
+        if (discovery.unnamedCount > 0) {
+          print(stdout, `${discovery.unnamedCount} unnamed session log${discovery.unnamedCount === 1 ? "" : "s"} omitted.\n`);
+        }
+        return 0;
       }
-      return 0;
-    }
-    print(stdout, `Select a named Codex session for ${cwd} (newest activity first).\n`);
-    if (discovery.unnamedCount > 0) {
-      print(stdout, `${discovery.unnamedCount} unnamed session log${discovery.unnamedCount === 1 ? "" : "s"} omitted.\n`);
-    }
-    const selected = await pickSession(discovery.candidates, cwd, environment);
-    if (selected === undefined) {
-      print(stdout, "Selection cancelled.\n");
-      return 0;
-    }
-    if (selected === null) {
-      print(stdout, "No session matched the picker query.\n");
-      return 0;
-    }
+      renderer ??= await (options.rendererFactory ?? createTerminalRenderer)();
+      const selected = await pickSession(renderer, discovery.candidates, cwd, pickerState, discovery.unnamedCount);
+      if (!selected || renderer.isDestroyed) return 0;
 
-    let logText: string;
-    try {
-      logText = await readFile(selected.path, "utf8");
-    } catch (error) {
-      throw new CliError(`cannot read selected session log: ${errorMessage(error)}`);
+      const initialMessages = await loadSelectedMessages(selected, (warning) => {
+        print(stderr, `utterlog: warning: ${warning}\n`);
+      });
+      const reader = await createConversationReader({
+        session: selected,
+        messages: initialMessages,
+        load: () => loadSelectedMessages(selected),
+        renderer,
+        ownsRenderer: false,
+      });
+      let result: "back" | "quit";
+      try {
+        reader.start();
+        result = await reader.waitForExit();
+      } catch (error) {
+        reader.dispose();
+        throw error;
+      }
+      if (result === "quit") return 0;
     }
-    const parsed = parseTranscript(logText, selected);
-    for (const warning of parsed.warnings) print(stderr, `utterlog: warning: ${warning}\n`);
-    if (parsed.errors.length > 0) {
-      throw new CliError(`selected session is unsupported or corrupt:\n${parsed.errors.map((error) => `  ${error}`).join("\n")}`);
-    }
-    if (parsed.messages.length === 0) throw new CliError("selected session has no user-facing transcript");
-    const transcript = renderTranscript(selected, parsed.messages);
-    await openSnapshot(transcript, cwd, environment, options.tempRoot ?? tmpdir());
-    return 0;
   } catch (error) {
+    if (renderer && !renderer.isDestroyed) renderer.destroy();
     print(stderr, `utterlog: ${errorMessage(error)}\n`);
     return 1;
+  } finally {
+    if (renderer && !renderer.isDestroyed) renderer.destroy();
   }
 }
 

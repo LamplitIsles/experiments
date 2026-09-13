@@ -14,5 +14,8 @@
   "devDependencies": {
     "bun-types": "^1.4.2",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.5.11"
   }
 }
