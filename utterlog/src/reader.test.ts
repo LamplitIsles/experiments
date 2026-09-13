@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, spyOn, test } from "bun:test";
+import { CodeRenderable, MarkdownRenderable, type Renderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { parseTranscript } from "./cli";
 import { createConversationReader, type WatchFactory } from "./reader";
@@ -81,6 +82,73 @@ async function render(setup: Awaited<ReturnType<typeof createTestRenderer>>, pas
 const noWatch: WatchFactory = () => ({ close() {} });
 
 describe("native conversation reader", () => {
+  test("mouse wheel leaves follow mode and keeps the earlier position across frames", async () => {
+    const setup = await createTestRenderer({ width: 80, height: 12 });
+    const messages = Array.from({ length: 20 }, (_, i) => message("user", `Earlier request ${i}`));
+    const reader = await createConversationReader({ session, messages, load: async () => messages, renderer: setup.renderer, ownsRenderer: false, watchFactory: noWatch });
+    try {
+      reader.start();
+      await reader.waitForIdle();
+      await render(setup);
+      const bottom = reader.snapshot().scrollTop;
+      await setup.mockMouse.scroll(10, 5, "up");
+      expect(reader.snapshot().scrollTop).toBeLessThan(bottom);
+      expect(reader.snapshot().follow).toBe(false);
+      await render(setup);
+      expect(reader.snapshot().scrollTop).toBeLessThan(bottom);
+      expect(reader.snapshot().follow).toBe(false);
+      const position = reader.snapshot().scrollTop;
+      await render(setup);
+      expect(reader.snapshot().scrollTop).toBe(position);
+      for (let i = 0; i < 10 && !reader.snapshot().follow; i += 1) {
+        await setup.mockMouse.scroll(10, 5, "down");
+        await render(setup);
+      }
+      expect(reader.snapshot().follow).toBe(true);
+      expect(reader.snapshot().scrollTop).toBe(reader.snapshot().maxScrollTop);
+    } finally {
+      reader.dispose();
+      if (!setup.renderer.isDestroyed) setup.renderer.destroy();
+    }
+  });
+
+  test("static markdown stays readable while highlighting is pending, including untyped fences", async () => {
+    const setup = await createTestRenderer({ width: 100, height: 20 });
+    const messages = [message("assistant", "# Heading\n\nReadable body\n\n```\nplain fence\n```")];
+    const reader = await createConversationReader({ session, messages, load: async () => messages, renderer: setup.renderer, ownsRenderer: false, watchFactory: noWatch });
+    const descendants = (node: Renderable): Renderable[] => [node, ...node.getChildren().flatMap(descendants)];
+    const nodes = descendants(setup.renderer.root);
+    const markdown = nodes.find((node) => node instanceof MarkdownRenderable) as MarkdownRenderable;
+    const code = nodes.find((node) => node instanceof CodeRenderable) as CodeRenderable;
+    const original = code.treeSitterClient.highlightOnce.bind(code.treeSitterClient);
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const highlight = spyOn(code.treeSitterClient, "highlightOnce").mockImplementation(async (...args) => {
+      await pending;
+      return original(...args);
+    });
+    try {
+      reader.start();
+      await reader.waitForIdle();
+      await render(setup);
+      expect(highlight).toHaveBeenCalled();
+      expect(markdown.streaming).toBe(false);
+      expect(setup.captureCharFrame()).toContain("Readable body");
+      expect(setup.captureCharFrame()).toContain("plain fence");
+      release();
+      await Promise.all(nodes.filter((node): node is CodeRenderable => node instanceof CodeRenderable).map((node) => node.highlightingDone));
+      await render(setup);
+      expect(markdown.streaming).toBe(false);
+      expect(setup.captureCharFrame()).toContain("Readable body");
+      expect(setup.captureCharFrame()).toContain("plain fence");
+    } finally {
+      release();
+      highlight.mockRestore();
+      reader.dispose();
+      if (!setup.renderer.isDestroyed) setup.renderer.destroy();
+    }
+  });
+
   test("copies a mouse selection only on release and removes the callback on leaving", async () => {
     const setup = await createTestRenderer({ width: 80, height: 12 });
     const copy = spyOn(setup.renderer, "copyToClipboardOSC52").mockReturnValue(true);
@@ -96,21 +164,49 @@ describe("native conversation reader", () => {
       await setup.mockMouse.pressDown(x, y);
       await setup.mockMouse.emitMouseEvent("drag", x + 8, y);
       expect(copy).not.toHaveBeenCalled();
+      const selection = setup.renderer.getSelection()!;
+      const selectedText = selection.getSelectedText();
       await setup.mockMouse.release(x + 8, y);
       expect(copy).toHaveBeenCalledTimes(1);
       expect(copy.mock.calls[0][0]).toContain("copy");
-      expect(copy.mock.calls[0][0]).toBe(setup.renderer.getSelection()!.getSelectedText());
+      expect(copy.mock.calls[0][0]).toBe(selectedText);
       expect(reader.snapshot().status).toContain("copy sent to terminal");
-      const selection = setup.renderer.getSelection()!;
+      expect(setup.renderer.getSelection()).toBeNull();
       copy.mockReturnValue(false);
-      setup.renderer.emit("selection", selection);
+      await setup.mockMouse.pressDown(x, y);
+      await setup.mockMouse.emitMouseEvent("drag", x + 8, y);
+      const unavailableSelection = setup.renderer.getSelection()!;
+      await setup.mockMouse.release(x + 8, y);
       expect(reader.snapshot().status).toContain("terminal clipboard unavailable");
+      expect(setup.renderer.getSelection()).toBe(unavailableSelection);
       reader.dispose("back");
-      setup.renderer.emit("selection", selection);
+      setup.renderer.emit("selection", unavailableSelection);
       expect(copy).toHaveBeenCalledTimes(2);
     } finally {
       reader.dispose();
       copy.mockRestore();
+      if (!setup.renderer.isDestroyed) setup.renderer.destroy();
+    }
+  });
+
+  test("keeps a parenthesized design-document path visible", async () => {
+    const setup = await createTestRenderer({ width: 120, height: 12 });
+    const body = "已追加到本轮设计文档 (.scratch/voice-and-relationship-design.md)，尚未修改运行代码。";
+    const reader = await createConversationReader({
+      session,
+      messages: [message("assistant", body)],
+      load: async () => [message("assistant", body)],
+      renderer: setup.renderer,
+      ownsRenderer: false,
+      watchFactory: noWatch,
+    });
+    try {
+      reader.start();
+      await reader.waitForIdle();
+      await render(setup);
+      expect(setup.captureCharFrame()).toContain("(.scratch/voice-and-relationship-design.md)，尚未修改运行代码。");
+    } finally {
+      reader.dispose();
       if (!setup.renderer.isDestroyed) setup.renderer.destroy();
     }
   });

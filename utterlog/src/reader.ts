@@ -1,6 +1,7 @@
 import { watch as watchPath, type FSWatcher } from "node:fs";
 import {
   BoxRenderable,
+  CodeRenderable,
   createCliRenderer,
   InputRenderable,
   InputRenderableEvents,
@@ -10,6 +11,7 @@ import {
   TextRenderable,
   type CliRenderer,
   type KeyEvent,
+  type Renderable,
   type Selection,
 } from "@opentui/core";
 import type { NamedSession, TranscriptMessage } from "./cli";
@@ -210,9 +212,12 @@ export class ConversationReader {
     if (this.disposed || selection.isDragging) return;
     const text = selection.getSelectedText();
     if (!text) return;
-    this.clipboardNote = this.renderer.copyToClipboardOSC52(text)
-      ? "copy sent to terminal"
-      : "terminal clipboard unavailable";
+    if (this.renderer.copyToClipboardOSC52(text)) {
+      this.renderer.clearSelection();
+      this.clipboardNote = "copy sent to terminal";
+    } else {
+      this.clipboardNote = "terminal clipboard unavailable";
+    }
     this.updateFooter();
   };
   private searchQuery = "";
@@ -335,10 +340,22 @@ export class ConversationReader {
       this.appRoot.add(this.subtitle);
       this.appRoot.add(this.scrollBox);
       this.appRoot.add(this.footer);
+      // Events bubble here after ScrollBox has applied its native wheel movement.
+      this.appRoot.onMouseScroll = (event) => {
+        if (event.y >= this.scrollBox.y && event.y < this.scrollBox.y + this.scrollBox.height) {
+          this.moveScroll(0);
+        }
+      };
       this.renderer.root.add(this.appRoot);
 
       this.keyHandler = (key) => this.handleKey(key);
-      this.frameHandler = () => this.applyPendingPosition();
+      this.frameHandler = () => {
+        this.applyPendingPosition();
+        if (!this.disposed && this.follow && this.scrollBox.scrollTop < this.maximumScrollTop()) {
+          this.scrollToBottom();
+          this.renderer.requestRender();
+        }
+      };
       this.rendererDestroyHandler = () => this.handleRendererDestroy();
       this.inputHandler = (value) => {
         this.pendingSearchQuery = value;
@@ -624,13 +641,27 @@ export class ConversationReader {
       width: "100%",
       flexShrink: 0,
       conceal: true,
-      streaming: true,
+      streaming: false,
       content: message.body.length > 0 ? message.body : " ",
       syntaxStyle: this.syntax,
     });
+    // Static markdown otherwise hides text until Tree-sitter finishes. Keep the
+    // first frame readable without changing markdown's parsing/streaming state.
+    for (const code of this.markdownCodeBlocks(body)) code.drawUnstyledText = true;
     box.add(heading);
     box.add(body);
     return { box, heading, body };
+  }
+
+  private markdownCodeBlocks(body: MarkdownRenderable): CodeRenderable[] {
+    const codeBlocks: CodeRenderable[] = [];
+    const renderables: Renderable[] = [body];
+    while (renderables.length > 0) {
+      const renderable = renderables.pop()!;
+      if (renderable instanceof CodeRenderable) codeBlocks.push(renderable);
+      renderables.push(...renderable.getChildren());
+    }
+    return codeBlocks;
   }
 
   private updateHeader(): void {
@@ -805,7 +836,7 @@ export class ConversationReader {
       this.follow = true;
       this.newContent = false;
       this.refreshNote = undefined;
-    } else if (after !== before || delta < 0) {
+    } else if (after !== before || delta <= 0) {
       this.follow = false;
       if (delta < 0) this.newContent = false;
       this.refreshNote = undefined;
