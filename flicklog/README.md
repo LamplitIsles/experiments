@@ -23,6 +23,7 @@ From a project directory with Codex history:
 
 ```sh
 flicklog search "Chinese keyword 或 code identifier" # five cards by default
+flicklog ingest
 flicklog search "release decision" --all-projects
 flicklog search "release decision" --limit 12
 flicklog get <record-id>
@@ -30,7 +31,7 @@ flicklog context <record-id>
 flicklog context <record-id> --include-tools
 ```
 
-Every successful command writes one JSON object to stdout. Warnings/errors go to stderr and failures return non-zero. `search` incrementally scans first: it checkpoints complete JSONL byte offsets and original source record ordinals, skips unchanged files, and reads only appended bytes for grown files. Search defaults to this machine’s hostname-derived `deviceId` and the exact normalized current working directory. `--all-projects` removes only cwd filtering; device isolation remains.
+Every successful command writes one JSON object to stdout. Warnings/errors go to stderr and failures return non-zero. `ingest` incrementally projects every supported local source (Codex only in v0) into Meilisearch; it has no source selector. `search` runs that same ingest first: it checkpoints complete JSONL byte offsets and original source record ordinals, skips unchanged files, and reads only appended bytes for grown files. In an interactive terminal, `ingest` and a `search` with pending session JSONL logs render progress on stderr by session log, with a retained completion summary. Non-interactive runs render no progress, leaving stdout as one final JSON object. Search defaults to this machine’s hostname-derived `deviceId` and the exact normalized current working directory. `--all-projects` removes only cwd filtering; device isolation remains.
 
 FlickLog indexes two kinds of semantic history: Codex top-level user messages and assistant `commentary`/`final_answer` messages (`kind: "message"`), plus non-empty Codex `compacted.payload.message` checkpoints (`kind: "compaction"`). Commentary and final answers are separate documents. Compaction indexes only its plaintext message, never `replacement_history`, and has no fabricated user/assistant role. Tool activity, reasoning/thinking, developer/system text, injected provenance, and spawned sessions are never indexed.
 
