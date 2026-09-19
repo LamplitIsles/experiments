@@ -1,19 +1,23 @@
 {
   "name": "experiments",
   "private": true,
+  "workspaces": [
+    "flicklog",
+    "utterlog"
+  ],
   "scripts": {
     "prepare": "lefthook install",
-    "typecheck": "pnpm -r run typecheck",
-    "test": "pnpm -r run test",
+    "typecheck": "bun run --workspaces typecheck",
+    "test": "bun run --workspaces test",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check ."
   },
   "devDependencies": {
-    "lefthook": "^1.11.13",
-    "oxfmt": "catalog:",
-    "oxlint": "catalog:"
+    "lefthook": "2.1.14",
+    "oxfmt": "0.68.0",
+    "oxlint": "1.83.0"
   },
-  "packageManager": "pnpm@12.3.4"
+  "packageManager": "bun@1.3.14"
 }

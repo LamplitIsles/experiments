@@ -1,14 +1,14 @@
 pre-commit:
   commands:
-    pnpm-lock-check:
-      glob: "{package.json,**/package.json,pnpm-workspace.yaml,pnpm-lock.yaml}"
+    bun-lock-check:
+      glob: "{package.json,**/package.json,bun.lock}"
       run: |
-        corepack pnpm@12.3.4 install --frozen-lockfile || {
+        bun install --frozen-lockfile || {
           echo ""
-          echo "pnpm-lock.yaml is stale. Run: corepack pnpm@12.3.4 install"
+          echo "bun.lock is stale. Run: bun install"
           exit 1
         }
     format-check:
-      run: corepack pnpm@12.3.4 run format:check
+      run: bun run format:check
     lint:
-      run: corepack pnpm@12.3.4 run lint
+      run: bun run lint

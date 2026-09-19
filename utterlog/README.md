@@ -11,7 +11,7 @@ Clone the repository and install the command:
 ```sh
 git clone http://forgejo.localhost:17480/LamplitIsles/experiments.git
 cd experiments
-corepack pnpm@12.3.4 install --frozen-lockfile
+bun install --frozen-lockfile
 cd utterlog
 bun add --global "$PWD"
 export PATH="$(bun pm bin -g):$PATH"
@@ -39,7 +39,7 @@ The global command links to the source checkout and runs with Bun. Keep that che
 
 ### Run without global installation
 
-After cloning, run `corepack pnpm@12.3.4 install --frozen-lockfile` from the repository root, then invoke the source entry point from the directory you want to browse:
+After cloning, run `bun install --frozen-lockfile` from the repository root, then invoke the source entry point from the directory you want to browse:
 
 ```sh
 cd /path/to/your/project
@@ -53,7 +53,7 @@ From the same checkout, pull the latest source and refresh its dependencies:
 ```sh
 cd /absolute/path/to/experiments
 og pull
-corepack pnpm@12.3.4 install --frozen-lockfile
+bun install --frozen-lockfile
 utterlog --help
 ```
 
@@ -110,7 +110,7 @@ Missing storage or names, an unsupported/corrupt selected log, an empty transcri
 From the repository root:
 
 ```sh
-corepack pnpm@12.3.4 install --frozen-lockfile
+bun install --frozen-lockfile
 cd utterlog
 bun run typecheck
 bun run test

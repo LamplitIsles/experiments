@@ -8,7 +8,7 @@ FlickLog requires Bun 1.3+ and macOS with Homebrew Meilisearch installed. From t
 
 ```sh
 cd /absolute/path/to/experiments
-corepack pnpm@12.3.4 install --frozen-lockfile
+bun install --frozen-lockfile
 cd flicklog
 bun add --global "$PWD"
 export PATH="$(bun pm bin -g):$PATH"
@@ -47,7 +47,7 @@ Meilisearch 1.53.x’s ordinary language-neutral `content` field is used for Chi
 
 ```sh
 cd /absolute/path/to/experiments
-corepack pnpm@12.3.4 install --frozen-lockfile
+bun install --frozen-lockfile
 cd flicklog
 bun run typecheck
 bun run test
