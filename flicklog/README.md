@@ -28,7 +28,7 @@ flicklog context <message-id>
 
 Every successful command writes one JSON object to stdout. Warnings/errors go to stderr and failures return non-zero. `search` incrementally scans first: it checkpoints complete JSONL byte offsets and original source record ordinals, skips unchanged files, and reads only appended bytes for grown files. Search defaults to this machine’s hostname-derived `deviceId` and the exact normalized current working directory. `--all-projects` removes only cwd filtering; device isolation remains.
 
-Only Codex top-level user messages and assistant `commentary`/`final_answer` messages are indexed. Commentary and final answers are separate documents. Tool activity, reasoning/thinking, developer/system text, injected provenance, and spawned sessions are never indexed.
+FlickLog indexes two kinds of semantic history: Codex top-level user messages and assistant `commentary`/`final_answer` messages (`kind: "message"`), plus non-empty Codex `compacted.payload.message` checkpoints (`kind: "compaction"`). Commentary and final answers are separate documents. Compaction indexes only its plaintext message, never `replacement_history`, and has no fabricated user/assistant role. Tool activity, reasoning/thinking, developer/system text, injected provenance, and spawned sessions are never indexed.
 
 `context` resolves an indexed hit to its original JSONL path/record and returns nearby source items in order. It includes tool calls/results by default but never reasoning; large tool payloads are truncated with `truncated: true`. Tools are context-only, not searchable.
 
