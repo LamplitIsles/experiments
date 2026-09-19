@@ -571,6 +571,16 @@ export function meili(env: Env): Meili {
         searchableAttributes: ["content"],
         filterableAttributes: ["deviceId", "agent", "cwd", "sessionId", "role"],
         sortableAttributes: ["createdAt"],
+        typoTolerance: { disableOnNumbers: true },
+        rankingRules: [
+          "words",
+          "typo",
+          "proximity",
+          "attributeRank",
+          "wordPosition",
+          "exactness",
+          "sort",
+        ],
       });
     },
     async add(items) {

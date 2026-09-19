@@ -34,6 +34,10 @@ Normal messages retain Codex `payload.id` as `sourceId`, but use `sha256(deviceI
 
 Search defaults to the CLI process's exact normalized working directory on the current device. The caller does not normally provide cwd as an argument; cross-project search is explicitly requested with `--all-projects`.
 
+### Search ranking
+
+FlickLog ranks exact textual matches before recency. Numeric query tokens match exact numbers only; `createdAt:desc` is the deterministic tie-breaker when textual relevance is otherwise equal.
+
 ### Context expansion
 
 Context expansion starts from one indexed record and reads its surrounding records from the original Codex JSONL. `flicklog context <record-id>` returns eligible natural-language messages and plaintext compactions only; `--include-tools` explicitly adds supported nearby tool calls/results. The selected record and nearest eligible source-record neighbourhood share one 12,000-character budget. Clipped content keeps balanced Unicode-safe head and tail text around an `…<N> chars truncated…` marker, and the response reports truncation. Tool activity remains source data, not indexed FlickLog messages.

@@ -13,6 +13,21 @@ afterEach(async () => {
 test("uses managed key and waits for fake async tasks", async () => {
   root = await mkdtemp(join(tmpdir(), "flicklog-meili-fake-"));
   const key = "test-managed-key";
+  const expectedSettings = {
+    searchableAttributes: ["content"],
+    filterableAttributes: ["deviceId", "agent", "cwd", "sessionId", "role"],
+    sortableAttributes: ["createdAt"],
+    typoTolerance: { disableOnNumbers: true },
+    rankingRules: [
+      "words",
+      "typo",
+      "proximity",
+      "attributeRank",
+      "wordPosition",
+      "exactness",
+      "sort",
+    ],
+  };
   await writeFile(join(root, "master-key"), key);
   let task = 0,
     indexExists = false;
@@ -20,7 +35,8 @@ test("uses managed key and waits for fake async tasks", async () => {
     pending = new Map<number, () => void>(),
     failed = new Map<number, string>(),
     documents: any[] = [],
-    searchLimits: number[] = [];
+    searchLimits: number[] = [],
+    settings: unknown[] = [];
   server = Bun.serve({
     port: 0,
     fetch: async (request) => {
@@ -38,6 +54,7 @@ test("uses managed key and waits for fake async tasks", async () => {
           ? Response.json({ uid: "flicklog_messages" })
           : new Response("missing", { status: 404 });
       if (path.includes("/settings")) {
+        settings.push(await request.json());
         const id = ++task;
         pending.set(id, () => {});
         return Response.json({ taskUid: id });
@@ -83,6 +100,7 @@ test("uses managed key and waits for fake async tasks", async () => {
           `deviceId = ${JSON.stringify(hostname())}`,
           'cwd = "/p"',
         ]);
+        expect(body.sort).toEqual(["createdAt:desc"]);
         return Response.json({
           estimatedTotalHits: 1,
           hits: documents.map(
@@ -107,6 +125,7 @@ test("uses managed key and waits for fake async tasks", async () => {
   });
   await client.configure();
   await client.configure();
+  expect(settings).toEqual([expectedSettings, expectedSettings]);
   await client.add([
     {
       id: "a",
