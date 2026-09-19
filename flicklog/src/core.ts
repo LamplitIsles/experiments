@@ -480,6 +480,14 @@ export function meili(env: Env): Meili {
     await task(base, key, v.taskUid);
   }
   async function ensureIndex() {
+    const existing = await fetch(`${base}/indexes/flicklog_messages`, {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    if (existing.ok) return;
+    if (existing.status !== 404)
+      throw new Error(
+        `Meilisearch ${existing.status}: ${await existing.text()}`,
+      );
     const r = await fetch(`${base}/indexes`, {
       method: "POST",
       headers: {
@@ -566,7 +574,7 @@ export function configText(paths: SetupPaths, key: string) {
   return `db_path = ${JSON.stringify(paths.database)}\nhttp_addr = ${JSON.stringify(`127.0.0.1:${paths.port}`)}\nmaster_key = ${JSON.stringify(key)}\n`;
 }
 export function plistText(paths: SetupPaths, binary: string) {
-  return `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>dev.flicklog.meilisearch</string><key>ProgramArguments</key><array><string>${binary}</string><string>--config-file-path</string><string>${paths.config}</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>dev.flicklog.meilisearch</string><key>ProgramArguments</key><array><string>${binary}</string><string>--config-file-path</string><string>${paths.config}</string></array><key>WorkingDirectory</key><string>${paths.root}</string><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>`;
 }
 export async function prepareSetup(
   env: Env,

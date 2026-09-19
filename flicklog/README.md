@@ -8,14 +8,14 @@ FlickLog requires Bun 1.3+ and macOS with Homebrew Meilisearch installed. From t
 
 ```sh
 cd /absolute/path/to/experiments
-corepack pnpm@12.3.4 install --frozen-lockfile
+bun install --frozen-lockfile
 cd flicklog
 bun add --global "$PWD"
 export PATH="$(bun pm bin -g):$PATH"
 flicklog setup
 ```
 
-`setup` creates `~/.flicklog` with a private master-key file, Meilisearch data/configuration, and the `~/Library/LaunchAgents/dev.flicklog.meilisearch.plist` LaunchAgent. It binds only to `127.0.0.1:7701`, never calls `brew services`, and therefore does not alter a generic Homebrew Meilisearch service. It starts/reloads only FlickLog’s agent and waits for health and index settings.
+`setup` creates `~/.flicklog` with a private master-key file, Meilisearch data/configuration, and the `~/Library/LaunchAgents/dev.flicklog.meilisearch.plist` LaunchAgent. The agent runs with that state directory as its working directory, binds only to `127.0.0.1:7701`, never calls `brew services`, and therefore does not alter a generic Homebrew Meilisearch service. It starts/reloads only FlickLog’s agent and waits for health and index settings.
 
 ## Use
 
@@ -47,7 +47,7 @@ Meilisearch 1.53.x’s ordinary language-neutral `content` field is used for Chi
 
 ```sh
 cd /absolute/path/to/experiments
-corepack pnpm@12.3.4 install --frozen-lockfile
+bun install --frozen-lockfile
 cd flicklog
 bun run typecheck
 bun run test
