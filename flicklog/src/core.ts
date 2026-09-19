@@ -64,6 +64,10 @@ export type SearchResult = {
   estimatedTotalHits: number;
   hits: SearchCard[];
 };
+export type ScanObserver = {
+  plan: (pending: number) => void;
+  source: (indexed: number) => void;
+};
 
 const USER_PHASES = new Set(["commentary", "final_answer"]);
 const IGNORED = new Set([
@@ -289,16 +293,27 @@ function message(
 export async function scan(
   env: Env,
   publish: (items: Message[]) => Promise<void>,
+  observer?: Partial<ScanObserver>,
 ): Promise<{ indexed: number; sources: number }> {
   const home = env.CODEX_HOME?.trim() || join(homedir(), ".codex");
   const stateFile = statePath(env),
     state = await loadState(stateFile),
     sessionNames = await names(home);
+  const sourceFiles = await Promise.all(
+    (await files(join(home, "sessions"))).map(async (path) => ({
+      path,
+      info: await stat(path),
+    })),
+  );
+  observer?.plan?.(
+    sourceFiles.filter(
+      ({ path, info }) => state.sources[path]?.size !== info.size,
+    ).length,
+  );
   let indexed = 0,
     sources = 0;
-  for (const path of await files(join(home, "sessions"))) {
+  for (const { path, info } of sourceFiles) {
     sources++;
-    const info = await stat(path);
     let cp = state.sources[path];
     if (cp && info.size === cp.size) continue;
     if (!cp || info.size < cp.offset)
@@ -313,7 +328,10 @@ export async function scan(
     }
     const text = bytes.toString("utf8"),
       complete = text.lastIndexOf("\n");
-    if (complete < 0) continue;
+    if (complete < 0) {
+      observer?.source?.(0);
+      continue;
+    }
     const consumed = Buffer.byteLength(text.slice(0, complete + 1));
     const items: Message[] = [];
     let current: Meta | undefined =
@@ -346,6 +364,7 @@ export async function scan(
       ...(current ? { sessionId: current.id, cwd: current.cwd } : {}),
     };
     indexed += items.length;
+    observer?.source?.(items.length);
   }
   await saveState(stateFile, state);
   return { indexed, sources };

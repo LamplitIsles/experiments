@@ -6,6 +6,10 @@
 
 A searchable semantic-history record indexed from a supported agent session. In v0, `kind: message` covers Codex `user` messages and user-facing assistant `commentary` / `final_answer` messages. `kind: compaction` covers only a non-empty plaintext `compacted.payload.message` checkpoint. Tool calls, `replacement_history`, and reasoning/thinking are not FlickLog records.
 
+### Ingest
+
+Incrementally project every supported local source into the Meilisearch projection. In v0, Codex is the sole supported source, so `flicklog ingest` has no source selector. `search` runs the same configure-then-ingest path before querying; interactive terminals show session-log progress only when logs are pending, while non-interactive stdout remains one final JSON value.
+
 ### Session
 
 One top-level Codex user session. Its identity comes from Codex `session_meta.payload.id`.

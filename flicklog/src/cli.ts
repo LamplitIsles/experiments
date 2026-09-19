@@ -11,10 +11,11 @@ import {
   type Env,
 } from "./core";
 import { hostname } from "node:os";
+import { SingleBar, Presets } from "cli-progress";
 const exec = promisify(execFile);
 const err = (x: unknown) => (x instanceof Error ? x.message : String(x));
 function usage() {
-  return "Usage: flicklog <setup|search|get|context> [arguments]\n\nsearch <query> [--all-projects] [--limit <1-20>]\nget <record-id>\ncontext <record-id> [--include-tools]\n";
+  return "Usage: flicklog <setup|ingest|search|get|context> [arguments]\n\ningest\nsearch <query> [--all-projects] [--limit <1-20>]\nget <record-id>\ncontext <record-id> [--include-tools]\n";
 }
 function searchArguments(args: string[]) {
   let all = false;
@@ -58,12 +59,53 @@ async function binary() {
   }
   throw new Error("cannot find Homebrew meilisearch executable");
 }
+type Terminal = NodeJS.WritableStream & { isTTY?: boolean };
+async function ingest(
+  env: Env,
+  client: ReturnType<typeof meili>,
+  terminal: Terminal,
+) {
+  await client.configure();
+  let progress: SingleBar | undefined;
+  let indexed = 0;
+  let completed = false;
+  try {
+    const sync = await scan(env, (items) => client.add(items), {
+      plan(pending) {
+        if (!pending || !terminal.isTTY) return;
+        progress = new SingleBar(
+          {
+            format:
+              "Ingesting Codex sessions |{bar}| {value}/{total} logs | {indexed} records {status}",
+            stream: terminal,
+            clearOnComplete: false,
+            hideCursor: true,
+          },
+          Presets.shades_classic,
+        );
+        progress.start(pending, 0, { indexed, status: "" });
+      },
+      source(count) {
+        indexed += count;
+        progress?.increment({ indexed, status: "" });
+      },
+    });
+    completed = true;
+    return sync;
+  } finally {
+    if (progress?.isActive) {
+      if (completed) progress.update({ indexed, status: "complete" });
+      progress.stop();
+    }
+  }
+}
 export async function run(
   argv = process.argv.slice(2),
   env: Env = process.env,
   cwd = process.cwd(),
   stdout: Pick<Console, "log"> = console,
   stderr: Pick<Console, "error"> = console,
+  terminal: Terminal = process.stderr,
 ): Promise<number> {
   try {
     const [command, ...args] = argv;
@@ -115,10 +157,14 @@ export async function run(
       return 0;
     }
     const client = meili(env);
+    if (command === "ingest") {
+      if (args.length) throw new Error("ingest does not accept arguments");
+      stdout.log(JSON.stringify(await ingest(env, client, terminal)));
+      return 0;
+    }
     if (command === "search") {
       const { all, limit, query } = searchArguments(args);
-      await client.configure();
-      const sync = await scan(env, (items) => client.add(items));
+      const sync = await ingest(env, client, terminal);
       stdout.log(
         JSON.stringify({
           sync,

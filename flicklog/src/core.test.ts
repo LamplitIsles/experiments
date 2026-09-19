@@ -162,6 +162,27 @@ describe("incremental Codex projection", () => {
       (await (await import("node:fs/promises")).stat(f.path)).size,
     );
   });
+  test("plans and completes each pending source, including incomplete logs", async () => {
+    const f = await fixture();
+    const partial = join(f.home, "sessions", "2026", "partial.jsonl");
+    await writeFile(partial, '{"type":');
+    const observed: string[] = [];
+    const env = {
+      CODEX_HOME: f.home,
+      FLICKLOG_STATE_DIR: join(f.root, "state"),
+    };
+    await scan(env, async () => {}, {
+      plan: (pending) => observed.push(`plan:${pending}`),
+      source: (indexed) => observed.push(`source:${indexed}`),
+    });
+    expect(observed).toEqual(["plan:2", "source:0", "source:3"]);
+    observed.length = 0;
+    await scan(env, async () => {}, {
+      plan: (pending) => observed.push(`plan:${pending}`),
+      source: (indexed) => observed.push(`source:${indexed}`),
+    });
+    expect(observed).toEqual(["plan:1", "source:0"]);
+  });
 });
 test("normal storage IDs depend on device and source ID, not provenance", () => {
   const first = messageId("msg_01a0", "device-a", "/one.jsonl", 1);
