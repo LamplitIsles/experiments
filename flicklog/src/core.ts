@@ -47,6 +47,23 @@ export type ContextItem = {
   content: string;
   truncated?: boolean;
 };
+export type Context = { items: ContextItem[]; truncated: boolean };
+export type SearchCard = {
+  id: string;
+  kind: "message" | "compaction";
+  sessionId: string;
+  sessionName?: string;
+  cwd: string;
+  role?: "user" | "assistant";
+  phase?: "commentary" | "final_answer";
+  createdAt?: string;
+  snippet: string;
+};
+export type SearchResult = {
+  query: string;
+  estimatedTotalHits: number;
+  hits: SearchCard[];
+};
 
 const USER_PHASES = new Set(["commentary", "final_answer"]);
 const IGNORED = new Set([
@@ -338,8 +355,8 @@ export function extractContext(
   target: number,
   includeTools: boolean,
   radius = 8,
-  maxToolChars = 12000,
-): ContextItem[] {
+  maxChars = 12000,
+): Context {
   const parsed = text
     .split("\n")
     .map((line, index) => ({ line, index }))
@@ -353,7 +370,7 @@ export function extractContext(
     })
     .filter((v): v is { x: unknown; index: number } => Boolean(v));
   const selected = parsed.filter((v) => Math.abs(v.index - target) <= radius);
-  const output: ContextItem[] = [];
+  const eligible: ContextItem[] = [];
   for (const { x, index } of selected) {
     if (object(x) && x.type === "compacted") {
       const m = message(x, "context", index, {
@@ -361,7 +378,7 @@ export function extractContext(
         cwd: "/context",
       });
       if (m)
-        output.push({
+        eligible.push({
           sourceRecordIndex: index,
           kind: "compaction",
           content: m.content,
@@ -382,7 +399,7 @@ export function extractContext(
         cwd: "/context",
       });
       if (m)
-        output.push({
+        eligible.push({
           sourceRecordIndex: index,
           kind: "message",
           role: m.role,
@@ -408,23 +425,64 @@ export function extractContext(
       ].includes(String(p.type))
     )
       continue;
-    let content = JSON.stringify(p);
-    const truncated = content.length > maxToolChars;
-    if (truncated) content = `${content.slice(0, maxToolChars)}…`;
-    output.push({
+    eligible.push({
       sourceRecordIndex: index,
       kind: "tool",
-      content,
-      ...(truncated ? { truncated: true } : {}),
+      content: JSON.stringify(p),
     });
   }
-  return output.sort((a, b) => a.sourceRecordIndex - b.sourceRecordIndex);
+  const targetItem = eligible.find((item) => item.sourceRecordIndex === target);
+  if (!targetItem) return { items: [], truncated: true };
+  const candidates = [
+    targetItem,
+    ...eligible
+      .filter((item) => item !== targetItem)
+      .sort(
+        (a, b) =>
+          Math.abs(a.sourceRecordIndex - target) -
+            Math.abs(b.sourceRecordIndex - target) ||
+          a.sourceRecordIndex - b.sourceRecordIndex,
+      ),
+  ];
+  let remaining = maxChars;
+  let truncated = false;
+  const chosen: ContextItem[] = [];
+  const excerpt = (content: string, limit: number): string | undefined => {
+    const characters = Array.from(content);
+    if (characters.length <= limit) return content;
+    for (let kept = Math.min(characters.length - 1, limit); kept >= 0; kept--) {
+      const omitted = characters.length - kept;
+      const marker = `…${omitted} chars truncated…`;
+      if (kept + Array.from(marker).length > limit) continue;
+      const head = Math.ceil(kept / 2);
+      return `${characters.slice(0, head).join("")}${marker}${characters.slice(head - kept).join("")}`;
+    }
+  };
+  for (const item of candidates) {
+    if (remaining <= 0) {
+      truncated = true;
+      continue;
+    }
+    const content = excerpt(item.content, remaining);
+    if (content === undefined) {
+      truncated = true;
+      continue;
+    }
+    const clipped = content.length !== item.content.length;
+    if (clipped) truncated = true;
+    chosen.push({ ...item, content, ...(clipped ? { truncated: true } : {}) });
+    remaining -= content.length;
+  }
+  return {
+    items: chosen.sort((a, b) => a.sourceRecordIndex - b.sourceRecordIndex),
+    truncated,
+  };
 }
 
 export type Meili = {
   configure(): Promise<void>;
   add(items: Message[]): Promise<void>;
-  search(query: string, cwd: string, all: boolean): Promise<unknown>;
+  search(query: string, cwd: string, all: boolean): Promise<SearchResult>;
   get(id: string): Promise<Message | undefined>;
 };
 export function searchFilters(cwd: string, all: boolean): string[] {
@@ -527,9 +585,63 @@ export function meili(env: Env): Meili {
           q: query,
           filter: searchFilters(cwd, all),
           sort: ["createdAt:desc"],
+          limit: 8,
+          attributesToRetrieve: [
+            "id",
+            "kind",
+            "sessionId",
+            "sessionName",
+            "cwd",
+            "role",
+            "phase",
+            "createdAt",
+          ],
+          attributesToCrop: ["content:36"],
+          cropMarker: "…",
+          attributesToHighlight: ["content"],
+          highlightPreTag: "<mark>",
+          highlightPostTag: "</mark>",
         }),
       });
-      return r.json();
+      const value = (await r.json()) as {
+        estimatedTotalHits?: unknown;
+        hits?: unknown;
+      };
+      const hits = Array.isArray(value.hits) ? value.hits : [];
+      return {
+        query,
+        estimatedTotalHits:
+          typeof value.estimatedTotalHits === "number"
+            ? value.estimatedTotalHits
+            : 0,
+        hits: hits.flatMap((hit): SearchCard[] => {
+          if (
+            !object(hit) ||
+            !string(hit.id) ||
+            !string(hit.kind) ||
+            !string(hit.sessionId) ||
+            !string(hit.cwd) ||
+            !object(hit._formatted) ||
+            !string(hit._formatted.content)
+          )
+            return [];
+          if (hit.kind !== "message" && hit.kind !== "compaction") return [];
+          const card: SearchCard = {
+            id: hit.id,
+            kind: hit.kind,
+            sessionId: hit.sessionId,
+            cwd: hit.cwd,
+            snippet: hit._formatted.content,
+          };
+          if (string(hit.sessionName)) card.sessionName = hit.sessionName;
+          if (hit.role === "user" || hit.role === "assistant")
+            card.role = hit.role;
+          if (hit.phase === "commentary" || hit.phase === "final_answer")
+            card.phase = hit.phase;
+          if (validTime(hit.createdAt)) card.createdAt = hit.createdAt;
+          return [card];
+        }),
+      };
     },
     async get(id) {
       const r = await fetch(

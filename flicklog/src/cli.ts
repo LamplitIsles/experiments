@@ -10,10 +10,11 @@ import {
   scan,
   type Env,
 } from "./core";
+import { hostname } from "node:os";
 const exec = promisify(execFile);
 const err = (x: unknown) => (x instanceof Error ? x.message : String(x));
 function usage() {
-  return "Usage: flicklog <setup|search|context> [arguments]\n\nsearch <query> [--all-projects]\ncontext <message-id>\n";
+  return "Usage: flicklog <setup|search|get|context> [arguments]\n\nsearch <query> [--all-projects]\nget <record-id>\ncontext <record-id> [--include-tools]\n";
 }
 async function binary() {
   for (const p of [
@@ -99,22 +100,41 @@ export async function run(
       return 0;
     }
     if (command === "context") {
-      if (args.length !== 1) throw new Error("context requires one message id");
-      const hit = await client.get(args[0]);
+      const include = args.includes("--include-tools");
+      const ids = args.filter((arg) => arg !== "--include-tools");
+      if (ids.length !== 1)
+        throw new Error(
+          "context requires one record id and optional --include-tools",
+        );
+      const hit = await client.get(ids[0]);
       if (!hit) throw new Error("message not found");
-      const include =
-        env.FLICKLOG_CONTEXT_INCLUDE_TOOLS !== "false" &&
-        env.FLICKLOG_CONTEXT_INCLUDE_TOOLS !== "0";
+      if (hit.deviceId !== hostname()) throw new Error("message not found");
       const text = await readFile(hit.sourcePath, "utf8");
+      const context = extractContext(text, hit.sourceRecordIndex, include);
       stdout.log(
         JSON.stringify({
           messageId: hit.id,
-          sourcePath: hit.sourcePath,
-          sourceRecordIndex: hit.sourceRecordIndex,
           includeTools: include,
-          items: extractContext(text, hit.sourceRecordIndex, include),
+          truncated: context.truncated,
+          items: context.items,
         }),
       );
+      return 0;
+    }
+    if (command === "get") {
+      if (args.length !== 1) throw new Error("get requires one record id");
+      const hit = await client.get(args[0]);
+      if (!hit || hit.deviceId !== hostname())
+        throw new Error("record not found");
+      const {
+        sourceId: _sourceId,
+        sourcePath: _sourcePath,
+        sourceRecordIndex: _sourceRecordIndex,
+        deviceId: _deviceId,
+        agent: _agent,
+        ...record
+      } = hit;
+      stdout.log(JSON.stringify(record));
       return 0;
     }
     throw new Error(`unknown command: ${command}`);
