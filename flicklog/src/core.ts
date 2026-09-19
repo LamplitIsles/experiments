@@ -92,6 +92,7 @@ const object = (x: unknown): x is Json =>
   typeof x === "object" && x !== null && !Array.isArray(x);
 const string = (x: unknown): x is string =>
   typeof x === "string" && x.length > 0;
+const characterCount = (value: string) => Array.from(value).length;
 const validTime = (x: unknown): x is string =>
   string(x) && Number.isFinite(Date.parse(x));
 export const messageId = (
@@ -453,7 +454,7 @@ export function extractContext(
     for (let kept = Math.min(characters.length - 1, limit); kept >= 0; kept--) {
       const omitted = characters.length - kept;
       const marker = `…${omitted} chars truncated…`;
-      if (kept + Array.from(marker).length > limit) continue;
+      if (kept + characterCount(marker) > limit) continue;
       const head = Math.ceil(kept / 2);
       return `${characters.slice(0, head).join("")}${marker}${characters.slice(head - kept).join("")}`;
     }
@@ -468,10 +469,10 @@ export function extractContext(
       truncated = true;
       continue;
     }
-    const clipped = content.length !== item.content.length;
+    const clipped = characterCount(content) !== characterCount(item.content);
     if (clipped) truncated = true;
     chosen.push({ ...item, content, ...(clipped ? { truncated: true } : {}) });
-    remaining -= content.length;
+    remaining -= characterCount(content);
   }
   return {
     items: chosen.sort((a, b) => a.sourceRecordIndex - b.sourceRecordIndex),

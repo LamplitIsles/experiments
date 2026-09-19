@@ -395,6 +395,38 @@ describe("source context and setup contract", () => {
     ).toBeLessThanOrEqual(52);
     expect(context.items[0].content).toContain("😀");
   });
+  test("shares the context budget in Unicode code points", () => {
+    const message = (text: string) => ({
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text }],
+        internal_chat_message_metadata_passthrough: {
+          content_item_kinds: ["user.text"],
+        },
+      },
+    });
+    const nearest = "B".repeat(5999);
+    const target = "😀".repeat(6001);
+    const context = extractContext(
+      [message(nearest), message(target)]
+        .map((item) => JSON.stringify(item))
+        .join("\n") + "\n",
+      1,
+      false,
+    );
+    expect(context.items.map((item) => item.sourceRecordIndex)).toEqual([0, 1]);
+    expect(context.items[1].content).toBe(target);
+    expect(context.items[0].content).toBe(nearest);
+    expect(context.truncated).toBe(false);
+    expect(
+      context.items.reduce(
+        (total, item) => total + Array.from(item.content).length,
+        0,
+      ),
+    ).toBeLessThanOrEqual(12000);
+  });
   test("keeps device filtering when all projects is selected", () => {
     expect(searchFilters("/project", false)).toHaveLength(2);
     expect(searchFilters("/project", true)).toHaveLength(1);
