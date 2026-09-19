@@ -19,7 +19,8 @@ test("uses managed key and waits for fake async tasks", async () => {
   const polled = new Set<number>(),
     pending = new Map<number, () => void>(),
     failed = new Map<number, string>(),
-    documents: any[] = [];
+    documents: any[] = [],
+    searchLimits: number[] = [];
   server = Bun.serve({
     port: 0,
     fetch: async (request) => {
@@ -57,7 +58,46 @@ test("uses managed key and waits for fake async tasks", async () => {
         pending.delete(id);
         return Response.json({ status: "succeeded" });
       }
-      if (path.endsWith("/search")) return Response.json({ hits: documents });
+      if (path.endsWith("/search")) {
+        const body = (await request.json()) as any;
+        searchLimits.push(body.limit);
+        expect(body).toMatchObject({
+          q: "中文",
+          attributesToRetrieve: [
+            "id",
+            "kind",
+            "sessionId",
+            "sessionName",
+            "cwd",
+            "role",
+            "phase",
+            "createdAt",
+          ],
+          attributesToCrop: ["content:36"],
+          cropMarker: "…",
+          attributesToHighlight: ["content"],
+          highlightPreTag: "<mark>",
+          highlightPostTag: "</mark>",
+        });
+        expect(body.filter).toEqual([
+          `deviceId = ${JSON.stringify(hostname())}`,
+          'cwd = "/p"',
+        ]);
+        return Response.json({
+          estimatedTotalHits: 1,
+          hits: documents.map(
+            ({
+              content: _content,
+              sourcePath: _sourcePath,
+              sourceRecordIndex: _sourceRecordIndex,
+              ...item
+            }) => ({
+              ...item,
+              _formatted: { content: "…<mark>中文</mark> English…" },
+            }),
+          ),
+        });
+      }
       return new Response("missing", { status: 404 });
     },
   });
@@ -82,7 +122,21 @@ test("uses managed key and waits for fake async tasks", async () => {
     },
   ]);
   expect(polled.size).toBeGreaterThanOrEqual(3);
-  expect(((await client.search("中文", "/p", false)) as any).hits).toHaveLength(
-    1,
-  );
+  const search = await client.search("中文", "/p", false);
+  await client.search("中文", "/p", false, 12);
+  expect(searchLimits).toEqual([5, 12]);
+  expect(search).toEqual({
+    query: "中文",
+    estimatedTotalHits: 1,
+    hits: [
+      {
+        id: "a",
+        kind: "message",
+        sessionId: "s",
+        cwd: "/p",
+        role: "user",
+        snippet: "…<mark>中文</mark> English…",
+      },
+    ],
+  });
 });

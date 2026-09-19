@@ -10,10 +10,41 @@ import {
   scan,
   type Env,
 } from "./core";
+import { hostname } from "node:os";
 const exec = promisify(execFile);
 const err = (x: unknown) => (x instanceof Error ? x.message : String(x));
 function usage() {
-  return "Usage: flicklog <setup|search|context> [arguments]\n\nsearch <query> [--all-projects]\ncontext <message-id>\n";
+  return "Usage: flicklog <setup|search|get|context> [arguments]\n\nsearch <query> [--all-projects] [--limit <1-20>]\nget <record-id>\ncontext <record-id> [--include-tools]\n";
+}
+function searchArguments(args: string[]) {
+  let all = false;
+  let limit = 5;
+  let hasLimit = false;
+  const query: string[] = [];
+  for (let index = 0; index < args.length; index++) {
+    const argument = args[index];
+    if (argument === "--all-projects") {
+      all = true;
+      continue;
+    }
+    if (argument === "--limit") {
+      if (index + 1 === args.length || hasLimit)
+        throw new Error("search --limit requires one integer from 1 to 20");
+      const value = args[++index];
+      if (!/^[1-9]\d*$/.test(value))
+        throw new Error("search --limit must be an integer from 1 to 20");
+      limit = Number(value);
+      if (limit > 20)
+        throw new Error("search --limit must be an integer from 1 to 20");
+      hasLimit = true;
+      continue;
+    }
+    if (argument.startsWith("--"))
+      throw new Error(`unknown search option: ${argument}`);
+    query.push(argument);
+  }
+  if (!query.length) throw new Error("search requires a query");
+  return { all, limit, query: query.join(" ") };
 }
 async function binary() {
   for (const p of [
@@ -85,36 +116,53 @@ export async function run(
     }
     const client = meili(env);
     if (command === "search") {
-      const all = args.includes("--all-projects"),
-        query = args.filter((x) => x !== "--all-projects").join(" ");
-      if (!query) throw new Error("search requires a query");
+      const { all, limit, query } = searchArguments(args);
       await client.configure();
       const sync = await scan(env, (items) => client.add(items));
       stdout.log(
         JSON.stringify({
           sync,
-          results: await client.search(query, normalizeCwd(cwd), all),
+          results: await client.search(query, normalizeCwd(cwd), all, limit),
         }),
       );
       return 0;
     }
     if (command === "context") {
-      if (args.length !== 1) throw new Error("context requires one message id");
-      const hit = await client.get(args[0]);
+      const include = args.includes("--include-tools");
+      const ids = args.filter((arg) => arg !== "--include-tools");
+      if (ids.length !== 1)
+        throw new Error(
+          "context requires one record id and optional --include-tools",
+        );
+      const hit = await client.get(ids[0]);
       if (!hit) throw new Error("message not found");
-      const include =
-        env.FLICKLOG_CONTEXT_INCLUDE_TOOLS !== "false" &&
-        env.FLICKLOG_CONTEXT_INCLUDE_TOOLS !== "0";
+      if (hit.deviceId !== hostname()) throw new Error("message not found");
       const text = await readFile(hit.sourcePath, "utf8");
+      const context = extractContext(text, hit.sourceRecordIndex, include);
       stdout.log(
         JSON.stringify({
           messageId: hit.id,
-          sourcePath: hit.sourcePath,
-          sourceRecordIndex: hit.sourceRecordIndex,
           includeTools: include,
-          items: extractContext(text, hit.sourceRecordIndex, include),
+          truncated: context.truncated,
+          items: context.items,
         }),
       );
+      return 0;
+    }
+    if (command === "get") {
+      if (args.length !== 1) throw new Error("get requires one record id");
+      const hit = await client.get(args[0]);
+      if (!hit || hit.deviceId !== hostname())
+        throw new Error("record not found");
+      const {
+        sourceId: _sourceId,
+        sourcePath: _sourcePath,
+        sourceRecordIndex: _sourceRecordIndex,
+        deviceId: _deviceId,
+        agent: _agent,
+        ...record
+      } = hit;
+      stdout.log(JSON.stringify(record));
       return 0;
     }
     throw new Error(`unknown command: ${command}`);

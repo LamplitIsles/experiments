@@ -36,7 +36,7 @@ Search defaults to the CLI process's exact normalized working directory on the c
 
 ### Context expansion
 
-Context expansion starts from one indexed message and reads surrounding records from the original Codex JSONL. Search indexes only natural-language messages, but the CLI context command may expose nearby tool calls/results when `FLICKLOG_CONTEXT_INCLUDE_TOOLS` is enabled (the default). Tool activity remains source data, not indexed FlickLog messages.
+Context expansion starts from one indexed record and reads its surrounding records from the original Codex JSONL. `flicklog context <record-id>` returns eligible natural-language messages and plaintext compactions only; `--include-tools` explicitly adds supported nearby tool calls/results. The selected record and nearest eligible source-record neighbourhood share one 12,000-character budget. Clipped content keeps balanced Unicode-safe head and tail text around an `…<N> chars truncated…` marker, and the response reports truncation. Tool activity remains source data, not indexed FlickLog messages.
 
 ## v0 boundaries
 
@@ -44,7 +44,7 @@ Context expansion starts from one indexed message and reads surrounding records 
 - Codex only.
 - Natural-language user and assistant messages, plus non-empty plaintext compaction checkpoints.
 - Assistant `commentary` and `final_answer` remain separate messages.
-- No tool-call indexing; `flicklog context` may return source tool calls/results on demand according to environment configuration.
+- No tool-call indexing; `flicklog context <record-id> --include-tools` may return supported source tool calls/results within its global budget.
 - No reasoning/thinking indexing.
 - No SQLite canonical store.
 - Codex JSONL remains the source of truth.

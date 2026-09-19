@@ -22,22 +22,26 @@ flicklog setup
 From a project directory with Codex history:
 
 ```sh
-flicklog search "Chinese keyword 或 code identifier"
+flicklog search "Chinese keyword 或 code identifier" # five cards by default
 flicklog search "release decision" --all-projects
-flicklog context <message-id>
+flicklog search "release decision" --limit 12
+flicklog get <record-id>
+flicklog context <record-id>
+flicklog context <record-id> --include-tools
 ```
 
 Every successful command writes one JSON object to stdout. Warnings/errors go to stderr and failures return non-zero. `search` incrementally scans first: it checkpoints complete JSONL byte offsets and original source record ordinals, skips unchanged files, and reads only appended bytes for grown files. Search defaults to this machine’s hostname-derived `deviceId` and the exact normalized current working directory. `--all-projects` removes only cwd filtering; device isolation remains.
 
 FlickLog indexes two kinds of semantic history: Codex top-level user messages and assistant `commentary`/`final_answer` messages (`kind: "message"`), plus non-empty Codex `compacted.payload.message` checkpoints (`kind: "compaction"`). Commentary and final answers are separate documents. Compaction indexes only its plaintext message, never `replacement_history`, and has no fabricated user/assistant role. Tool activity, reasoning/thinking, developer/system text, injected provenance, and spawned sessions are never indexed.
 
-`context` resolves an indexed hit to its original JSONL path/record and returns nearby source items in order. It includes tool calls/results by default but never reasoning; large tool payloads are truncated with `truncated: true`. Tools are context-only, not searchable.
+`search` returns five compact cards by default; `--limit <1-20>` deliberately requests a different bounded count. Each card has a stable record ID and a Meilisearch-highlighted, query-centred snippet; it never returns full record content or source provenance. Use `get <record-id>` to expand exactly one selected same-device record in full.
+
+`context <record-id>` resolves a selected same-device record to its original JSONL and returns its nearby source items in order. By default it includes only natural-language messages and plaintext compactions, never reasoning. `--include-tools` deliberately adds supported nearby tool calls/results. All returned item content shares one 12,000-character budget; clipped items keep balanced Unicode-safe head and tail text around an omission-count marker such as `…42 chars truncated…`, and the response reports `truncated: true`. Tools are context-only, not searchable.
 
 ## Environment
 
 - `CODEX_HOME` — source Codex home (default `~/.codex`); useful for isolated testing.
 - `FLICKLOG_STATE_DIR` — FlickLog-owned local state (default `~/.flicklog`).
-- `FLICKLOG_CONTEXT_INCLUDE_TOOLS=false` or `0` — omit tool items from context.
 - `FLICKLOG_MEILI_URL` and `FLICKLOG_MEILI_KEY` — use an external Meilisearch instance; `setup` then does not manage a LaunchAgent.
 - `FLICKLOG_MEILI_PORT` — local dedicated port (default `7701`).
 
