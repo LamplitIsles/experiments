@@ -1,0 +1,19 @@
+{
+  "name": "experiments",
+  "private": true,
+  "scripts": {
+    "prepare": "lefthook install",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check ."
+  },
+  "devDependencies": {
+    "lefthook": "^1.11.13",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:"
+  },
+  "packageManager": "pnpm@12.3.4"
+}

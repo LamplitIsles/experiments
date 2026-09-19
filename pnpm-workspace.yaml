@@ -1,0 +1,11 @@
+packages:
+  - flicklog
+  - utterlog
+
+catalog:
+  typescript: 7.0.2
+  oxlint: 1.82.0
+  oxfmt: 0.67.0
+
+allowBuilds:
+  lefthook: true

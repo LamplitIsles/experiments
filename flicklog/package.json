@@ -1,18 +1,15 @@
 {
-  "name": "utterlog",
+  "name": "flicklog",
   "version": "0.1.0",
   "private": true,
   "bin": {
-    "utterlog": "./src/cli.ts"
+    "flicklog": "./src/cli.ts"
   },
   "type": "module",
   "scripts": {
     "start": "bun src/cli.ts",
-    "test": "TZ=Asia/Taipei bun test",
+    "test": "bun test",
     "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@opentui/core": "^0.5.11"
   },
   "devDependencies": {
     "bun-types": "^1.4.2",

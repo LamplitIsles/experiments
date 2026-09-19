@@ -23,7 +23,10 @@ export type WatchHandle = Pick<FSWatcher, "close"> & {
   off?: (event: "error", listener: (error: Error) => void) => unknown;
 };
 
-export type WatchFactory = (path: string, listener: (eventType: string) => void) => WatchHandle;
+export type WatchFactory = (
+  path: string,
+  listener: (eventType: string) => void,
+) => WatchHandle;
 
 export type RendererFactory = () => Promise<CliRenderer>;
 
@@ -88,7 +91,10 @@ function errorText(error: unknown): string {
 }
 
 function oneLine(value: string): string {
-  return value.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
+  return value
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function statusText(value: string, limit = 140): string {
@@ -101,16 +107,34 @@ function safeDisplay(value: string): string {
 }
 
 function messageKey(message: TranscriptMessage): string {
-  return [message.role, message.phase ?? "", message.timestampLabel, message.body].join("\u0000");
+  return [
+    message.role,
+    message.phase ?? "",
+    message.timestampLabel,
+    message.body,
+  ].join("\u0000");
 }
 
-function sameMessages(left: TranscriptMessage[], right: TranscriptMessage[]): boolean {
+function sameMessages(
+  left: TranscriptMessage[],
+  right: TranscriptMessage[],
+): boolean {
   if (left.length !== right.length) return false;
-  return left.every((message, index) => messageKey(message) === messageKey(right[index]));
+  return left.every(
+    (message, index) => messageKey(message) === messageKey(right[index]),
+  );
 }
 
-function hasPrefix(prefix: TranscriptMessage[], value: TranscriptMessage[]): boolean {
-  return prefix.length <= value.length && prefix.every((message, index) => messageKey(message) === messageKey(value[index]));
+function hasPrefix(
+  prefix: TranscriptMessage[],
+  value: TranscriptMessage[],
+): boolean {
+  return (
+    prefix.length <= value.length &&
+    prefix.every(
+      (message, index) => messageKey(message) === messageKey(value[index]),
+    )
+  );
 }
 
 function displayWidth(character: string): number {
@@ -147,18 +171,30 @@ function messageHeading(message: TranscriptMessage, index: number): string {
   return `▸ ${role} · ${message.timestampLabel} · message ${index + 1}`;
 }
 
-function findMatches(messages: TranscriptMessage[], query: string): SearchMatch[] {
+function findMatches(
+  messages: TranscriptMessage[],
+  query: string,
+): SearchMatch[] {
   if (query.length === 0) return [];
   const needle = query.toLocaleLowerCase();
   const matches: SearchMatch[] = [];
   messages.forEach((message, messageIndex) => {
     for (const part of ["heading", "body"] as const) {
-      const haystack = (part === "heading" ? messageHeading(message, messageIndex) : message.body).toLocaleLowerCase();
+      const haystack = (
+        part === "heading"
+          ? messageHeading(message, messageIndex)
+          : message.body
+      ).toLocaleLowerCase();
       let offset = 0;
       while (offset <= haystack.length - needle.length) {
         const match = haystack.indexOf(needle, offset);
         if (match < 0) break;
-        matches.push({ messageIndex, part, offset: match, messageKey: messageKey(message) });
+        matches.push({
+          messageIndex,
+          part,
+          offset: match,
+          messageKey: messageKey(message),
+        });
         offset = match + needle.length;
       }
     }
@@ -166,16 +202,23 @@ function findMatches(messages: TranscriptMessage[], query: string): SearchMatch[
   return matches;
 }
 
-function findMatchIndex(matches: SearchMatch[], selected: SearchMatch | undefined): number {
+function findMatchIndex(
+  matches: SearchMatch[],
+  selected: SearchMatch | undefined,
+): number {
   if (!selected) return matches.length > 0 ? 0 : -1;
   const index = matches.findIndex(
-    (match) => match.messageKey === selected.messageKey && match.part === selected.part && match.offset === selected.offset,
+    (match) =>
+      match.messageKey === selected.messageKey &&
+      match.part === selected.part &&
+      match.offset === selected.offset,
   );
   return index >= 0 ? index : matches.length > 0 ? 0 : -1;
 }
 
 function makeWatchFactory(): WatchFactory {
-  return (path, listener) => watchPath(path, (eventType) => listener(eventType));
+  return (path, listener) =>
+    watchPath(path, (eventType) => listener(eventType));
 }
 
 export class ConversationReader {
@@ -239,7 +282,12 @@ export class ConversationReader {
   private resolveExit!: (result: ReaderExit) => void;
   private readonly exitPromise: Promise<ReaderExit>;
 
-  public constructor(options: ConversationReaderOptions & { renderer: CliRenderer; ownsRenderer?: boolean }) {
+  public constructor(
+    options: ConversationReaderOptions & {
+      renderer: CliRenderer;
+      ownsRenderer?: boolean;
+    },
+  ) {
     this.session = options.session;
     this.messages = options.messages.slice();
     this.load = options.load;
@@ -281,7 +329,10 @@ export class ConversationReader {
         scrollX: false,
         viewportCulling: true,
         scrollbarOptions: {
-          trackOptions: { foregroundColor: "#64748b", backgroundColor: "#0b1020" },
+          trackOptions: {
+            foregroundColor: "#64748b",
+            backgroundColor: "#0b1020",
+          },
         },
       });
       this.footer = new BoxRenderable(this.renderer, {
@@ -303,7 +354,8 @@ export class ConversationReader {
         flexShrink: 0,
         truncate: true,
         fg: "#cbd5e1",
-        content: "q quit · b/Esc back · / search · j/k ↑↓ · ^d/^u half · gg/G ends · n/N · r refresh",
+        content:
+          "q quit · b/Esc back · / search · j/k ↑↓ · ^d/^u half · gg/G ends · n/N · r refresh",
       });
       this.searchPrompt = new TextRenderable(this.renderer, {
         width: 2,
@@ -342,7 +394,10 @@ export class ConversationReader {
       this.appRoot.add(this.footer);
       // Events bubble here after ScrollBox has applied its native wheel movement.
       this.appRoot.onMouseScroll = (event) => {
-        if (event.y >= this.scrollBox.y && event.y < this.scrollBox.y + this.scrollBox.height) {
+        if (
+          event.y >= this.scrollBox.y &&
+          event.y < this.scrollBox.y + this.scrollBox.height
+        ) {
           this.moveScroll(0);
         }
       };
@@ -351,7 +406,11 @@ export class ConversationReader {
       this.keyHandler = (key) => this.handleKey(key);
       this.frameHandler = () => {
         this.applyPendingPosition();
-        if (!this.disposed && this.follow && this.scrollBox.scrollTop < this.maximumScrollTop()) {
+        if (
+          !this.disposed &&
+          this.follow &&
+          this.scrollBox.scrollTop < this.maximumScrollTop()
+        ) {
           this.scrollToBottom();
           this.renderer.requestRender();
         }
@@ -398,7 +457,11 @@ export class ConversationReader {
 
   public waitForIdle(): Promise<void> {
     if (this.disposed) return Promise.resolve();
-    if (!this.refreshInFlight && !this.refreshQueued && this.refreshTimer === undefined) {
+    if (
+      !this.refreshInFlight &&
+      !this.refreshQueued &&
+      this.refreshTimer === undefined
+    ) {
       return Promise.resolve();
     }
     return new Promise((resolve) => this.idleWaiters.push(resolve));
@@ -437,7 +500,8 @@ export class ConversationReader {
     if (this.disposed) return;
     this.disposed = true;
     this.closeWatcher();
-    if (this.watcherRetryTimer !== undefined) clearTimeout(this.watcherRetryTimer);
+    if (this.watcherRetryTimer !== undefined)
+      clearTimeout(this.watcherRetryTimer);
     if (this.refreshTimer !== undefined) clearTimeout(this.refreshTimer);
     this.watcherRetryTimer = undefined;
     this.refreshTimer = undefined;
@@ -451,7 +515,11 @@ export class ConversationReader {
     this.searchInput.off(InputRenderableEvents.INPUT, this.inputHandler);
     this.searchInput.off(InputRenderableEvents.ENTER, this.enterHandler);
     if (!this.searchInput.isDestroyed) this.searchInput.blur();
-    if (!rendererAlreadyDestroyed && this.ownsRenderer && !this.renderer.isDestroyed) {
+    if (
+      !rendererAlreadyDestroyed &&
+      this.ownsRenderer &&
+      !this.renderer.isDestroyed
+    ) {
       this.renderer.destroy();
     }
     if (!this.appRoot.isDestroyed) this.appRoot.destroyRecursively();
@@ -528,10 +596,13 @@ export class ConversationReader {
       this.refreshTimer = undefined;
     }
     if (this.refreshTimer !== undefined) return;
-    this.refreshTimer = setTimeout(() => {
-      this.refreshTimer = undefined;
-      void this.performRefresh();
-    }, explicit ? 0 : this.coalesceDelayMs);
+    this.refreshTimer = setTimeout(
+      () => {
+        this.refreshTimer = undefined;
+        void this.performRefresh();
+      },
+      explicit ? 0 : this.coalesceDelayMs,
+    );
     this.updateFooter();
   }
 
@@ -543,7 +614,8 @@ export class ConversationReader {
       const nextMessages = await this.load();
       if (!this.disposed) this.applyMessages(nextMessages);
     } catch (error) {
-      if (!this.disposed) this.setRefreshError(`refresh error: ${errorText(error)}`);
+      if (!this.disposed)
+        this.setRefreshError(`refresh error: ${errorText(error)}`);
     } finally {
       this.refreshInFlight = false;
       if (this.disposed) {
@@ -577,8 +649,14 @@ export class ConversationReader {
     const appendOnly = hasPrefix(oldMessages, nextMessages);
     this.messages = nextMessages.slice();
     if (appendOnly) {
-      for (let index = oldMessages.length; index < nextMessages.length; index += 1) {
-        this.messageViews.push(this.createMessageView(nextMessages[index], index));
+      for (
+        let index = oldMessages.length;
+        index < nextMessages.length;
+        index += 1
+      ) {
+        this.messageViews.push(
+          this.createMessageView(nextMessages[index], index),
+        );
         this.scrollBox.add(this.messageViews.at(-1)!.box);
       }
     } else {
@@ -613,11 +691,16 @@ export class ConversationReader {
       this.scrollBox.remove(view.box);
       if (!view.box.isDestroyed) view.box.destroyRecursively();
     }
-    this.messageViews = messages.map((message, index) => this.createMessageView(message, index));
+    this.messageViews = messages.map((message, index) =>
+      this.createMessageView(message, index),
+    );
     for (const view of this.messageViews) this.scrollBox.add(view.box);
   }
 
-  private createMessageView(message: TranscriptMessage, index: number): MessageView {
+  private createMessageView(
+    message: TranscriptMessage,
+    index: number,
+  ): MessageView {
     const color = message.role === "user" ? "#fbbf24" : "#86efac";
     const box = new BoxRenderable(this.renderer, {
       id: `message-${index}`,
@@ -647,7 +730,8 @@ export class ConversationReader {
     });
     // Static markdown otherwise hides text until Tree-sitter finishes. Keep the
     // first frame readable without changing markdown's parsing/streaming state.
-    for (const code of this.markdownCodeBlocks(body)) code.drawUnstyledText = true;
+    for (const code of this.markdownCodeBlocks(body))
+      code.drawUnstyledText = true;
     box.add(heading);
     box.add(body);
     return { box, heading, body };
@@ -680,7 +764,9 @@ export class ConversationReader {
 
   private currentStatus(): string {
     const readingStatus = this.currentReadingStatus();
-    return this.clipboardNote ? `${readingStatus} · ${this.clipboardNote}` : readingStatus;
+    return this.clipboardNote
+      ? `${readingStatus} · ${this.clipboardNote}`
+      : readingStatus;
   }
 
   private currentReadingStatus(): string {
@@ -696,7 +782,8 @@ export class ConversationReader {
         : this.follow
           ? "follow: on"
           : "follow: paused";
-      if (this.searchMatches.length === 0) return `no matches for /${safeDisplay(this.searchQuery)}/ · ${readingState}`;
+      if (this.searchMatches.length === 0)
+        return `no matches for /${safeDisplay(this.searchQuery)}/ · ${readingState}`;
       return `match ${this.searchMatchIndex + 1}/${this.searchMatches.length} · /${safeDisplay(this.searchQuery)}/ · ${readingState}`;
     }
     if (this.newContent) return "new content available · G to follow latest";
@@ -762,11 +849,15 @@ export class ConversationReader {
     } else if (key.ctrl && key.name === "d") {
       key.preventDefault();
       this.pendingG = false;
-      this.moveScroll(Math.max(1, Math.floor(this.scrollBox.viewport.height / 2)));
+      this.moveScroll(
+        Math.max(1, Math.floor(this.scrollBox.viewport.height / 2)),
+      );
     } else if (key.ctrl && key.name === "u") {
       key.preventDefault();
       this.pendingG = false;
-      this.moveScroll(-Math.max(1, Math.floor(this.scrollBox.viewport.height / 2)));
+      this.moveScroll(
+        -Math.max(1, Math.floor(this.scrollBox.viewport.height / 2)),
+      );
     } else {
       this.pendingG = false;
     }
@@ -805,7 +896,8 @@ export class ConversationReader {
     this.refreshNote = undefined;
     this.searchMatches = findMatches(this.messages, query);
     this.searchMatchIndex = this.searchMatches.length > 0 ? 0 : -1;
-    if (this.searchMatchIndex >= 0) this.schedulePosition(() => this.scrollToCurrentMatch());
+    if (this.searchMatchIndex >= 0)
+      this.schedulePosition(() => this.scrollToCurrentMatch());
     this.updateFooter();
   }
 
@@ -823,7 +915,8 @@ export class ConversationReader {
     this.newContent = false;
     this.refreshNote = undefined;
     this.searchMatchIndex =
-      (this.searchMatchIndex + direction + this.searchMatches.length) % this.searchMatches.length;
+      (this.searchMatchIndex + direction + this.searchMatches.length) %
+      this.searchMatches.length;
     this.schedulePosition(() => this.scrollToCurrentMatch());
     this.updateFooter();
   }
@@ -861,7 +954,10 @@ export class ConversationReader {
   }
 
   private maximumScrollTop(): number {
-    return Math.max(0, this.scrollBox.scrollHeight - this.scrollBox.viewport.height);
+    return Math.max(
+      0,
+      this.scrollBox.scrollHeight - this.scrollBox.viewport.height,
+    );
   }
 
   private scrollToBottom(): void {
@@ -872,7 +968,11 @@ export class ConversationReader {
     if (this.messageViews.length === 0) return undefined;
     const position = this.scrollBox.scrollTop;
     let index = 0;
-    for (let candidate = 0; candidate < this.messageViews.length; candidate += 1) {
+    for (
+      let candidate = 0;
+      candidate < this.messageViews.length;
+      candidate += 1
+    ) {
       const view = this.messageViews[candidate];
       const contentY = view.box.y + position;
       if (contentY + view.box.height > position) {
@@ -892,13 +992,20 @@ export class ConversationReader {
 
   private restoreAnchor(anchor: Anchor | undefined): void {
     if (!anchor || this.messageViews.length === 0) {
-      this.scrollBox.scrollTo(Math.min(this.scrollBox.scrollTop, this.maximumScrollTop()));
+      this.scrollBox.scrollTo(
+        Math.min(this.scrollBox.scrollTop, this.maximumScrollTop()),
+      );
       return;
     }
     const index = this.messages.findIndex(
-      (message, candidate) => candidate >= anchor.messageIndex && messageKey(message) === anchor.messageKey,
+      (message, candidate) =>
+        candidate >= anchor.messageIndex &&
+        messageKey(message) === anchor.messageKey,
     );
-    const resolvedIndex = index >= 0 ? index : Math.min(anchor.messageIndex, this.messageViews.length - 1);
+    const resolvedIndex =
+      index >= 0
+        ? index
+        : Math.min(anchor.messageIndex, this.messageViews.length - 1);
     const view = this.messageViews[resolvedIndex];
     const contentY = view.box.y + this.scrollBox.scrollTop;
     this.scrollBox.scrollTo(contentY + anchor.offset);
@@ -923,15 +1030,30 @@ export class ConversationReader {
     const view = this.messageViews[match.messageIndex];
     const message = this.messages[match.messageIndex];
     if (!view || !message) return;
-    const width = view.body.width > 0 ? view.body.width : Math.max(1, this.scrollBox.viewport.width - 2);
-    const line = match.part === "body" ? wrappedLineAt(message.body, match.offset, width) : 0;
+    const width =
+      view.body.width > 0
+        ? view.body.width
+        : Math.max(1, this.scrollBox.viewport.width - 2);
+    const line =
+      match.part === "body"
+        ? wrappedLineAt(message.body, match.offset, width)
+        : 0;
     const contentY = view[match.part].y + this.scrollBox.scrollTop;
-    const target = contentY + line - Math.floor(Math.max(1, this.scrollBox.viewport.height) / 3);
+    const target =
+      contentY +
+      line -
+      Math.floor(Math.max(1, this.scrollBox.viewport.height) / 3);
     this.scrollBox.scrollTo(target);
   }
 
   private resolveIdleWaiters(force = false): void {
-    if (!force && (this.refreshInFlight || this.refreshQueued || this.refreshTimer !== undefined)) return;
+    if (
+      !force &&
+      (this.refreshInFlight ||
+        this.refreshQueued ||
+        this.refreshTimer !== undefined)
+    )
+      return;
     const waiters = this.idleWaiters;
     this.idleWaiters = [];
     for (const resolve of waiters) resolve();
@@ -945,10 +1067,17 @@ export class ConversationReader {
 }
 
 export function createTerminalRenderer(): Promise<CliRenderer> {
-  return createCliRenderer({ exitOnCtrlC: false, exitSignals: [], clearOnShutdown: true, backgroundColor: "#0b1020" });
+  return createCliRenderer({
+    exitOnCtrlC: false,
+    exitSignals: [],
+    clearOnShutdown: true,
+    backgroundColor: "#0b1020",
+  });
 }
 
-export async function createConversationReader(options: ConversationReaderOptions): Promise<ConversationReader> {
+export async function createConversationReader(
+  options: ConversationReaderOptions,
+): Promise<ConversationReader> {
   let renderer = options.renderer;
   const ownsRenderer = options.ownsRenderer ?? true;
   try {

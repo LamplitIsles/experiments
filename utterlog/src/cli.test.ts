@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
-import { discoverSessions, parseTranscript, run, type NamedSession, type TranscriptMessage } from "./cli";
+import {
+  discoverSessions,
+  parseTranscript,
+  run,
+  type NamedSession,
+  type TranscriptMessage,
+} from "./cli";
 import type { RendererFactory } from "./reader";
 
 const ids = {
@@ -43,7 +49,9 @@ type CapturedOutput = {
   text(): string;
 };
 
-async function withFixture<T>(callback: (fixture: Fixture) => Promise<T>): Promise<T> {
+async function withFixture<T>(
+  callback: (fixture: Fixture) => Promise<T>,
+): Promise<T> {
   const root = await mkdtemp(join(tmpdir(), "utterlog-test-"));
   const fixture: Fixture = {
     root,
@@ -66,7 +74,8 @@ function captureOutput(): CapturedOutput {
   let value = "";
   return {
     write(chunk) {
-      value += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+      value +=
+        typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
       return true;
     },
     text() {
@@ -101,7 +110,11 @@ function sessionMessage(options: {
   };
 }
 
-function userText(text: string, timestamp = "2026-09-12T12:00:00.000Z", ordinal = 1): Record<string, unknown> {
+function userText(
+  text: string,
+  timestamp = "2026-09-12T12:00:00.000Z",
+  ordinal = 1,
+): Record<string, unknown> {
   return sessionMessage({
     role: "user",
     kinds: ["user.text"],
@@ -127,7 +140,10 @@ function assistantText(
   });
 }
 
-async function writeSession(fixture: Fixture, options: SessionOptions): Promise<string> {
+async function writeSession(
+  fixture: Fixture,
+  options: SessionOptions,
+): Promise<string> {
   const createdAt = options.createdAt ?? "2026-09-12T08:00:00.000Z";
   const activityAt = options.activityAt ?? createdAt;
   const meta = {
@@ -143,11 +159,17 @@ async function writeSession(fixture: Fixture, options: SessionOptions): Promise<
       thread_source: options.threadSource ?? "user",
     },
   };
-  const records = options.records ?? [userText(`session ${options.id}`, activityAt, 1), assistantText("done", "final_answer", activityAt, 2)];
+  const records = options.records ?? [
+    userText(`session ${options.id}`, activityAt, 1),
+    assistantText("done", "final_answer", activityAt, 2),
+  ];
   const directory = join(fixture.sessions, "2026", "09", "12");
   await mkdir(directory, { recursive: true });
   const path = join(directory, `rollout-${options.id}.jsonl`);
-  const text = [meta, ...records].map((record) => JSON.stringify(record)).join("\n") + "\n" + (options.trailing ?? "");
+  const text =
+    [meta, ...records].map((record) => JSON.stringify(record)).join("\n") +
+    "\n" +
+    (options.trailing ?? "");
   await writeFile(path, text, "utf8");
   if (options.name !== undefined) {
     fixture.indexEntries.push({
@@ -162,7 +184,8 @@ async function writeSession(fixture: Fixture, options: SessionOptions): Promise<
 async function writeIndex(fixture: Fixture): Promise<void> {
   await writeFile(
     join(fixture.codexHome, "session_index.jsonl"),
-    fixture.indexEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+    fixture.indexEntries.map((entry) => JSON.stringify(entry)).join("\n") +
+      "\n",
     "utf8",
   );
 }
@@ -171,7 +194,10 @@ function environment(fixture: Fixture): Record<string, string> {
   return { CODEX_HOME: fixture.codexHome, TZ: "Asia/Taipei" };
 }
 
-async function waitFrame(setup: Awaited<ReturnType<typeof createTestRenderer>>, text: string): Promise<string> {
+async function waitFrame(
+  setup: Awaited<ReturnType<typeof createTestRenderer>>,
+  text: string,
+): Promise<string> {
   for (let attempt = 0; attempt < 200; attempt++) {
     await setup.renderOnce();
     const frame = setup.captureCharFrame();
@@ -213,7 +239,10 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-async function collectPtyStream(stream: ReadableStream<Uint8Array>, onChunk?: (text: string) => void): Promise<string> {
+async function collectPtyStream(
+  stream: ReadableStream<Uint8Array>,
+  onChunk?: (text: string) => void,
+): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let output = "";
@@ -235,17 +264,60 @@ async function collectPtyStream(stream: ReadableStream<Uint8Array>, onChunk?: (t
 describe("utterlog picker and session reader integration", () => {
   test("keeps exact-cwd activity ordering and ignores unrelated sessions", async () => {
     await withFixture(async (fixture) => {
-      await writeSession(fixture, { id: ids.newest, cwd: fixture.cwd, name: "Repeated name", activityAt: "2026-09-12T12:00:00.000Z", indexUpdatedAt: "2026-09-12T09:00:00.000Z" });
-      await writeSession(fixture, { id: ids.other, cwd: fixture.cwd, name: "Different name", activityAt: "2026-09-12T11:00:00.000Z" });
-      const oldestPath = await writeSession(fixture, { id: ids.oldest, cwd: fixture.cwd, name: "Repeated name", activityAt: "2026-09-12T10:00:00.000Z", indexUpdatedAt: "2026-09-12T14:00:00.000Z" });
-      await writeSession(fixture, { id: ids.parent, cwd: fixture.root, name: "Parent session", activityAt: "2026-09-12T15:00:00.000Z" });
-      await writeSession(fixture, { id: ids.unnamed, cwd: fixture.cwd, activityAt: "2026-09-12T18:00:00.000Z" });
-      await writeSession(fixture, { id: ids.subagent, cwd: fixture.cwd, name: "Subagent session", source: { subagent: {} }, threadSource: "subagent", activityAt: "2026-09-12T19:00:00.000Z" });
-      await writeSession(fixture, { id: ids.malformed, cwd: fixture.cwd, name: "Malformed human candidate", createdAt: "not-a-source-time", activityAt: "2026-09-12T18:00:00.000Z" });
+      await writeSession(fixture, {
+        id: ids.newest,
+        cwd: fixture.cwd,
+        name: "Repeated name",
+        activityAt: "2026-09-12T12:00:00.000Z",
+        indexUpdatedAt: "2026-09-12T09:00:00.000Z",
+      });
+      await writeSession(fixture, {
+        id: ids.other,
+        cwd: fixture.cwd,
+        name: "Different name",
+        activityAt: "2026-09-12T11:00:00.000Z",
+      });
+      const oldestPath = await writeSession(fixture, {
+        id: ids.oldest,
+        cwd: fixture.cwd,
+        name: "Repeated name",
+        activityAt: "2026-09-12T10:00:00.000Z",
+        indexUpdatedAt: "2026-09-12T14:00:00.000Z",
+      });
+      await writeSession(fixture, {
+        id: ids.parent,
+        cwd: fixture.root,
+        name: "Parent session",
+        activityAt: "2026-09-12T15:00:00.000Z",
+      });
+      await writeSession(fixture, {
+        id: ids.unnamed,
+        cwd: fixture.cwd,
+        activityAt: "2026-09-12T18:00:00.000Z",
+      });
+      await writeSession(fixture, {
+        id: ids.subagent,
+        cwd: fixture.cwd,
+        name: "Subagent session",
+        source: { subagent: {} },
+        threadSource: "subagent",
+        activityAt: "2026-09-12T19:00:00.000Z",
+      });
+      await writeSession(fixture, {
+        id: ids.malformed,
+        cwd: fixture.cwd,
+        name: "Malformed human candidate",
+        createdAt: "not-a-source-time",
+        activityAt: "2026-09-12T18:00:00.000Z",
+      });
       await writeIndex(fixture);
       const before = await readFile(oldestPath);
       const result = await discoverSessions(fixture.cwd, environment(fixture));
-      expect(result.candidates.map((session) => session.id)).toEqual([ids.newest, ids.other, ids.oldest]);
+      expect(result.candidates.map((session) => session.id)).toEqual([
+        ids.newest,
+        ids.other,
+        ids.oldest,
+      ]);
       expect(result.unnamedCount).toBe(1);
       expect(result.warnings.join("\n")).toContain(ids.malformed);
       expect(await readFile(oldestPath)).toEqual(before);
@@ -260,50 +332,147 @@ describe("utterlog picker and session reader integration", () => {
         name: "Newest",
         records: [
           userText("hello", "2026-09-12T10:00:00Z"),
-          { type: "response_item", timestamp: "2026-09-12T15:00:00Z", payload: { type: "custom_tool_call_output", output: "x".repeat(96 * 1024) } },
+          {
+            type: "response_item",
+            timestamp: "2026-09-12T15:00:00Z",
+            payload: {
+              type: "custom_tool_call_output",
+              output: "x".repeat(96 * 1024),
+            },
+          },
         ],
         trailing: `{"timestamp":"2026-09-12T23:00:00Z","unfinished":"${"x".repeat(96 * 1024)}`,
       });
-      await writeSession(fixture, { id: ids.oldest, cwd: fixture.cwd, name: "Older", activityAt: "2026-09-12T14:00:00Z", indexUpdatedAt: "2026-09-12T23:59:00Z" });
+      await writeSession(fixture, {
+        id: ids.oldest,
+        cwd: fixture.cwd,
+        name: "Older",
+        activityAt: "2026-09-12T14:00:00Z",
+        indexUpdatedAt: "2026-09-12T23:59:00Z",
+      });
       await writeIndex(fixture);
       const result = await discoverSessions(fixture.cwd, environment(fixture));
-      expect(result.candidates.map((session) => session.id)).toEqual([ids.newest, ids.oldest]);
-      expect(result.candidates[0].activityMs).toBe(Date.parse("2026-09-12T15:00:00Z"));
+      expect(result.candidates.map((session) => session.id)).toEqual([
+        ids.newest,
+        ids.oldest,
+      ]);
+      expect(result.candidates[0].activityMs).toBe(
+        Date.parse("2026-09-12T15:00:00Z"),
+      );
       expect(result.warnings).toEqual([]);
     });
   });
 
   test("preserves faithful user and assistant extraction, order, repetition, and source times", async () => {
     await withFixture(async (fixture) => {
-      const userBody = "Keep this literal: <agents_md.instructions> $()\n# User heading\n```sh\necho '[link](https://example.test)'\n```";
+      const userBody =
+        "Keep this literal: <agents_md.instructions> $()\n# User heading\n```sh\necho '[link](https://example.test)'\n```";
       const records: Array<Record<string, unknown>> = [
         sessionMessage({
           role: "user",
-          kinds: ["agents_md.instructions", "user.text", "user.image", "user.text"],
+          kinds: [
+            "agents_md.instructions",
+            "user.text",
+            "user.image",
+            "user.text",
+          ],
           content: [
             { type: "input_text", text: "Injected harness text" },
             { type: "input_text", text: userBody },
-            { type: "input_image", image_url: "data:image/png;base64,SECRET_IMAGE_PAYLOAD" },
+            {
+              type: "input_image",
+              image_url: "data:image/png;base64,SECRET_IMAGE_PAYLOAD",
+            },
             { type: "input_text", text: "\nAfter image" },
           ],
           timestamp: "2026-09-12T12:00:00.000Z",
           ordinal: 1,
         }),
-        { type: "event_msg", timestamp: "2026-09-12T12:01:00.000Z", payload: { type: "item_completed", item: { type: "AgentMessage", content: [{ type: "output_text", text: "MIRRORED ACTIVITY" }] } } },
-        { type: "response_item", timestamp: "2026-09-12T12:02:00.000Z", payload: { type: "reasoning", summary: [{ type: "summary_text", text: "PRIVATE REASONING" }] } },
-        { type: "response_item", timestamp: "2026-09-12T12:02:30.000Z", payload: { type: "message", role: "assistant", phase: "analysis", content: [{ type: "output_text", text: "PRIVATE ANALYSIS" }] } },
-        assistantText("Progress update — same text", "commentary", "2026-09-12T12:05:00.000Z", 7),
-        assistantText("Progress update — same text", "commentary", "2026-09-12T12:06:00.000Z", 8),
-        assistantText("final answer", "final_answer", "2026-09-12T12:07:00.000Z", 9),
-        sessionMessage({ role: "assistant", phase: "commentary", kinds: ["unknown"], content: [{ type: "output_text", text: "No trustworthy source time" }], timestamp: "not-a-source-time", ordinal: 10 }),
-        sessionMessage({ role: "user", kinds: ["shell.user_command"], content: [{ type: "input_text", text: "PRIVATE SHELL COMMAND" }], timestamp: "2026-09-12T12:08:00.000Z", ordinal: 11 }),
+        {
+          type: "event_msg",
+          timestamp: "2026-09-12T12:01:00.000Z",
+          payload: {
+            type: "item_completed",
+            item: {
+              type: "AgentMessage",
+              content: [{ type: "output_text", text: "MIRRORED ACTIVITY" }],
+            },
+          },
+        },
+        {
+          type: "response_item",
+          timestamp: "2026-09-12T12:02:00.000Z",
+          payload: {
+            type: "reasoning",
+            summary: [{ type: "summary_text", text: "PRIVATE REASONING" }],
+          },
+        },
+        {
+          type: "response_item",
+          timestamp: "2026-09-12T12:02:30.000Z",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "analysis",
+            content: [{ type: "output_text", text: "PRIVATE ANALYSIS" }],
+          },
+        },
+        assistantText(
+          "Progress update — same text",
+          "commentary",
+          "2026-09-12T12:05:00.000Z",
+          7,
+        ),
+        assistantText(
+          "Progress update — same text",
+          "commentary",
+          "2026-09-12T12:06:00.000Z",
+          8,
+        ),
+        assistantText(
+          "final answer",
+          "final_answer",
+          "2026-09-12T12:07:00.000Z",
+          9,
+        ),
+        sessionMessage({
+          role: "assistant",
+          phase: "commentary",
+          kinds: ["unknown"],
+          content: [
+            { type: "output_text", text: "No trustworthy source time" },
+          ],
+          timestamp: "not-a-source-time",
+          ordinal: 10,
+        }),
+        sessionMessage({
+          role: "user",
+          kinds: ["shell.user_command"],
+          content: [{ type: "input_text", text: "PRIVATE SHELL COMMAND" }],
+          timestamp: "2026-09-12T12:08:00.000Z",
+          ordinal: 11,
+        }),
       ];
-      const path = await writeSession(fixture, { id: ids.selected, cwd: fixture.cwd, name: "Selected", records });
-      const parsed = parseTranscript(await readFile(path, "utf8"), expectedSession(fixture));
+      const path = await writeSession(fixture, {
+        id: ids.selected,
+        cwd: fixture.cwd,
+        name: "Selected",
+        records,
+      });
+      const parsed = parseTranscript(
+        await readFile(path, "utf8"),
+        expectedSession(fixture),
+      );
 
       expect(parsed.errors).toEqual([]);
       expect(parsed.messages).toHaveLength(5);
-      expect(parsed.messages.map((entry) => entry.role)).toEqual(["user", "assistant", "assistant", "assistant", "assistant"]);
+      expect(parsed.messages.map((entry) => entry.role)).toEqual([
+        "user",
+        "assistant",
+        "assistant",
+        "assistant",
+        "assistant",
+      ]);
       expect(parsed.messages[0].body).toContain(userBody);
       expect(parsed.messages[0].body).toContain("After image");
       expect(parsed.messages[0].body).toContain("*[image omitted]*");
@@ -311,19 +480,34 @@ describe("utterlog picker and session reader integration", () => {
       expect(parsed.messages[2].body).toBe("Progress update — same text");
       expect(parsed.messages[3].body).toBe("final answer");
       expect(parsed.messages[4].timestampLabel).toBe("unknown time");
-      expect(parsed.messages.map((entry) => entry.body).join("\n")).not.toContain("Injected harness text");
-      expect(parsed.messages.map((entry) => entry.body).join("\n")).not.toContain("PRIVATE");
-      expect(parsed.messages.map((entry) => entry.body).join("\n")).not.toContain("SECRET_IMAGE_PAYLOAD");
+      expect(
+        parsed.messages.map((entry) => entry.body).join("\n"),
+      ).not.toContain("Injected harness text");
+      expect(
+        parsed.messages.map((entry) => entry.body).join("\n"),
+      ).not.toContain("PRIVATE");
+      expect(
+        parsed.messages.map((entry) => entry.body).join("\n"),
+      ).not.toContain("SECRET_IMAGE_PAYLOAD");
     });
   });
 
   test("reuses the terminal across reader and refreshed picker, preserving selection and filter", async () => {
     await withFixture(async (fixture) => {
-      await writeSession(fixture, { id: ids.selected, cwd: fixture.cwd, name: "Can switch" });
+      await writeSession(fixture, {
+        id: ids.selected,
+        cwd: fixture.cwd,
+        name: "Can switch",
+      });
       await writeIndex(fixture);
       const setup = await createTestRenderer({ width: 100, height: 12 });
       let creations = 0;
-      const running = runTool(fixture, environment(fixture), { rendererFactory: async () => { creations++; return setup.renderer; } });
+      const running = runTool(fixture, environment(fixture), {
+        rendererFactory: async () => {
+          creations++;
+          return setup.renderer;
+        },
+      });
       try {
         await waitFrame(setup, "Sessions ·");
         setup.mockInput.pressKey("/");
@@ -332,7 +516,12 @@ describe("utterlog picker and session reader integration", () => {
         await waitFrame(setup, "/SWITCH");
         setup.mockInput.pressEnter();
         await waitFrame(setup, "message 2");
-        await writeSession(fixture, { id: ids.newest, cwd: fixture.cwd, name: "New switch", activityAt: "2026-09-12T22:00:00Z" });
+        await writeSession(fixture, {
+          id: ids.newest,
+          cwd: fixture.cwd,
+          name: "New switch",
+          activityAt: "2026-09-12T22:00:00Z",
+        });
         await writeIndex(fixture);
         setup.mockInput.pressKey("b");
         const frame = await waitFrame(setup, "2/2 sessions");
@@ -368,12 +557,22 @@ describe("utterlog picker and session reader integration", () => {
       const empty = await runTool(fixture, environment(fixture));
       expect(empty.code).toBe(0);
       expect(empty.stdout).toContain("No named Codex sessions");
-      await writeSession(fixture, { id: ids.selected, cwd: fixture.cwd, name: "Failure cases" });
+      await writeSession(fixture, {
+        id: ids.selected,
+        cwd: fixture.cwd,
+        name: "Failure cases",
+      });
       await writeIndex(fixture);
-      const failing = await runTool(fixture, environment(fixture), { rendererFactory: async () => { throw new Error("synthetic renderer failure"); } });
+      const failing = await runTool(fixture, environment(fixture), {
+        rendererFactory: async () => {
+          throw new Error("synthetic renderer failure");
+        },
+      });
       expect(failing.code).toBe(1);
       expect(failing.stderr).toContain("synthetic renderer failure");
-      const noninteractive = await runTool(fixture, environment(fixture), { interactive: false });
+      const noninteractive = await runTool(fixture, environment(fixture), {
+        interactive: false,
+      });
       expect(noninteractive.code).toBe(1);
       expect(noninteractive.stderr).toMatch(/interactive terminal/i);
     });
@@ -383,84 +582,120 @@ describe("utterlog picker and session reader integration", () => {
     await withFixture(async (fixture) => {
       const selected = expectedSession(fixture);
       const partial = [
-        JSON.stringify({ type: "session_meta", timestamp: "2026-09-12T08:00:00Z", payload: { id: ids.selected, session_id: ids.selected, timestamp: "2026-09-12T08:00:00Z", cwd: fixture.cwd, source: "cli", thread_source: "user" } }),
+        JSON.stringify({
+          type: "session_meta",
+          timestamp: "2026-09-12T08:00:00Z",
+          payload: {
+            id: ids.selected,
+            session_id: ids.selected,
+            timestamp: "2026-09-12T08:00:00Z",
+            cwd: fixture.cwd,
+            source: "cli",
+            thread_source: "user",
+          },
+        }),
         JSON.stringify(userText("before partial", "2026-09-12T12:00:00Z", 1)),
-        JSON.stringify(assistantText("still readable", "final_answer", "2026-09-12T12:01:00Z", 2)),
+        JSON.stringify(
+          assistantText(
+            "still readable",
+            "final_answer",
+            "2026-09-12T12:01:00Z",
+            2,
+          ),
+        ),
         '{"type":"response_item","payload":{"type":"message"}',
       ].join("\n");
       const parsedPartial = parseTranscript(partial, selected);
       expect(parsedPartial.errors).toEqual([]);
-      expect(parsedPartial.messages.map((entry) => entry.body)).toEqual(["before partial", "still readable"]);
+      expect(parsedPartial.messages.map((entry) => entry.body)).toEqual([
+        "before partial",
+        "still readable",
+      ]);
       expect(parsedPartial.warnings).toHaveLength(1);
 
       const parsedCorrupt = parseTranscript(`${partial}\nnot-json\n`, selected);
-      expect(parsedCorrupt.errors.some((error) => /invalid JSON/.test(error))).toBe(true);
+      expect(
+        parsedCorrupt.errors.some((error) => /invalid JSON/.test(error)),
+      ).toBe(true);
     });
   });
 
-  test("opens and exits through a real terminal fixture", async () => {
-    await withFixture(async (fixture) => {
-      const smokeText = "terminal smoke: native OpenTUI reader";
-      await writeSession(fixture, {
-        id: ids.selected,
-        cwd: fixture.cwd,
-        name: "Terminal smoke",
-        records: [userText("open the reader"), assistantText(smokeText)],
-      });
-      await writeIndex(fixture);
+  (process.platform === "linux" ? test : test.skip)(
+    "opens and exits through a real terminal fixture",
+    async () => {
+      await withFixture(async (fixture) => {
+        const smokeText = "terminal smoke: native OpenTUI reader";
+        await writeSession(fixture, {
+          id: ids.selected,
+          cwd: fixture.cwd,
+          name: "Terminal smoke",
+          records: [userText("open the reader"), assistantText(smokeText)],
+        });
+        await writeIndex(fixture);
 
-      const cliPath = join(import.meta.dir, "cli.ts");
-      const command = `${shellQuote(process.execPath)} ${shellQuote(cliPath)}`;
-      const child = Bun.spawn({
-        cmd: ["script", "-qefc", command, "/dev/null"],
-        cwd: fixture.cwd,
-        env: {
-          HOME: fixture.root,
-          XDG_CONFIG_HOME: join(fixture.root, "config"),
-          XDG_CACHE_HOME: join(fixture.root, "cache"),
-          CODEX_HOME: fixture.codexHome,
-          PATH: "/run/current-system/sw/bin",
-          TERM: "xterm-256color",
-          COLORTERM: "truecolor",
-          LANG: "C.UTF-8",
-          TZ: "Asia/Taipei",
-        },
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+        const cliPath = join(import.meta.dir, "cli.ts");
+        const command = `${shellQuote(process.execPath)} ${shellQuote(cliPath)}`;
+        const child = Bun.spawn({
+          cmd: ["script", "-qefc", command, "/dev/null"],
+          cwd: fixture.cwd,
+          env: {
+            HOME: fixture.root,
+            XDG_CONFIG_HOME: join(fixture.root, "config"),
+            XDG_CACHE_HOME: join(fixture.root, "cache"),
+            CODEX_HOME: fixture.codexHome,
+            PATH: "/run/current-system/sw/bin",
+            TERM: "xterm-256color",
+            COLORTERM: "truecolor",
+            LANG: "C.UTF-8",
+            TZ: "Asia/Taipei",
+          },
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
 
-      let ptyOutput = "";
-      let sentQuit = false;
-      let sentOpen = false;
-      const stdoutPromise = collectPtyStream(child.stdout, (chunk) => {
-        ptyOutput += chunk;
-        if (!sentOpen && ptyOutput.includes("Enter open")) { sentOpen = true; child.stdin.write("\r"); }
-        if (!sentQuit && ptyOutput.includes(smokeText)) {
-          sentQuit = true;
-          child.stdin.write("q");
+        let ptyOutput = "";
+        let sentQuit = false;
+        let sentOpen = false;
+        const stdoutPromise = collectPtyStream(child.stdout, (chunk) => {
+          ptyOutput += chunk;
+          if (!sentOpen && ptyOutput.includes("Enter open")) {
+            sentOpen = true;
+            child.stdin.write("\r");
+          }
+          if (!sentQuit && ptyOutput.includes(smokeText)) {
+            sentQuit = true;
+            child.stdin.write("q");
+          }
+        });
+        const stderrPromise = collectPtyStream(child.stderr);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const status = await new Promise<number>((resolve, reject) => {
+            timer = setTimeout(() => {
+              child.kill();
+              reject(
+                new Error(
+                  "real terminal fixture did not exit within 5 seconds",
+                ),
+              );
+            }, 5000);
+            child.exited.then(resolve, reject);
+          });
+          const [stdout, stderr] = await Promise.all([
+            stdoutPromise,
+            stderrPromise,
+          ]);
+          expect(status).toBe(0);
+          expect(stdout).toContain(smokeText);
+          expect(stderr).toBe("");
+          expect(sentQuit).toBe(true);
+        } finally {
+          if (timer !== undefined) clearTimeout(timer);
+          if (!sentQuit) child.kill();
+          await child.exited.catch(() => {});
         }
       });
-      const stderrPromise = collectPtyStream(child.stderr);
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        const status = await new Promise<number>((resolve, reject) => {
-          timer = setTimeout(() => {
-            child.kill();
-            reject(new Error("real terminal fixture did not exit within 5 seconds"));
-          }, 5000);
-          child.exited.then(resolve, reject);
-        });
-        const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
-        expect(status).toBe(0);
-        expect(stdout).toContain(smokeText);
-        expect(stderr).toBe("");
-        expect(sentQuit).toBe(true);
-      } finally {
-        if (timer !== undefined) clearTimeout(timer);
-        if (!sentQuit) child.kill();
-        await child.exited.catch(() => {});
-      }
-    });
-  });
+    },
+  );
 });
