@@ -374,6 +374,9 @@ describe("source context and setup contract", () => {
     expect(plistText(p, "/opt/homebrew/bin/meilisearch")).toContain(
       "dev.flicklog.meilisearch",
     );
+    expect(plistText(p, "/opt/homebrew/bin/meilisearch")).toContain(
+      `<key>WorkingDirectory</key><string>${root}</string>`,
+    );
     expect(setupPaths(env).database).toContain("meilisearch-data");
   });
 });

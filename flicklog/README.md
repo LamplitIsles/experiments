@@ -15,7 +15,7 @@ export PATH="$(bun pm bin -g):$PATH"
 flicklog setup
 ```
 
-`setup` creates `~/.flicklog` with a private master-key file, Meilisearch data/configuration, and the `~/Library/LaunchAgents/dev.flicklog.meilisearch.plist` LaunchAgent. It binds only to `127.0.0.1:7701`, never calls `brew services`, and therefore does not alter a generic Homebrew Meilisearch service. It starts/reloads only FlickLog’s agent and waits for health and index settings.
+`setup` creates `~/.flicklog` with a private master-key file, Meilisearch data/configuration, and the `~/Library/LaunchAgents/dev.flicklog.meilisearch.plist` LaunchAgent. The agent runs with that state directory as its working directory, binds only to `127.0.0.1:7701`, never calls `brew services`, and therefore does not alter a generic Homebrew Meilisearch service. It starts/reloads only FlickLog’s agent and waits for health and index settings.
 
 ## Use
 
