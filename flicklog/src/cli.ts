@@ -14,7 +14,37 @@ import { hostname } from "node:os";
 const exec = promisify(execFile);
 const err = (x: unknown) => (x instanceof Error ? x.message : String(x));
 function usage() {
-  return "Usage: flicklog <setup|search|get|context> [arguments]\n\nsearch <query> [--all-projects]\nget <record-id>\ncontext <record-id> [--include-tools]\n";
+  return "Usage: flicklog <setup|search|get|context> [arguments]\n\nsearch <query> [--all-projects] [--limit <1-20>]\nget <record-id>\ncontext <record-id> [--include-tools]\n";
+}
+function searchArguments(args: string[]) {
+  let all = false;
+  let limit = 5;
+  let hasLimit = false;
+  const query: string[] = [];
+  for (let index = 0; index < args.length; index++) {
+    const argument = args[index];
+    if (argument === "--all-projects") {
+      all = true;
+      continue;
+    }
+    if (argument === "--limit") {
+      if (index + 1 === args.length || hasLimit)
+        throw new Error("search --limit requires one integer from 1 to 20");
+      const value = args[++index];
+      if (!/^[1-9]\d*$/.test(value))
+        throw new Error("search --limit must be an integer from 1 to 20");
+      limit = Number(value);
+      if (limit > 20)
+        throw new Error("search --limit must be an integer from 1 to 20");
+      hasLimit = true;
+      continue;
+    }
+    if (argument.startsWith("--"))
+      throw new Error(`unknown search option: ${argument}`);
+    query.push(argument);
+  }
+  if (!query.length) throw new Error("search requires a query");
+  return { all, limit, query: query.join(" ") };
 }
 async function binary() {
   for (const p of [
@@ -86,15 +116,13 @@ export async function run(
     }
     const client = meili(env);
     if (command === "search") {
-      const all = args.includes("--all-projects"),
-        query = args.filter((x) => x !== "--all-projects").join(" ");
-      if (!query) throw new Error("search requires a query");
+      const { all, limit, query } = searchArguments(args);
       await client.configure();
       const sync = await scan(env, (items) => client.add(items));
       stdout.log(
         JSON.stringify({
           sync,
-          results: await client.search(query, normalizeCwd(cwd), all),
+          results: await client.search(query, normalizeCwd(cwd), all, limit),
         }),
       );
       return 0;

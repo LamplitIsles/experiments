@@ -19,7 +19,8 @@ test("uses managed key and waits for fake async tasks", async () => {
   const polled = new Set<number>(),
     pending = new Map<number, () => void>(),
     failed = new Map<number, string>(),
-    documents: any[] = [];
+    documents: any[] = [],
+    searchLimits: number[] = [];
   server = Bun.serve({
     port: 0,
     fetch: async (request) => {
@@ -59,9 +60,9 @@ test("uses managed key and waits for fake async tasks", async () => {
       }
       if (path.endsWith("/search")) {
         const body = (await request.json()) as any;
+        searchLimits.push(body.limit);
         expect(body).toMatchObject({
           q: "中文",
-          limit: 8,
           attributesToRetrieve: [
             "id",
             "kind",
@@ -122,6 +123,8 @@ test("uses managed key and waits for fake async tasks", async () => {
   ]);
   expect(polled.size).toBeGreaterThanOrEqual(3);
   const search = await client.search("中文", "/p", false);
+  await client.search("中文", "/p", false, 12);
+  expect(searchLimits).toEqual([5, 12]);
   expect(search).toEqual({
     query: "中文",
     estimatedTotalHits: 1,

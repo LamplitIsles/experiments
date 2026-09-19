@@ -22,8 +22,9 @@ flicklog setup
 From a project directory with Codex history:
 
 ```sh
-flicklog search "Chinese keyword 或 code identifier"
+flicklog search "Chinese keyword 或 code identifier" # five cards by default
 flicklog search "release decision" --all-projects
+flicklog search "release decision" --limit 12
 flicklog get <record-id>
 flicklog context <record-id>
 flicklog context <record-id> --include-tools
@@ -33,7 +34,7 @@ Every successful command writes one JSON object to stdout. Warnings/errors go to
 
 FlickLog indexes two kinds of semantic history: Codex top-level user messages and assistant `commentary`/`final_answer` messages (`kind: "message"`), plus non-empty Codex `compacted.payload.message` checkpoints (`kind: "compaction"`). Commentary and final answers are separate documents. Compaction indexes only its plaintext message, never `replacement_history`, and has no fabricated user/assistant role. Tool activity, reasoning/thinking, developer/system text, injected provenance, and spawned sessions are never indexed.
 
-`search` returns at most eight compact cards. Each card has a stable record ID and a Meilisearch-highlighted, query-centred snippet; it never returns full record content or source provenance. Use `get <record-id>` to expand exactly one selected same-device record in full.
+`search` returns five compact cards by default; `--limit <1-20>` deliberately requests a different bounded count. Each card has a stable record ID and a Meilisearch-highlighted, query-centred snippet; it never returns full record content or source provenance. Use `get <record-id>` to expand exactly one selected same-device record in full.
 
 `context <record-id>` resolves a selected same-device record to its original JSONL and returns its nearby source items in order. By default it includes only natural-language messages and plaintext compactions, never reasoning. `--include-tools` deliberately adds supported nearby tool calls/results. All returned item content shares one 12,000-character budget; clipped items keep balanced Unicode-safe head and tail text around an omission-count marker such as `…42 chars truncated…`, and the response reports `truncated: true`. Tools are context-only, not searchable.
 

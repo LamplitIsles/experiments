@@ -483,7 +483,12 @@ export function extractContext(
 export type Meili = {
   configure(): Promise<void>;
   add(items: Message[]): Promise<void>;
-  search(query: string, cwd: string, all: boolean): Promise<SearchResult>;
+  search(
+    query: string,
+    cwd: string,
+    all: boolean,
+    limit?: number,
+  ): Promise<SearchResult>;
   get(id: string): Promise<Message | undefined>;
 };
 export function searchFilters(cwd: string, all: boolean): string[] {
@@ -579,14 +584,14 @@ export function meili(env: Env): Meili {
       );
       await task(base, key, ((await r.json()) as { taskUid: number }).taskUid);
     },
-    async search(query, cwd, all) {
+    async search(query, cwd, all, limit = 5) {
       const r = await request("/indexes/flicklog_messages/search", {
         method: "POST",
         body: JSON.stringify({
           q: query,
           filter: searchFilters(cwd, all),
           sort: ["createdAt:desc"],
-          limit: 8,
+          limit,
           attributesToRetrieve: [
             "id",
             "kind",
