@@ -10,8 +10,9 @@ Clone the repository and install the command:
 
 ```sh
 git clone http://forgejo.localhost:17480/LamplitIsles/experiments.git
-cd experiments/utterlog
-bun install --frozen-lockfile
+cd experiments
+corepack pnpm@12.3.4 install --frozen-lockfile
+cd utterlog
 bun add --global "$PWD"
 export PATH="$(bun pm bin -g):$PATH"
 utterlog --help
@@ -38,7 +39,7 @@ The global command links to the source checkout and runs with Bun. Keep that che
 
 ### Run without global installation
 
-After cloning and running `bun install --frozen-lockfile` in the package directory, invoke the source entry point from the directory you want to browse:
+After cloning, run `corepack pnpm@12.3.4 install --frozen-lockfile` from the repository root, then invoke the source entry point from the directory you want to browse:
 
 ```sh
 cd /path/to/your/project
@@ -51,9 +52,8 @@ From the same checkout, pull the latest source and refresh its dependencies:
 
 ```sh
 cd /absolute/path/to/experiments
-git pull --ff-only
-cd utterlog
-bun install --frozen-lockfile
+og pull
+corepack pnpm@12.3.4 install --frozen-lockfile
 utterlog --help
 ```
 
@@ -81,17 +81,17 @@ Drag to select text with the mouse; releasing copies the selected text through t
 
 Controls:
 
-| Key | Action |
-| --- | --- |
-| `j` / `k`, `↑` / `↓` | Scroll one display line |
-| `Ctrl-d` / `Ctrl-u` | Scroll half a viewport |
-| `gg` / `G` | Go to the beginning / end |
-| `/` | Start a literal, case-insensitive conversation search |
-| `Enter` / `Esc` | Apply search / leave editing without quitting |
-| `n` / `N` | Next / previous search occurrence, wrapping |
-| `r` | Explicitly refresh the selected log |
-| `q` / `Ctrl-C` | Quit utterlog |
-| `b` / `Esc` | Return to a freshly loaded picker (`Esc` first cancels active search editing) |
+| Key                  | Action                                                                        |
+| -------------------- | ----------------------------------------------------------------------------- |
+| `j` / `k`, `↑` / `↓` | Scroll one display line                                                       |
+| `Ctrl-d` / `Ctrl-u`  | Scroll half a viewport                                                        |
+| `gg` / `G`           | Go to the beginning / end                                                     |
+| `/`                  | Start a literal, case-insensitive conversation search                         |
+| `Enter` / `Esc`      | Apply search / leave editing without quitting                                 |
+| `n` / `N`            | Next / previous search occurrence, wrapping                                   |
+| `r`                  | Explicitly refresh the selected log                                           |
+| `q` / `Ctrl-C`       | Quit utterlog                                                                 |
+| `b` / `Esc`          | Return to a freshly loaded picker (`Esc` first cancels active search editing) |
 
 Search covers message bodies and headers (message number, role, and local time), in display order. For example, `/message 620` locates that message's header. Search pauses follow and reports the current match position/count. An empty search clears the query; no matches are shown explicitly. Matches inside long messages are positioned in the viewport, not only at a message header.
 
@@ -107,10 +107,11 @@ Missing storage or names, an unsupported/corrupt selected log, an empty transcri
 
 ## Development
 
-From this directory:
+From the repository root:
 
 ```sh
-bun install --frozen-lockfile
+corepack pnpm@12.3.4 install --frozen-lockfile
+cd utterlog
 bun run typecheck
 bun run test
 ```

@@ -5,7 +5,10 @@ import { pickSession, type PickerState } from "./picker";
 import type { NamedSession } from "./cli";
 
 const sessions: NamedSession[] = Array.from({ length: 30 }, (_, index) => ({
-  id: `session-${index}`, name: index < 2 ? "Same name" : `Topic ${index}`, cwd: "/fixture", path: `/fixture/${index}.jsonl`,
+  id: `session-${index}`,
+  name: index < 2 ? "Same name" : `Topic ${index}`,
+  cwd: "/fixture",
+  path: `/fixture/${index}.jsonl`,
   activityMs: Date.parse("2026-09-12T12:00:00Z") - index * 60_000,
 }));
 
@@ -29,7 +32,8 @@ test("native picker navigates, filters names, recovers from no matches and selec
     await render(setup);
     expect(state.selectedId).toBe("session-29");
     expect(setup.captureCharFrame()).toContain("Topic 29");
-    setup.mockInput.pressKey("g"); setup.mockInput.pressKey("g");
+    setup.mockInput.pressKey("g");
+    setup.mockInput.pressKey("g");
     setup.mockInput.pressKey("j");
     expect(state.selectedId).toBe("session-1");
     setup.mockInput.pressArrow("up");
@@ -65,12 +69,16 @@ test("native picker navigates, filters names, recovers from no matches and selec
 for (const exit of ["q", "ctrl-c", "destroy"] as const) {
   test(`native picker releases its view on ${exit}`, async () => {
     const setup = await createTestRenderer({ width: 80, height: 10 });
-    const result = pickSession(setup.renderer, sessions, "/fixture", { query: "" });
+    const result = pickSession(setup.renderer, sessions, "/fixture", {
+      query: "",
+    });
     try {
       await render(setup);
       if (exit === "destroy") setup.renderer.destroy();
-      else if (exit === "ctrl-c") { setup.mockInput.pressKey("/"); setup.mockInput.pressCtrlC(); }
-      else setup.mockInput.pressKey("q");
+      else if (exit === "ctrl-c") {
+        setup.mockInput.pressKey("/");
+        setup.mockInput.pressCtrlC();
+      } else setup.mockInput.pressKey("q");
       expect(await result).toBeUndefined();
       if (!setup.renderer.isDestroyed) {
         await render(setup);
@@ -84,9 +92,13 @@ for (const exit of ["q", "ctrl-c", "destroy"] as const) {
 
 test("distinguishes same-name same-minute sessions with colliding UUID prefixes", async () => {
   const setup = await createTestRenderer({ width: 100, height: 10 });
-  const candidates = ["019eed3b-1111-7111-8111-111111111111", "019eed3b-2222-7222-8222-222222222222"]
-    .map((id) => ({ ...sessions[0], id, name: "Same session" }));
-  const result = pickSession(setup.renderer, candidates, "/fixture", { query: "" });
+  const candidates = [
+    "019eed3b-1111-7111-8111-111111111111",
+    "019eed3b-2222-7222-8222-222222222222",
+  ].map((id) => ({ ...sessions[0], id, name: "Same session" }));
+  const result = pickSession(setup.renderer, candidates, "/fixture", {
+    query: "",
+  });
   try {
     await render(setup);
     const frame = setup.captureCharFrame();
@@ -109,12 +121,15 @@ test("destroys the partially built picker when attaching its root fails", async 
     throw new Error("synthetic attach failure");
   });
   try {
-    await expect(pickSession(setup.renderer, sessions, "/fixture", { query: "" }))
-      .rejects.toThrow("synthetic attach failure");
+    await expect(
+      pickSession(setup.renderer, sessions, "/fixture", { query: "" }),
+    ).rejects.toThrow("synthetic attach failure");
     expect(partial?.isDestroyed).toBe(true);
     expect(setup.renderer.isDestroyed).toBe(false);
     add.mockRestore();
-    const next = pickSession(setup.renderer, sessions, "/fixture", { query: "" });
+    const next = pickSession(setup.renderer, sessions, "/fixture", {
+      query: "",
+    });
     await render(setup);
     setup.mockInput.pressKey("q");
     expect(await next).toBeUndefined();

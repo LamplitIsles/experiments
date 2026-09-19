@@ -2,7 +2,11 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, spyOn, test } from "bun:test";
-import { CodeRenderable, MarkdownRenderable, type Renderable } from "@opentui/core";
+import {
+  CodeRenderable,
+  MarkdownRenderable,
+  type Renderable,
+} from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { parseTranscript } from "./cli";
 import { createConversationReader, type WatchFactory } from "./reader";
@@ -16,7 +20,11 @@ const session: NamedSession = {
   activityMs: Date.parse("2026-09-12T12:00:00Z"),
 };
 
-function message(role: "user" | "assistant", body: string, timestampLabel = "2026-09-12 20:00"): TranscriptMessage {
+function message(
+  role: "user" | "assistant",
+  body: string,
+  timestampLabel = "2026-09-12 20:00",
+): TranscriptMessage {
   return { role, body, timestampLabel };
 }
 
@@ -24,7 +32,10 @@ function sessionAt(path: string, cwd = "/test/project"): NamedSession {
   return { ...session, path, cwd };
 }
 
-function rawMessage(messageValue: TranscriptMessage, ordinal: number): Record<string, unknown> {
+function rawMessage(
+  messageValue: TranscriptMessage,
+  ordinal: number,
+): Record<string, unknown> {
   return {
     type: "response_item",
     timestamp: `2026-09-12T12:${String(ordinal).padStart(2, "0")}:00.000Z`,
@@ -32,16 +43,29 @@ function rawMessage(messageValue: TranscriptMessage, ordinal: number): Record<st
     payload: {
       type: "message",
       role: messageValue.role,
-      ...(messageValue.role === "assistant" ? { phase: messageValue.phase ?? "final_answer" } : {}),
-      content: [{ type: messageValue.role === "user" ? "input_text" : "output_text", text: messageValue.body }],
+      ...(messageValue.role === "assistant"
+        ? { phase: messageValue.phase ?? "final_answer" }
+        : {}),
+      content: [
+        {
+          type: messageValue.role === "user" ? "input_text" : "output_text",
+          text: messageValue.body,
+        },
+      ],
       internal_chat_message_metadata_passthrough: {
-        content_item_kinds: [messageValue.role === "user" ? "user.text" : "unknown"],
+        content_item_kinds: [
+          messageValue.role === "user" ? "user.text" : "unknown",
+        ],
       },
     },
   };
 }
 
-async function writeLog(path: string, logSession: NamedSession, messages: TranscriptMessage[]): Promise<void> {
+async function writeLog(
+  path: string,
+  logSession: NamedSession,
+  messages: TranscriptMessage[],
+): Promise<void> {
   const meta = {
     type: "session_meta",
     timestamp: "2026-09-12T08:00:00.000Z",
@@ -64,7 +88,13 @@ async function writeLog(path: string, logSession: NamedSession, messages: Transc
   );
 }
 
-async function withLog<T>(callback: (logSession: NamedSession, path: string, root: string) => Promise<T>): Promise<T> {
+async function withLog<T>(
+  callback: (
+    logSession: NamedSession,
+    path: string,
+    root: string,
+  ) => Promise<T>,
+): Promise<T> {
   const root = await mkdtemp(join(tmpdir(), "utterlog-reader-test-"));
   const path = join(root, "session.jsonl");
   const logSession = sessionAt(path, join(root, "project"));
@@ -75,7 +105,10 @@ async function withLog<T>(callback: (logSession: NamedSession, path: string, roo
   }
 }
 
-async function render(setup: Awaited<ReturnType<typeof createTestRenderer>>, passes = 3): Promise<void> {
+async function render(
+  setup: Awaited<ReturnType<typeof createTestRenderer>>,
+  passes = 3,
+): Promise<void> {
   for (let index = 0; index < passes; index += 1) await setup.renderOnce();
 }
 
@@ -84,8 +117,17 @@ const noWatch: WatchFactory = () => ({ close() {} });
 describe("native conversation reader", () => {
   test("mouse wheel leaves follow mode and keeps the earlier position across frames", async () => {
     const setup = await createTestRenderer({ width: 80, height: 12 });
-    const messages = Array.from({ length: 20 }, (_, i) => message("user", `Earlier request ${i}`));
-    const reader = await createConversationReader({ session, messages, load: async () => messages, renderer: setup.renderer, ownsRenderer: false, watchFactory: noWatch });
+    const messages = Array.from({ length: 20 }, (_, i) =>
+      message("user", `Earlier request ${i}`),
+    );
+    const reader = await createConversationReader({
+      session,
+      messages,
+      load: async () => messages,
+      renderer: setup.renderer,
+      ownsRenderer: false,
+      watchFactory: noWatch,
+    });
     try {
       reader.start();
       await reader.waitForIdle();
@@ -114,16 +156,42 @@ describe("native conversation reader", () => {
 
   test("static markdown stays readable while highlighting is pending, including untyped fences", async () => {
     const setup = await createTestRenderer({ width: 100, height: 20 });
-    const messages = [message("assistant", "# Heading\n\nReadable body\n\n```\nplain fence\n```")];
-    const reader = await createConversationReader({ session, messages, load: async () => messages, renderer: setup.renderer, ownsRenderer: false, watchFactory: noWatch });
-    const descendants = (node: Renderable): Renderable[] => [node, ...node.getChildren().flatMap(descendants)];
+    const messages = [
+      message(
+        "assistant",
+        "# Heading\n\nReadable body\n\n```\nplain fence\n```",
+      ),
+    ];
+    const reader = await createConversationReader({
+      session,
+      messages,
+      load: async () => messages,
+      renderer: setup.renderer,
+      ownsRenderer: false,
+      watchFactory: noWatch,
+    });
+    const descendants = (node: Renderable): Renderable[] => [
+      node,
+      ...node.getChildren().flatMap(descendants),
+    ];
     const nodes = descendants(setup.renderer.root);
-    const markdown = nodes.find((node) => node instanceof MarkdownRenderable) as MarkdownRenderable;
-    const code = nodes.find((node) => node instanceof CodeRenderable) as CodeRenderable;
-    const original = code.treeSitterClient.highlightOnce.bind(code.treeSitterClient);
+    const markdown = nodes.find(
+      (node) => node instanceof MarkdownRenderable,
+    ) as MarkdownRenderable;
+    const code = nodes.find(
+      (node) => node instanceof CodeRenderable,
+    ) as CodeRenderable;
+    const original = code.treeSitterClient.highlightOnce.bind(
+      code.treeSitterClient,
+    );
     let release!: () => void;
-    const pending = new Promise<void>((resolve) => { release = resolve; });
-    const highlight = spyOn(code.treeSitterClient, "highlightOnce").mockImplementation(async (...args) => {
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const highlight = spyOn(
+      code.treeSitterClient,
+      "highlightOnce",
+    ).mockImplementation(async (...args) => {
       await pending;
       return original(...args);
     });
@@ -136,7 +204,13 @@ describe("native conversation reader", () => {
       expect(setup.captureCharFrame()).toContain("Readable body");
       expect(setup.captureCharFrame()).toContain("plain fence");
       release();
-      await Promise.all(nodes.filter((node): node is CodeRenderable => node instanceof CodeRenderable).map((node) => node.highlightingDone));
+      await Promise.all(
+        nodes
+          .filter(
+            (node): node is CodeRenderable => node instanceof CodeRenderable,
+          )
+          .map((node) => node.highlightingDone),
+      );
       await render(setup);
       expect(markdown.streaming).toBe(false);
       expect(setup.captureCharFrame()).toContain("Readable body");
@@ -151,9 +225,18 @@ describe("native conversation reader", () => {
 
   test("copies a mouse selection only on release and removes the callback on leaving", async () => {
     const setup = await createTestRenderer({ width: 80, height: 12 });
-    const copy = spyOn(setup.renderer, "copyToClipboardOSC52").mockReturnValue(true);
+    const copy = spyOn(setup.renderer, "copyToClipboardOSC52").mockReturnValue(
+      true,
+    );
     const messages = [message("assistant", "copy this text 中文")];
-    const reader = await createConversationReader({ session, messages, load: async () => messages, renderer: setup.renderer, ownsRenderer: false, watchFactory: noWatch });
+    const reader = await createConversationReader({
+      session,
+      messages,
+      load: async () => messages,
+      renderer: setup.renderer,
+      ownsRenderer: false,
+      watchFactory: noWatch,
+    });
     try {
       reader.start();
       await reader.waitForIdle();
@@ -177,7 +260,9 @@ describe("native conversation reader", () => {
       await setup.mockMouse.emitMouseEvent("drag", x + 8, y);
       const unavailableSelection = setup.renderer.getSelection()!;
       await setup.mockMouse.release(x + 8, y);
-      expect(reader.snapshot().status).toContain("terminal clipboard unavailable");
+      expect(reader.snapshot().status).toContain(
+        "terminal clipboard unavailable",
+      );
       expect(setup.renderer.getSelection()).toBe(unavailableSelection);
       reader.dispose("back");
       setup.renderer.emit("selection", unavailableSelection);
@@ -191,7 +276,8 @@ describe("native conversation reader", () => {
 
   test("keeps a parenthesized design-document path visible", async () => {
     const setup = await createTestRenderer({ width: 120, height: 12 });
-    const body = "已追加到本轮设计文档 (.scratch/voice-and-relationship-design.md)，尚未修改运行代码。";
+    const body =
+      "已追加到本轮设计文档 (.scratch/voice-and-relationship-design.md)，尚未修改运行代码。";
     const reader = await createConversationReader({
       session,
       messages: [message("assistant", body)],
@@ -204,7 +290,9 @@ describe("native conversation reader", () => {
       reader.start();
       await reader.waitForIdle();
       await render(setup);
-      expect(setup.captureCharFrame()).toContain("(.scratch/voice-and-relationship-design.md)，尚未修改运行代码。");
+      expect(setup.captureCharFrame()).toContain(
+        "(.scratch/voice-and-relationship-design.md)，尚未修改运行代码。",
+      );
     } finally {
       reader.dispose();
       if (!setup.renderer.isDestroyed) setup.renderer.destroy();
@@ -215,11 +303,19 @@ describe("native conversation reader", () => {
     const setup = await createTestRenderer({ width: 100, height: 14 });
     const messages = Array.from({ length: 625 }, (_, index) =>
       index === 619
-        ? message("assistant", `${"ordinary line\n".repeat(30)}body marker: message 620`, "2026-09-13 09:42")
+        ? message(
+            "assistant",
+            `${"ordinary line\n".repeat(30)}body marker: message 620`,
+            "2026-09-13 09:42",
+          )
         : message("user", `Request ${index + 1}`),
     );
     const reader = await createConversationReader({
-      session, messages, load: async () => messages, renderer: setup.renderer, watchFactory: noWatch,
+      session,
+      messages,
+      load: async () => messages,
+      renderer: setup.renderer,
+      watchFactory: noWatch,
     });
     const search = async (query: string) => {
       setup.mockInput.pressKey("/");
@@ -233,7 +329,9 @@ describe("native conversation reader", () => {
       await render(setup);
       await search("MESSAGE 620");
       expect(reader.snapshot().searchMatches).toBe(2);
-      expect(setup.captureCharFrame()).toContain("▸ Assistant · 2026-09-13 09:42 · message 620");
+      expect(setup.captureCharFrame()).toContain(
+        "▸ Assistant · 2026-09-13 09:42 · message 620",
+      );
       setup.mockInput.pressKey("n");
       await render(setup);
       expect(reader.snapshot().searchMatch).toBe(2);
@@ -241,11 +339,15 @@ describe("native conversation reader", () => {
       setup.mockInput.pressKey("N", { shift: true });
       await render(setup);
       expect(reader.snapshot().searchMatch).toBe(1);
-      expect(setup.captureCharFrame()).toContain("▸ Assistant · 2026-09-13 09:42 · message 620");
+      expect(setup.captureCharFrame()).toContain(
+        "▸ Assistant · 2026-09-13 09:42 · message 620",
+      );
       for (const query of ["assistant", "09:42"]) {
         await search(query);
         expect(reader.snapshot().searchMatches).toBe(1);
-        expect(setup.captureCharFrame()).toContain("▸ Assistant · 2026-09-13 09:42 · message 620");
+        expect(setup.captureCharFrame()).toContain(
+          "▸ Assistant · 2026-09-13 09:42 · message 620",
+        );
       }
     } finally {
       reader.dispose();
@@ -256,8 +358,13 @@ describe("native conversation reader", () => {
   test("renders the latest message and responds to native navigation input", async () => {
     const setup = await createTestRenderer({ width: 72, height: 14 });
     const initialMessages = [
-      ...Array.from({ length: 7 }, (_, index) => message("user", `Earlier request ${index + 1}`)),
-      message("assistant", "# Latest answer\n\n- Markdown stays readable\n- 你好"),
+      ...Array.from({ length: 7 }, (_, index) =>
+        message("user", `Earlier request ${index + 1}`),
+      ),
+      message(
+        "assistant",
+        "# Latest answer\n\n- Markdown stays readable\n- 你好",
+      ),
     ];
     const reader = await createConversationReader({
       session,
@@ -325,7 +432,9 @@ describe("native conversation reader", () => {
       return `${marker} with enough text to wrap at this terminal width`;
     }).join("\n");
     const initialMessages = [
-      ...Array.from({ length: 6 }, (_, index) => message("user", `Earlier request ${index + 1}`)),
+      ...Array.from({ length: 6 }, (_, index) =>
+        message("user", `Earlier request ${index + 1}`),
+      ),
       message("assistant", longBody),
     ];
     const reader = await createConversationReader({
@@ -357,7 +466,9 @@ describe("native conversation reader", () => {
       expect(reader.snapshot().scrollTop).toBeGreaterThan(afterLine);
       setup.mockInput.pressKey("u", { ctrl: true });
       await render(setup);
-      expect(reader.snapshot().scrollTop).toBeLessThan(afterLine + Math.floor(6 / 2));
+      expect(reader.snapshot().scrollTop).toBeLessThan(
+        afterLine + Math.floor(6 / 2),
+      );
 
       setup.mockInput.pressKey("G", { shift: true });
       await render(setup);
@@ -406,7 +517,8 @@ describe("native conversation reader", () => {
       expect(reader.snapshot().status).toContain("no matches");
 
       setup.mockInput.pressKey("/");
-      for (let index = 0; index < "missing".length; index += 1) setup.mockInput.pressBackspace();
+      for (let index = 0; index < "missing".length; index += 1)
+        setup.mockInput.pressBackspace();
       setup.mockInput.pressEnter();
       await render(setup, 2);
       expect(reader.snapshot().searchQuery).toBe("");
@@ -420,7 +532,10 @@ describe("native conversation reader", () => {
   test("reconciles a change made before the initial watcher refresh", async () => {
     const setup = await createTestRenderer({ width: 68, height: 10 });
     const initialMessages = [message("user", "initial message")];
-    const updatedMessages = [...initialMessages, message("assistant", "written before watcher refresh")];
+    const updatedMessages = [
+      ...initialMessages,
+      message("assistant", "written before watcher refresh"),
+    ];
     let currentMessages = initialMessages;
     let watcherAttached = false;
     const reader = await createConversationReader({
@@ -443,7 +558,9 @@ describe("native conversation reader", () => {
       await render(setup, 3);
       expect(watcherAttached).toBe(true);
       expect(reader.snapshot().messages).toBe(updatedMessages.length);
-      expect(setup.captureCharFrame()).toContain("written before watcher refresh");
+      expect(setup.captureCharFrame()).toContain(
+        "written before watcher refresh",
+      );
     } finally {
       reader.dispose();
       if (!setup.renderer.isDestroyed) setup.renderer.destroy();
@@ -453,7 +570,10 @@ describe("native conversation reader", () => {
   test("reconciles a change during watcher reattachment", async () => {
     const setup = await createTestRenderer({ width: 68, height: 10 });
     const initialMessages = [message("user", "initial message")];
-    const updatedMessages = [...initialMessages, message("assistant", "written during rewatch")];
+    const updatedMessages = [
+      ...initialMessages,
+      message("assistant", "written during rewatch"),
+    ];
     let currentMessages = initialMessages;
     let attachCount = 0;
     const listeners: Array<(eventType: string) => void> = [];
@@ -568,7 +688,9 @@ describe("native conversation reader", () => {
   test("refreshes a real selected log, follows new messages, preserves browsing, and recovers", async () => {
     await withLog(async (logSession, path) => {
       const initialMessages = [
-        ...Array.from({ length: 9 }, (_, index) => message("user", `history-${index}`)),
+        ...Array.from({ length: 9 }, (_, index) =>
+          message("user", `history-${index}`),
+        ),
         message("assistant", "initial latest"),
       ];
       await writeLog(path, logSession, initialMessages);
@@ -577,8 +699,12 @@ describe("native conversation reader", () => {
         session: logSession,
         messages: initialMessages,
         load: async () => {
-          const parsed = parseTranscript(await readFile(path, "utf8"), logSession);
-          if (parsed.errors.length > 0) throw new Error(parsed.errors.join("; "));
+          const parsed = parseTranscript(
+            await readFile(path, "utf8"),
+            logSession,
+          );
+          if (parsed.errors.length > 0)
+            throw new Error(parsed.errors.join("; "));
           return parsed.messages;
         },
         renderer: setup.renderer,
@@ -589,7 +715,10 @@ describe("native conversation reader", () => {
         await render(setup, 4);
         await reader.waitForIdle();
         const followed = reader.waitForNextRefresh();
-        const followedMessages = [...initialMessages, message("assistant", "new end")];
+        const followedMessages = [
+          ...initialMessages,
+          message("assistant", "new end"),
+        ];
         await writeLog(path, logSession, followedMessages);
         await followed;
         await render(setup, 3);
@@ -606,7 +735,10 @@ describe("native conversation reader", () => {
         expect(reader.snapshot().follow).toBe(false);
 
         const browsingRefresh = reader.waitForNextRefresh();
-        const moreMessages = [...followedMessages, message("assistant", "another end")];
+        const moreMessages = [
+          ...followedMessages,
+          message("assistant", "another end"),
+        ];
         await writeLog(path, logSession, moreMessages);
         await browsingRefresh;
         await render(setup, 3);
@@ -624,17 +756,30 @@ describe("native conversation reader", () => {
           type: "response_item",
           timestamp: "2026-09-12T13:00:00.000Z",
           ordinal: 99,
-          payload: { type: "custom_tool_call_output", output: "hidden tool output" },
+          payload: {
+            type: "custom_tool_call_output",
+            output: "hidden tool output",
+          },
         };
-        await writeFile(path, `${await readFile(path, "utf8")}${JSON.stringify(toolRecord)}\n`, "utf8");
+        await writeFile(
+          path,
+          `${await readFile(path, "utf8")}${JSON.stringify(toolRecord)}\n`,
+          "utf8",
+        );
         await toolOnlyRefresh;
         await render(setup, 2);
         expect(reader.snapshot().messages).toBe(moreMessages.length);
         expect(reader.snapshot().status).toContain("follow");
 
         const partialRefresh = reader.waitForNextRefresh();
-        const partialRecord = JSON.stringify(rawMessage(message("assistant", "completed append"), 100)).slice(0, -1);
-        await writeFile(path, `${await readFile(path, "utf8")}${partialRecord}`, "utf8");
+        const partialRecord = JSON.stringify(
+          rawMessage(message("assistant", "completed append"), 100),
+        ).slice(0, -1);
+        await writeFile(
+          path,
+          `${await readFile(path, "utf8")}${partialRecord}`,
+          "utf8",
+        );
         await partialRefresh;
         await render(setup, 2);
         expect(reader.snapshot().messages).toBe(moreMessages.length);
@@ -648,12 +793,20 @@ describe("native conversation reader", () => {
         expect(setup.captureCharFrame()).toContain("completed append");
 
         const failedRefresh = reader.waitForNextRefresh();
-        await writeFile(path, `${await readFile(path, "utf8")}not-json\n`, "utf8");
+        await writeFile(
+          path,
+          `${await readFile(path, "utf8")}not-json\n`,
+          "utf8",
+        );
         await failedRefresh;
         expect(reader.snapshot().messages).toBe(moreMessages.length + 1);
         expect(reader.snapshot().status).toContain("refresh error");
 
-        await writeLog(path, logSession, [...moreMessages, message("user", "recovered"), message("assistant", "recovered end")]);
+        await writeLog(path, logSession, [
+          ...moreMessages,
+          message("user", "recovered"),
+          message("assistant", "recovered end"),
+        ]);
         await reader.refresh();
         await render(setup, 3);
         expect(reader.snapshot().messages).toBe(moreMessages.length + 2);
@@ -762,7 +915,11 @@ describe("native conversation reader", () => {
       watchFactory,
     });
     const second = await createConversationReader({
-      session: { ...session, id: "55555555-5555-4555-8555-555555555555", path: "/second.jsonl" },
+      session: {
+        ...session,
+        id: "55555555-5555-4555-8555-555555555555",
+        path: "/second.jsonl",
+      },
       messages: [message("user", "second")],
       load: async () => [message("user", "second")],
       renderer: secondSetup.renderer,
