@@ -47,7 +47,9 @@ test("transplanted reader searches with Ctrl-/ and preserves a submit origin whi
     );
     await setup.renderOnce();
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("needle request");
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("needle request");
+    expect(frame).not.toContain("follow:");
     // The source reader exposes literal-search state and result navigation;
     // this seam verifies its static transcript remains readable after anchoring.
     expect(reader.snapshot().messages).toBe(2);

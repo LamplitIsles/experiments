@@ -47,7 +47,6 @@ export interface ConversationReaderOptions {
 }
 
 export interface ReaderSnapshot {
-  follow: boolean;
   messages: number;
   scrollTop: number;
   maxScrollTop: number;
@@ -256,8 +255,6 @@ export class ConversationReader {
 
   private messages: TranscriptMessage[];
   private messageViews: MessageView[] = [];
-  private follow = true;
-  private newContent = false;
   private refreshError: string | undefined;
   private refreshNote: string | undefined;
   private clipboardNote: string | undefined;
@@ -429,17 +426,7 @@ export class ConversationReader {
       this.renderer.root.add(this.appRoot);
 
       this.keyHandler = (key) => this.handleKey(key);
-      this.frameHandler = () => {
-        this.applyPendingPosition();
-        if (
-          !this.disposed &&
-          this.follow &&
-          this.scrollBox.scrollTop < this.maximumScrollTop()
-        ) {
-          this.scrollToBottom();
-          this.renderer.requestRender();
-        }
-      };
+      this.frameHandler = () => this.applyPendingPosition();
       this.rendererDestroyHandler = () => this.handleRendererDestroy();
       this.inputHandler = (value) => {
         this.pendingSearchQuery = value;
@@ -510,7 +497,6 @@ export class ConversationReader {
   public snapshot(): ReaderSnapshot {
     const maxScrollTop = this.maximumScrollTop();
     return {
-      follow: this.follow,
       messages: this.messages.length,
       scrollTop: this.scrollBox.scrollTop,
       maxScrollTop,
@@ -702,19 +688,12 @@ export class ConversationReader {
 
     this.updateSearchMatches(oldSelected);
     this.refreshError = undefined;
-    if (this.follow) {
-      this.newContent = false;
-      this.refreshNote = undefined;
-      this.schedulePosition(() => this.scrollToBottom());
-    } else if (appendOnly) {
-      this.newContent = true;
+    if (appendOnly) {
       this.refreshNote = undefined;
     } else if (this.searchQuery.length > 0 && this.searchMatchIndex >= 0) {
-      this.newContent = false;
       this.refreshNote = undefined;
       this.schedulePosition(() => this.scrollToCurrentMatch());
     } else {
-      this.newContent = false;
       this.refreshNote = "log changed; reading position adjusted";
       this.schedulePosition(() => this.restoreAnchor(oldAnchor));
     }
@@ -815,18 +794,12 @@ export class ConversationReader {
     if (this.refreshInFlight) return "refreshing…";
     if (this.refreshError) return statusText(this.refreshError);
     if (this.searchQuery.length > 0) {
-      const readingState = this.newContent
-        ? "new content available · G to follow latest"
-        : this.follow
-          ? "follow: on"
-          : "follow: paused";
       if (this.searchMatches.length === 0)
-        return `no matches for /${safeDisplay(this.searchQuery)}/ · ${readingState}`;
-      return `match ${this.searchMatchIndex + 1}/${this.searchMatches.length} · /${safeDisplay(this.searchQuery)}/ · ${readingState}`;
+        return `no matches for /${safeDisplay(this.searchQuery)}/`;
+      return `match ${this.searchMatchIndex + 1}/${this.searchMatches.length} · /${safeDisplay(this.searchQuery)}/`;
     }
-    if (this.newContent) return "new content available · G to follow latest";
     if (this.refreshNote) return this.refreshNote;
-    return this.follow ? "follow: on · at latest" : "follow: paused";
+    return "reader anchored";
   }
 
   private setRefreshError(error: string): void {
@@ -904,8 +877,6 @@ export class ConversationReader {
 
   private beginSearch(): void {
     this.searchEditing = true;
-    this.follow = false;
-    this.newContent = false;
     this.pendingSearchQuery = "";
     this.searchInput.value = this.pendingSearchQuery;
     this.searchHint.visible = false;
@@ -930,8 +901,6 @@ export class ConversationReader {
     this.searchInput.visible = false;
     this.pendingSearchQuery = query;
     this.searchQuery = query;
-    this.follow = false;
-    this.newContent = false;
     this.refreshNote = undefined;
     this.searchMatches = findMatches(this.messages, query);
     this.searchMatchIndex = this.searchMatches.length > 0 ? 0 : -1;
@@ -950,8 +919,6 @@ export class ConversationReader {
       this.updateFooter();
       return;
     }
-    this.follow = false;
-    this.newContent = false;
     this.refreshNote = undefined;
     this.searchMatchIndex =
       (this.searchMatchIndex + direction + this.searchMatches.length) %
@@ -964,30 +931,18 @@ export class ConversationReader {
     const before = this.scrollBox.scrollTop;
     this.scrollBox.scrollBy(delta, "absolute");
     const after = this.scrollBox.scrollTop;
-    if (after >= this.maximumScrollTop()) {
-      this.follow = true;
-      this.newContent = false;
-      this.refreshNote = undefined;
-    } else if (after !== before || delta <= 0) {
-      this.follow = false;
-      if (delta < 0) this.newContent = false;
-      this.refreshNote = undefined;
-    }
+    if (after !== before || delta <= 0) this.refreshNote = undefined;
     this.updateFooter();
   }
 
   private goToTop(): void {
     this.scrollBox.scrollTo(0);
-    this.follow = this.maximumScrollTop() === 0;
-    this.newContent = false;
     this.refreshNote = undefined;
     this.updateFooter();
   }
 
   private goToBottom(): void {
     this.scrollToBottom();
-    this.follow = true;
-    this.newContent = false;
     this.refreshNote = undefined;
     this.updateFooter();
   }
@@ -1067,8 +1022,6 @@ export class ConversationReader {
   public project(messages: TranscriptMessage[], originIndex?: number): void {
     this.applyMessages(messages);
     if (originIndex !== undefined && originIndex >= 0) {
-      this.follow = false;
-      this.newContent = false;
       this.schedulePosition(() => {
         const view = this.messageViews[originIndex];
         if (view)
