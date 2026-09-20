@@ -112,7 +112,13 @@ async function main(): Promise<void> {
         skillsVersion: () => conversation.skillVersion,
         title: () => conversation.runtime.name,
         statusLines: () => ({
-          identity: `${cwd} · ${conversation.runtime.model ?? "model unavailable"}${conversation.runtime.effort ? ` · ${conversation.runtime.effort}` : ""}`,
+          cwd,
+          runtime: [
+            conversation.runtime.model ?? "model unavailable",
+            conversation.runtime.effort,
+          ]
+            .filter(Boolean)
+            .join(" · "),
           telemetry: `${bar(conversation.tokenUsage?.last?.totalTokens, conversation.tokenUsage?.modelContextWindow)}${clock(conversation.workingDurationMs()) ? ` · ${clock(conversation.workingDurationMs())}` : ""}`,
         }),
       });

@@ -33,6 +33,7 @@ export type Skill = { name: string; description?: string };
 
 export interface AppServer {
   call(method: string, params?: Record<string, unknown>): Promise<any>;
+  listSkills(cwd: string): Promise<Skill[]>;
   onNotification(method: string, listener: (params: any) => void): () => void;
   close(): Promise<void>;
 }
@@ -197,28 +198,7 @@ export class ReaderConversation {
 
   async listSkills(cwd: string): Promise<Skill[]> {
     if (!this.skillsInvalid) return this.cachedSkills;
-    const response = await this.server.call("skills/list", { cwds: [cwd] });
-    const values = Array.isArray(response.data)
-      ? response.data.flatMap((entry: any) =>
-          Array.isArray(entry.skills) ? entry.skills : [],
-        )
-      : [];
-    this.cachedSkills = values.flatMap((skill: any) => {
-      const name = typeof skill.name === "string" ? skill.name : undefined;
-      const enabled = skill.enabled ?? skill.isEnabled ?? true;
-      return name && enabled
-        ? [
-            {
-              name,
-              description:
-                typeof (skill.description ?? skill.shortDescription) ===
-                "string"
-                  ? (skill.description ?? skill.shortDescription)
-                  : undefined,
-            },
-          ]
-        : [];
-    });
+    this.cachedSkills = await this.server.listSkills(cwd);
     this.skillsInvalid = false;
     return this.cachedSkills;
   }

@@ -1,6 +1,6 @@
 /** Narrow direct CFL client setup transplant; runtime remains PATH `codex`. */
 import { CodexAppServerClient } from "@jaminzhou/codex-app-server-client";
-import type { AppServer } from "./conversation";
+import type { AppServer, Skill } from "./conversation";
 
 export type ZencodexClient = AppServer & {
   startThread(): Promise<{
@@ -31,6 +31,24 @@ export async function connect(
   await client.connect();
   return {
     call: client.call.bind(client),
+    async listSkills(skillCwd: string): Promise<Skill[]> {
+      const response = await client.call("skills/list", { cwds: [skillCwd] });
+      return response.data.flatMap(({ skills }) =>
+        skills.flatMap((skill) =>
+          skill.enabled
+            ? [
+                {
+                  name: skill.name,
+                  description:
+                    skill.interface?.shortDescription ??
+                    skill.shortDescription ??
+                    skill.description,
+                },
+              ]
+            : [],
+        ),
+      );
+    },
     onNotification: client.onNotification.bind(client),
     close: () => client.close(),
     async startThread() {

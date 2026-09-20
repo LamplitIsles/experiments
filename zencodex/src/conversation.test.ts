@@ -16,6 +16,10 @@ function fake(): AppServer & {
       if (method === "thread/read") return { thread: { turns: [] } };
       return {};
     },
+    async listSkills(cwd) {
+      requests.push({ method: "skills/list", params: { cwds: [cwd] } });
+      return [];
+    },
     onNotification(method, listener) {
       listeners.set(method, [...(listeners.get(method) ?? []), listener]);
       return () =>
@@ -127,20 +131,9 @@ describe("reader-first native projection", () => {
 
   test("uses official enabled skills only, invalidates them, and keeps selection side-effect free", async () => {
     const server = fake();
-    server.call = async (method, params) => {
-      server.requests.push({ method, params });
-      return method === "skills/list"
-        ? {
-            data: [
-              {
-                skills: [
-                  { name: "review", description: "Review code", enabled: true },
-                  { name: "off", enabled: false },
-                ],
-              },
-            ],
-          }
-        : {};
+    server.listSkills = async (cwd) => {
+      server.requests.push({ method: "skills/list", params: { cwds: [cwd] } });
+      return [{ name: "review", description: "Review code" }];
     };
     const c = new ReaderConversation(server, "thread-1");
     expect(await c.listSkills("/work")).toEqual([

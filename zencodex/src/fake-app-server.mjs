@@ -699,6 +699,39 @@ async function handle(request) {
           },
         ],
       };
+    case "skills/list":
+      return {
+        data: [
+          {
+            cwd: p.cwds?.[0] ?? process.cwd(),
+            skills: [
+              {
+                name: "review-code",
+                description: "Review code",
+                shortDescription: "Review code",
+                interface: null,
+                dependencies: null,
+                path: root,
+                scope: "user",
+                enabled: true,
+                pluginId: null,
+              },
+              {
+                name: "disabled-skill",
+                description: "Disabled skill",
+                shortDescription: "Disabled skill",
+                interface: null,
+                dependencies: null,
+                path: root,
+                scope: "user",
+                enabled: false,
+                pluginId: null,
+              },
+            ],
+            errors: [],
+          },
+        ],
+      };
     case "config/batchWrite":
       state.trusted = true;
       save();

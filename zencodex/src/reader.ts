@@ -45,10 +45,9 @@ export interface ConversationReaderOptions {
   coalesceDelayMs?: number;
   /** zencodex adapter: source reader stays the interaction owner. */
   onSubmit?: (value: string) => Promise<void> | void;
-  footerInfo?: () => string;
   loadSkills?: () => Promise<Array<{ name: string; description?: string }>>;
   skillsVersion?: () => number;
-  statusLines?: () => { identity: string; telemetry: string };
+  statusLines?: () => { cwd: string; runtime: string; telemetry: string };
   title?: () => string | undefined;
 }
 
@@ -118,6 +117,14 @@ function statusText(value: string, limit = 140): string {
 
 function safeDisplay(value: string): string {
   return value.replace(/[\r\n]/g, " ");
+}
+
+function fuzzyMatches(value: string, query: string): boolean {
+  let queryIndex = 0;
+  for (const character of value.toLocaleLowerCase()) {
+    if (character === query[queryIndex]) queryIndex += 1;
+  }
+  return queryIndex === query.length;
 }
 
 function messageKey(message: TranscriptMessage): string {
@@ -251,7 +258,10 @@ export class ConversationReader {
   private readonly searchPrompt: TextRenderable;
   private readonly searchInput: InputRenderable;
   private readonly status: TextRenderable;
-  private readonly identityStatus: TextRenderable;
+  private readonly identityStatus: BoxRenderable;
+  private readonly cwdStatus: TextRenderable;
+  private readonly runtimeStatus: TextRenderable;
+  private readonly composerFrame: BoxRenderable;
   private readonly composer: TextareaRenderable;
   private readonly completion: SelectRenderable;
   private readonly keyHandler: (key: KeyEvent) => void;
@@ -261,7 +271,6 @@ export class ConversationReader {
   private readonly enterHandler: (value: string) => void;
   private readonly submitHandler: () => void;
   private readonly onSubmit?: (value: string) => Promise<void> | void;
-  private readonly footerInfo?: () => string;
   private readonly statusLines?: ConversationReaderOptions["statusLines"];
   private readonly nativeTitle?: ConversationReaderOptions["title"];
   private readonly loadSkills?: ConversationReaderOptions["loadSkills"];
@@ -325,7 +334,6 @@ export class ConversationReader {
     this.watchFactory = options.watchFactory ?? makeWatchFactory();
     this.coalesceDelayMs = options.coalesceDelayMs ?? DEFAULT_COALESCE_DELAY_MS;
     this.onSubmit = options.onSubmit;
-    this.footerInfo = options.footerInfo;
     this.statusLines = options.statusLines;
     this.nativeTitle = options.title;
     this.loadSkills = options.loadSkills;
@@ -410,12 +418,22 @@ export class ConversationReader {
         truncate: true,
         fg: "#fbbf24",
       });
-      this.identityStatus = new TextRenderable(this.renderer, {
+      this.identityStatus = new BoxRenderable(this.renderer, {
         width: "100%",
         height: 1,
         flexShrink: 0,
+        flexDirection: "row",
+      });
+      this.cwdStatus = new TextRenderable(this.renderer, {
+        flexGrow: 1,
+        flexShrink: 1,
         truncate: true,
         fg: "#94a3b8",
+      });
+      this.runtimeStatus = new TextRenderable(this.renderer, {
+        flexShrink: 0,
+        truncate: true,
+        fg: "#cbd5e1",
       });
       this.completion = new SelectRenderable(this.renderer, {
         width: "100%",
@@ -429,9 +447,21 @@ export class ConversationReader {
         showDescription: true,
         showScrollIndicator: false,
       });
+      this.composerFrame = new BoxRenderable(this.renderer, {
+        width: "100%",
+        height: 4,
+        flexShrink: 0,
+        flexDirection: "column",
+        backgroundColor: "#111827",
+        border: true,
+        borderColor: "#334155",
+        focusedBorderColor: "#fbbf24",
+        focusable: true,
+        paddingX: 1,
+      });
       this.composer = new TextareaRenderable(this.renderer, {
         width: "100%",
-        height: 3,
+        height: 2,
         flexShrink: 0,
         placeholder: "Message Codex · Enter submit · Ctrl-J newline · Tab read",
         backgroundColor: "#111827",
@@ -447,7 +477,10 @@ export class ConversationReader {
       searchLine.add(this.searchHint);
       searchLine.add(this.searchPrompt);
       searchLine.add(this.searchInput);
-      this.footer.add(this.composer);
+      this.composerFrame.add(this.composer);
+      this.identityStatus.add(this.cwdStatus);
+      this.identityStatus.add(this.runtimeStatus);
+      this.footer.add(this.composerFrame);
       this.footer.add(this.completion);
       this.footer.add(this.identityStatus);
       this.footer.add(this.status);
@@ -812,18 +845,20 @@ export class ConversationReader {
   }
 
   private updateFooter(): void {
+    this.footer.height = this.completionKind ? 9 : 8;
     this.searchHint.visible = !this.searchEditing;
     this.searchPrompt.visible = this.searchEditing;
     this.searchInput.visible = this.searchEditing;
     const lines = this.statusLines?.();
-    this.identityStatus.content = lines?.identity ?? "";
+    this.cwdStatus.content = lines?.cwd ?? "";
+    this.runtimeStatus.content = lines?.runtime ?? "";
     this.status.content = this.currentStatus();
     this.renderer.requestRender();
   }
 
   private currentStatus(): string {
     const readingStatus = this.currentReadingStatus();
-    const native = this.statusLines?.().telemetry ?? this.footerInfo?.();
+    const native = this.statusLines?.().telemetry;
     const full = native ? `${native} · ${readingStatus}` : readingStatus;
     return this.clipboardNote ? `${full} · ${this.clipboardNote}` : full;
   }
@@ -885,6 +920,11 @@ export class ConversationReader {
       } else if (key.name === "return" || key.name === "tab") {
         key.preventDefault();
         this.acceptCompletion();
+      } else if (!key.ctrl) {
+        this.composer.handleKeyPress(key);
+        key.preventDefault();
+        key.stopPropagation();
+        this.scheduleCompletionUpdate();
       }
       return;
     }
@@ -903,11 +943,8 @@ export class ConversationReader {
         return;
       }
       if (!key.ctrl) {
-        setTimeout(() => this.updateCompletion(), 0);
+        this.scheduleCompletionUpdate();
         return;
-      }
-      if (key.name === "/" || key.name === "$") {
-        setTimeout(() => this.updateCompletion(), 0);
       }
     }
     this.clipboardNote = undefined;
@@ -925,10 +962,7 @@ export class ConversationReader {
     } else if (key.name === "b" || key.name === "escape") {
       key.preventDefault();
       this.finish("back", false);
-    } else if (
-      key.name === "/" ||
-      (key.ctrl && (key.name === "/" || key.name === "slash"))
-    ) {
+    } else if (!key.ctrl && key.name === "/") {
       key.preventDefault();
       this.beginSearch();
     } else if (key.name === "n") {
@@ -1016,6 +1050,10 @@ export class ConversationReader {
     await this.skillsLoading;
   }
 
+  private scheduleCompletionUpdate(): void {
+    queueMicrotask(() => this.updateCompletion());
+  }
+
   private updateCompletion(): void {
     if (this.focus !== "COMPOSING" || this.disposed) return;
     const value = this.composer.plainText;
@@ -1033,21 +1071,17 @@ export class ConversationReader {
           description: "Compact this thread",
           insert: "/compact",
         },
-      ].filter((command) =>
-        command.name.slice(1).toLocaleLowerCase().includes(query),
-      );
+      ].filter((command) => fuzzyMatches(command.name.slice(1), query));
       this.showCompletion("command", commands);
       return;
     }
     if (!this.loadSkills) return;
-    void this.ensureSkills().then(() => {
-      if (this.composer.plainText === value) this.updateCompletion();
-    });
+    void this.ensureSkills().then(() => this.updateCompletion());
     const query = prefix.slice(1).toLocaleLowerCase();
     this.showCompletion(
       "skill",
       this.skills
-        .filter((skill) => skill.name.toLocaleLowerCase().includes(query))
+        .filter((skill) => fuzzyMatches(skill.name, query))
         .map((skill) => ({
           name: `$${skill.name}`,
           description: skill.description ?? "",

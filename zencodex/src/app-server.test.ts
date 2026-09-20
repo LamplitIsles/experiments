@@ -33,6 +33,25 @@ test("published client initializes against the test-owned stdio fake", async () 
   }
 });
 
+test("published client narrows enabled skills through its typed adapter", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "zencodex-skills-"));
+  const fake = fileURLToPath(
+    new URL("./fake-app-server-entry.mjs", import.meta.url),
+  );
+  const client = await connect(cwd, fake);
+  try {
+    expect(await client.listSkills(cwd)).toEqual([
+      { name: "review-code", description: "Review code" },
+    ]);
+    expect((await requests(cwd)).map((request) => request.method)).toContain(
+      "skills/list",
+    );
+  } finally {
+    await client.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("published-client active-writer admission is narrowly classified", async () => {
   const fake = fileURLToPath(
     new URL("./fake-app-server-entry.mjs", import.meta.url),
@@ -45,10 +64,15 @@ test("published-client active-writer admission is narrowly classified", async ()
     );
     const client = await connect(cwd, fake);
     try {
-      await client.resumeThread("thread-fake");
-      throw new Error("resume unexpectedly succeeded");
-    } catch (error) {
-      return error;
+      let received: unknown;
+      try {
+        await client.resumeThread("thread-fake");
+      } catch (error) {
+        received = error;
+      }
+      if (received === undefined)
+        throw new Error("resume unexpectedly succeeded");
+      return received;
     } finally {
       await client.close();
       await rm(cwd, { recursive: true, force: true });

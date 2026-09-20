@@ -73,7 +73,8 @@ test("reader keeps multiline composer, context, and weak shortcuts visible in or
     ownsRenderer: false,
     watchFactory: noWatch,
     statusLines: () => ({
-      identity: "/tmp/z · gpt-5 · high",
+      cwd: "/tmp/z",
+      runtime: "gpt-5 · high",
       telemetry: "context ━━━━━─ 41%",
     }),
     onSubmit: (value) => {
@@ -93,12 +94,102 @@ test("reader keeps multiline composer, context, and weak shortcuts visible in or
     expect(shortcuts).toBeGreaterThan(context);
     expect(frame).toContain("41%");
     expect(frame).not.toContain("105512/258400");
+    expect(frame).toContain("┌");
+    expect(frame).toContain("└");
     const composer = (reader as unknown as { composer: TextareaRenderable })
       .composer;
     composer.setText("first\nsecond");
     composer.submit();
     await Bun.sleep(0);
     expect(submitted).toBe("first\nsecond");
+  } finally {
+    reader.dispose();
+    setup.renderer.destroy();
+  }
+});
+
+test("reader keeps model and effort visible beside a truncated working directory", async () => {
+  const setup = await createTestRenderer({ width: 38, height: 14 });
+  const reader = await createConversationReader({
+    session,
+    messages: [],
+    load: async () => [],
+    renderer: setup.renderer,
+    ownsRenderer: false,
+    watchFactory: noWatch,
+    statusLines: () => ({
+      cwd: "/an/intentionally/long/project/working/directory",
+      runtime: "gpt-5 · high",
+      telemetry: "context ━━━━━─ 41%",
+    }),
+  });
+  try {
+    reader.start();
+    await setup.renderOnce();
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("gpt-5 · high");
+  } finally {
+    reader.dispose();
+    setup.renderer.destroy();
+  }
+});
+
+test("composer completion refreshes on each input and fuzzy-matches commands", async () => {
+  const setup = await createTestRenderer({ width: 70, height: 16 });
+  const reader = await createConversationReader({
+    session,
+    messages: [],
+    load: async () => [],
+    renderer: setup.renderer,
+    ownsRenderer: false,
+    watchFactory: noWatch,
+  });
+  try {
+    reader.start();
+    await setup.renderOnce();
+    await setup.mockInput.typeText("/cp");
+    await Promise.resolve();
+    await setup.renderOnce();
+    await setup.renderOnce();
+    expect(reader.snapshot().completion).toBe("command");
+    expect(setup.captureCharFrame()).toContain("/compact");
+    await setup.mockInput.typeText("z");
+    await Promise.resolve();
+    await setup.renderOnce();
+    expect(reader.snapshot().completion).toBeUndefined();
+  } finally {
+    reader.dispose();
+    setup.renderer.destroy();
+  }
+});
+
+test("composer fuzzy-matches enabled skills without treating Ctrl-/ as reader search", async () => {
+  const setup = await createTestRenderer({ width: 70, height: 16 });
+  const reader = await createConversationReader({
+    session,
+    messages: [],
+    load: async () => [],
+    renderer: setup.renderer,
+    ownsRenderer: false,
+    watchFactory: noWatch,
+    loadSkills: async () => [
+      { name: "review-code", description: "Review code" },
+    ],
+  });
+  try {
+    reader.start();
+    await setup.renderOnce();
+    setup.mockInput.pressKey("/", { ctrl: true });
+    await setup.renderOnce();
+    expect(reader.snapshot().searchEditing).toBe(false);
+    setup.mockInput.pressKey("c", { ctrl: true });
+    await setup.mockInput.typeText("$rce");
+    await Promise.resolve();
+    await Promise.resolve();
+    await setup.renderOnce();
+    await setup.renderOnce();
+    expect(reader.snapshot().completion).toBe("skill");
+    expect(setup.captureCharFrame()).toContain("$review-code");
   } finally {
     reader.dispose();
     setup.renderer.destroy();
