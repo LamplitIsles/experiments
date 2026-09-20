@@ -3,7 +3,8 @@
   "private": true,
   "workspaces": [
     "flicklog",
-    "utterlog"
+    "utterlog",
+    "zencodex"
   ],
   "scripts": {
     "prepare": "lefthook install",
