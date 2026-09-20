@@ -62,9 +62,8 @@ function messages(turns: NativeTurn[]): VisibleMessage[] {
     const final = (turn.items ?? [])
       .filter(
         (item) =>
-          item.type === "agentMessage" ||
-          (item.role === "assistant" &&
-            (item.phase === "final_answer" || item.phase === "commentary")),
+          (item.type === "agentMessage" || item.role === "assistant") &&
+          item.phase === "final_answer",
       )
       .map(text)
       .filter(Boolean)
@@ -96,11 +95,12 @@ export class ReaderConversation {
   activeTurnId: string | undefined;
   compacting = false;
   tokenUsage: TokenUsage | undefined;
-  readingOrigin = -1;
+  private pendingOrigin: number | undefined;
+  activeStartedAt: string | undefined;
   status = "idle";
   private stagedFinal = new Map<string, NativeItem[]>();
-  private held: string | undefined;
-  private unacknowledged = new Set<string>();
+  private held: Array<{ id: string; input: string }> = [];
+  private unacknowledged = new Map<string, string>();
   private unsubscribers: Array<() => void> = [];
 
   constructor(
@@ -123,14 +123,15 @@ export class ReaderConversation {
   }
 
   async loadHistory(): Promise<void> {
-    const response = await this.server.call("thread/read", {
+    const response = await this.server.call("thread/turns/list", {
       threadId: this.threadId,
-      includeTurns: true,
+      limit: 100,
+      includeItems: true,
     });
     this.visible.splice(
       0,
       this.visible.length,
-      ...messages(response.thread?.turns ?? []),
+      ...messages(response.data ?? []),
     );
   }
 
@@ -145,22 +146,28 @@ export class ReaderConversation {
       body: input,
       timestamp: timestamp(new Date().toISOString()),
     });
-    this.readingOrigin = this.visible.length - 1;
-    this.unacknowledged.add(input);
+    this.pendingOrigin = this.visible.length - 1;
+    const id = crypto.randomUUID();
+    this.unacknowledged.set(id, input);
     this.reporter.working();
     this.status = "working";
     if (this.compacting) {
-      this.held = input;
+      this.held.push({ id, input });
       return;
     }
-    await this.send(input);
+    await this.send(input, id);
   }
 
-  private async send(input: string): Promise<void> {
+  consumeReadingOrigin(): number | undefined {
+    const origin = this.pendingOrigin;
+    this.pendingOrigin = undefined;
+    return origin;
+  }
+  private async send(input: string, id: string): Promise<void> {
     const params = {
       threadId: this.threadId,
       input: [{ type: "text", text: input }],
-      clientUserMessageId: crypto.randomUUID(),
+      clientUserMessageId: id,
     };
     if (this.activeTurnId) {
       try {
@@ -171,7 +178,8 @@ export class ReaderConversation {
       } catch (error) {
         // CFL reconciliation rule: inspect authority before deciding it was not accepted.
         await this.loadHistory();
-        if (this.visible.some((m) => m.role === "user" && m.body === input))
+        // An optimistic view row is never evidence of native acknowledgement.
+        if (!this.visible.some((m) => m.role === "user" && m.body === input))
           throw error;
       }
     } else await this.server.call("turn/start", params);
@@ -198,6 +206,7 @@ export class ReaderConversation {
     const turn = params.turn as NativeTurn | undefined;
     if (!turn?.id) return;
     this.activeTurnId = turn.id;
+    this.activeStartedAt = turn.startedAt;
     this.status = "working";
     this.reporter.working();
   }
@@ -205,7 +214,13 @@ export class ReaderConversation {
     const turnId =
       typeof params.turnId === "string" ? params.turnId : undefined;
     const item = params.item as NativeItem | undefined;
-    if (!turnId || !item || item.type !== "agentMessage") return;
+    if (
+      !turnId ||
+      !item ||
+      item.type !== "agentMessage" ||
+      item.phase !== "final_answer"
+    )
+      return;
     this.stagedFinal.set(turnId, [
       ...(this.stagedFinal.get(turnId) ?? []),
       item,
@@ -214,7 +229,11 @@ export class ReaderConversation {
   private async completed(params: any): Promise<void> {
     const turn = params.turn as NativeTurn | undefined;
     if (!turn?.id) return;
-    const pieces = this.stagedFinal.get(turn.id) ?? [];
+    const pieces =
+      this.stagedFinal.get(turn.id) ??
+      (turn.items ?? []).filter(
+        (item) => item.type === "agentMessage" && item.phase === "final_answer",
+      );
     this.stagedFinal.delete(turn.id);
     if (turn.status === "completed") {
       const body = pieces.map(text).filter(Boolean).join("");
@@ -227,14 +246,17 @@ export class ReaderConversation {
         });
     }
     this.activeTurnId = undefined;
+    this.activeStartedAt = undefined;
     this.status = "idle";
     this.reporter.idle();
     await this.flushHeld();
   }
   private async flushHeld(): Promise<void> {
-    const value = this.held;
-    this.held = undefined;
-    if (value && !this.activeTurnId && !this.compacting) await this.send(value);
+    const values = this.held;
+    this.held = [];
+    for (const value of values)
+      if (!this.activeTurnId && !this.compacting)
+        await this.send(value.input, value.id);
   }
   contextLabel(): string {
     const total = this.tokenUsage?.last?.totalTokens,
@@ -242,6 +264,10 @@ export class ReaderConversation {
     return typeof total === "number" && typeof max === "number" && max > 0
       ? `context ${total} / ${max}`
       : "context unavailable";
+  }
+  workingDurationMs(now = Date.now()): number | undefined {
+    const start = Date.parse(this.activeStartedAt ?? "");
+    return Number.isFinite(start) ? Math.max(0, now - start) : undefined;
   }
   close(): Promise<void> {
     for (const unsub of this.unsubscribers.splice(0)) unsub();

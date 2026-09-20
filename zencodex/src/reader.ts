@@ -779,7 +779,7 @@ export class ConversationReader {
 
   private updateHeader(): void {
     const name = safeDisplay(this.session.name);
-    this.title.content = `utterlog · ${name} · ${this.session.id.slice(0, 8)}`;
+    this.title.content = `zencodex · ${name} · ${this.session.id.slice(0, 8)}`;
     this.subtitle.content = `${this.messages.length} message${this.messages.length === 1 ? "" : "s"} · local time (${Intl.DateTimeFormat().resolvedOptions().timeZone || "local time"})`;
   }
 

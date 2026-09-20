@@ -37,7 +37,7 @@ describe("reader-first native projection", () => {
     const c = new ReaderConversation(server, "thread-1");
     await c.submit("Please answer in **Markdown**");
     expect(c.visible).toHaveLength(1);
-    expect(c.readingOrigin).toBe(0);
+    expect(c.consumeReadingOrigin()).toBe(0);
     expect(server.requests[0]).toMatchObject({
       method: "turn/start",
       params: { threadId: "thread-1" },
@@ -47,12 +47,16 @@ describe("reader-first native projection", () => {
     });
     server.emit("item/completed", {
       turnId: "turn-1",
-      item: { type: "agentMessage", text: "# Complete" },
+      item: { type: "agentMessage", phase: "final_answer", text: "# Complete" },
     });
     expect(c.visible).toHaveLength(1);
     server.emit("item/completed", {
       turnId: "turn-1",
-      item: { type: "agentMessage", text: "\n\nNo stream." },
+      item: {
+        type: "agentMessage",
+        phase: "final_answer",
+        text: "\n\nNo stream.",
+      },
     });
     server.emit("turn/completed", {
       turn: {
@@ -79,7 +83,7 @@ describe("reader-first native projection", () => {
       method: "turn/steer",
       params: { expectedTurnId: "turn-7" },
     });
-    expect(c.readingOrigin).toBe(0);
+    expect(c.consumeReadingOrigin()).toBe(0);
     server.emit("thread/tokenUsage/updated", {
       tokenUsage: { last: { totalTokens: 120 }, modelContextWindow: 200 },
     });
