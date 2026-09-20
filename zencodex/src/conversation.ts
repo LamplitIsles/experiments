@@ -11,6 +11,7 @@ export type VisibleMessage = {
 };
 export type NativeItem = {
   type?: string;
+  clientId?: string;
   text?: string;
   content?: Array<{ text?: string }>;
   role?: string;
@@ -150,7 +151,16 @@ export class ReaderConversation {
       turns.push(...(response.data ?? []));
       cursor = response.nextCursor;
     } while (cursor);
+    this.acknowledge(turns);
     this.visible.splice(0, this.visible.length, ...messages(turns));
+  }
+
+  /** Only an official userMessage client ID confirms a locally admitted input. */
+  private acknowledge(turns: readonly NativeTurn[]): void {
+    for (const turn of turns)
+      for (const item of turn.items ?? [])
+        if (item.type === "userMessage" && typeof item.clientId === "string")
+          this.unacknowledged.delete(item.clientId);
   }
 
   async submit(input: string): Promise<void> {
@@ -190,24 +200,58 @@ export class ReaderConversation {
       clientUserMessageId: id,
     };
     if (this.activeTurnId) {
+      await this.steer(params, id);
+    } else {
       try {
-        const response = await this.server.call("turn/steer", {
-          ...params,
-          expectedTurnId: this.activeTurnId,
-        });
+        const response = await this.server.call("turn/start", params);
         if (typeof response.turn?.id === "string")
           this.activeTurnId = response.turn.id;
       } catch (error) {
-        // CFL reconciliation rule: inspect authority before deciding it was not accepted.
+        // A lost response is not evidence of rejection: consult authority once.
         await this.loadHistory();
-        // An optimistic view row is never evidence of native acknowledgement.
-        if (!this.visible.some((m) => m.role === "user" && m.body === input))
-          throw error;
+        if (this.unacknowledged.has(id)) throw error;
       }
-    } else {
-      const response = await this.server.call("turn/start", params);
-      if (typeof response.turn?.id === "string")
-        this.activeTurnId = response.turn.id;
+    }
+  }
+
+  private async steer(
+    params: {
+      threadId: string;
+      input: Array<{ type: string; text: string }>;
+      clientUserMessageId: string;
+    },
+    id: string,
+  ): Promise<void> {
+    let expected = this.activeTurnId;
+    let retriedMismatch = false;
+    while (expected) {
+      try {
+        const response = await this.server.call("turn/steer", {
+          ...params,
+          expectedTurnId: expected,
+        });
+        // TurnSteerResponse is { turnId }, unlike TurnStartResponse.
+        if (typeof response.turnId === "string")
+          this.activeTurnId = response.turnId;
+        return;
+      } catch (error) {
+        await this.loadHistory();
+        if (!this.unacknowledged.has(id)) return;
+        const message = error instanceof Error ? error.message : String(error);
+        const actual = /but found [`']([^`']+)[`']/.exec(message)?.[1];
+        if (actual && !retriedMismatch) {
+          retriedMismatch = true;
+          expected = actual;
+          this.activeTurnId = actual;
+          continue;
+        }
+        if (/no active turn/i.test(message)) {
+          this.activeTurnId = undefined;
+          await this.send(params.input.map((part) => part.text).join(""), id);
+          return;
+        }
+        throw error;
+      }
     }
   }
 
@@ -218,8 +262,10 @@ export class ReaderConversation {
       turnId: this.activeTurnId,
     });
     // Native history remains authority; only IDs it has not acknowledged survive.
+    await this.loadHistory();
     for (const [id, input] of this.unacknowledged)
-      this.held.push({ id, input });
+      if (!this.held.some((held) => held.id === id))
+        this.held.push({ id, input });
   }
 
   async compact(): Promise<void> {
@@ -243,6 +289,10 @@ export class ReaderConversation {
     const turnId =
       typeof params.turnId === "string" ? params.turnId : undefined;
     const item = params.item as NativeItem | undefined;
+    if (item?.type === "userMessage" && typeof item.clientId === "string") {
+      this.unacknowledged.delete(item.clientId);
+      return;
+    }
     if (
       !turnId ||
       !item ||
@@ -258,6 +308,7 @@ export class ReaderConversation {
   private async completed(params: any): Promise<void> {
     const turn = params.turn as NativeTurn | undefined;
     if (!turn?.id) return;
+    this.acknowledge([turn]);
     const pieces =
       this.stagedFinal.get(turn.id) ??
       (turn.items ?? []).filter(

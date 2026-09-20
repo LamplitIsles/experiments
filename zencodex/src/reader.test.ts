@@ -96,3 +96,43 @@ test("reader keeps multiline composer, context, and weak shortcuts visible in or
     setup.renderer.destroy();
   }
 });
+
+test("reader marks an appended reply below without moving a manual reading position", async () => {
+  const setup = await createTestRenderer({ width: 70, height: 12 });
+  const initial = Array.from({ length: 8 }, (_, index): TranscriptMessage => ({
+    role: "user",
+    body: `message ${index}`,
+    timestampLabel: "2026-09-20 10:00",
+  }));
+  const reader = await createConversationReader({
+    session,
+    messages: initial,
+    load: async () => initial,
+    renderer: setup.renderer,
+    ownsRenderer: false,
+    watchFactory: noWatch,
+  });
+  try {
+    reader.start();
+    await setup.renderOnce();
+    (
+      reader as unknown as { scrollBox: { scrollTo(position: number): void } }
+    ).scrollBox.scrollTo(0);
+    const before = reader.snapshot().scrollTop;
+    reader.project([
+      ...initial,
+      {
+        role: "assistant",
+        body: "reply below",
+        timestampLabel: "2026-09-20 10:01",
+      },
+    ]);
+    await setup.renderOnce();
+    expect(reader.snapshot().scrollTop).toBe(before);
+    expect(setup.captureCharFrame()).toContain("new reply below");
+    expect(setup.captureCharFrame()).not.toContain("follow:");
+  } finally {
+    reader.dispose();
+    setup.renderer.destroy();
+  }
+});

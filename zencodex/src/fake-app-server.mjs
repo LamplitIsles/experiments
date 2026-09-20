@@ -14,8 +14,12 @@ import { createInterface } from "node:readline";
 const root = process.env.FAKE_SERVER_ROOT ?? process.cwd();
 const statePath =
   process.env.FAKE_SERVER_STATE ?? join(root, ".fake-app-server-state.json");
-const requestLog = process.env.FAKE_SERVER_REQUESTS;
-const controlPath = process.env.FAKE_SERVER_CONTROL;
+const requestLog =
+  process.env.FAKE_SERVER_REQUESTS ??
+  join(root, ".fake-app-server-requests.jsonl");
+const controlPath =
+  process.env.FAKE_SERVER_CONTROL ??
+  join(root, ".fake-app-server-control.json");
 const nativeRoot = join(root, "native-images");
 const pngCreated = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=",
@@ -713,8 +717,8 @@ async function handle(request) {
       state.threadId = "thread-fake";
       save();
       return {
-        thread: threadRecord(p.cwd, p.model),
-        model: p.model,
+        thread: threadRecord(p.cwd, p.model ?? "fixture-model"),
+        model: p.model ?? "fixture-model",
         modelProvider: "fixture",
         serviceTier: null,
         cwd: p.cwd,
@@ -745,8 +749,8 @@ async function handle(request) {
         save();
       }
       return {
-        thread: threadRecord(p.cwd, p.model),
-        model: p.model,
+        thread: threadRecord(p.cwd, p.model ?? "fixture-model"),
+        model: p.model ?? "fixture-model",
         modelProvider: "fixture",
         serviceTier: null,
         cwd: p.cwd,

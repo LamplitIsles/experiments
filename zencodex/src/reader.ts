@@ -255,6 +255,7 @@ export class ConversationReader {
 
   private messages: TranscriptMessage[];
   private messageViews: MessageView[] = [];
+  private unreadBelow = false;
   private refreshError: string | undefined;
   private refreshNote: string | undefined;
   private clipboardNote: string | undefined;
@@ -668,6 +669,7 @@ export class ConversationReader {
     }
 
     const oldAnchor = this.captureAnchor();
+    const wasAtEnd = this.scrollBox.scrollTop >= this.maximumScrollTop();
     const oldSelected = this.searchMatches[this.searchMatchIndex];
     const appendOnly = hasPrefix(oldMessages, nextMessages);
     this.messages = nextMessages.slice();
@@ -689,6 +691,7 @@ export class ConversationReader {
     this.updateSearchMatches(oldSelected);
     this.refreshError = undefined;
     if (appendOnly) {
+      if (!wasAtEnd) this.unreadBelow = true;
       this.refreshNote = undefined;
     } else if (this.searchQuery.length > 0 && this.searchMatchIndex >= 0) {
       this.refreshNote = undefined;
@@ -799,7 +802,9 @@ export class ConversationReader {
       return `match ${this.searchMatchIndex + 1}/${this.searchMatches.length} · /${safeDisplay(this.searchQuery)}/`;
     }
     if (this.refreshNote) return this.refreshNote;
-    return "reader anchored";
+    return this.unreadBelow
+      ? "new reply below · G go to end"
+      : "reader anchored";
   }
 
   private setRefreshError(error: string): void {
@@ -943,6 +948,7 @@ export class ConversationReader {
 
   private goToBottom(): void {
     this.scrollToBottom();
+    this.unreadBelow = false;
     this.refreshNote = undefined;
     this.updateFooter();
   }
@@ -1022,6 +1028,7 @@ export class ConversationReader {
   public project(messages: TranscriptMessage[], originIndex?: number): void {
     this.applyMessages(messages);
     if (originIndex !== undefined && originIndex >= 0) {
+      this.unreadBelow = false;
       this.schedulePosition(() => {
         const view = this.messageViews[originIndex];
         if (view)

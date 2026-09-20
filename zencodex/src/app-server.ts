@@ -17,6 +17,7 @@ export type ZencodexClient = AppServer & {
 export async function connect(
   cwd: string,
   codexPath = "codex",
+  testOptions?: { env?: NodeJS.ProcessEnv; requestTimeoutMs?: number },
 ): Promise<ZencodexClient> {
   const client = new CodexAppServerClient({
     codexPath,
@@ -24,7 +25,8 @@ export async function connect(
     capabilities: { experimentalApi: true, requestAttestation: false },
     clientInfo: { name: "zencodex", title: "zencodex", version: "0.1.0" },
     protocolValidation: "strict",
-    requestTimeoutMs: 60_000,
+    requestTimeoutMs: testOptions?.requestTimeoutMs ?? 60_000,
+    ...(testOptions?.env ? { env: testOptions.env } : {}),
   });
   await client.connect();
   return {
