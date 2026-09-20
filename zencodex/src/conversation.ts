@@ -19,8 +19,8 @@ export type NativeItem = {
 export type NativeTurn = {
   id: string;
   status?: string;
-  startedAt?: string;
-  completedAt?: string;
+  startedAt?: string | number;
+  completedAt?: string | number;
   items?: NativeItem[];
 };
 export type TokenUsage = {
@@ -47,13 +47,26 @@ function text(item: NativeItem): string {
     .flatMap((part) => (typeof part.text === "string" ? [part.text] : []))
     .join("");
 }
-function timestamp(value: string | undefined): string {
-  if (!value || !Number.isFinite(Date.parse(value))) return "unknown time";
-  const d = new Date(value);
+function milliseconds(value: string | number | undefined): number | undefined {
+  const parsed =
+    typeof value === "number"
+      ? value < 10_000_000_000
+        ? value * 1000
+        : value
+      : Date.parse(value ?? "");
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+function timestamp(value: string | number | undefined): string {
+  const parsed = milliseconds(value);
+  if (parsed === undefined) return "unknown time";
+  const d = new Date(parsed);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
-function duration(start?: string, end?: string): number | undefined {
-  const value = Date.parse(end ?? "") - Date.parse(start ?? "");
+function duration(
+  start?: string | number,
+  end?: string | number,
+): number | undefined {
+  const value = (milliseconds(end) ?? NaN) - (milliseconds(start) ?? NaN);
   return Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 function messages(turns: NativeTurn[]): VisibleMessage[] {
@@ -96,7 +109,7 @@ export class ReaderConversation {
   compacting = false;
   tokenUsage: TokenUsage | undefined;
   private pendingOrigin: number | undefined;
-  activeStartedAt: string | undefined;
+  activeStartedAt: string | number | undefined;
   status = "idle";
   private stagedFinal = new Map<string, NativeItem[]>();
   private held: Array<{ id: string; input: string }> = [];
@@ -123,16 +136,20 @@ export class ReaderConversation {
   }
 
   async loadHistory(): Promise<void> {
-    const response = await this.server.call("thread/turns/list", {
-      threadId: this.threadId,
-      limit: 100,
-      includeItems: true,
-    });
-    this.visible.splice(
-      0,
-      this.visible.length,
-      ...messages(response.data ?? []),
-    );
+    const turns: NativeTurn[] = [];
+    let cursor: string | null | undefined;
+    do {
+      const response = await this.server.call("thread/turns/list", {
+        threadId: this.threadId,
+        cursor,
+        limit: 100,
+        itemsView: "full",
+        sortDirection: "asc",
+      });
+      turns.push(...(response.data ?? []));
+      cursor = response.nextCursor;
+    } while (cursor);
+    this.visible.splice(0, this.visible.length, ...messages(turns));
   }
 
   async submit(input: string): Promise<void> {
@@ -266,8 +283,8 @@ export class ReaderConversation {
       : "context unavailable";
   }
   workingDurationMs(now = Date.now()): number | undefined {
-    const start = Date.parse(this.activeStartedAt ?? "");
-    return Number.isFinite(start) ? Math.max(0, now - start) : undefined;
+    const start = milliseconds(this.activeStartedAt);
+    return start === undefined ? undefined : Math.max(0, now - start);
   }
   close(): Promise<void> {
     for (const unsub of this.unsubscribers.splice(0)) unsub();
