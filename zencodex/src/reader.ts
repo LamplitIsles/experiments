@@ -401,6 +401,10 @@ export class ConversationReader {
         flexShrink: 0,
         placeholder:
           "Message Codex · Enter submit · Ctrl-/ search · Ctrl-C stop/exit",
+        keyBindings: [
+          { name: "return", action: "submit" },
+          { name: "return", shift: true, action: "newline" },
+        ],
       });
 
       searchLine.add(this.searchHint);

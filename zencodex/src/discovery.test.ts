@@ -14,6 +14,10 @@ test("bounded discovery merges index title/activity and filters exact cwd", asyn
       `${JSON.stringify({ id: "one", thread_name: "Indexed title", updated_at: 1_700_000_000 })}\n`,
     );
     await writeFile(
+      join(sessions, "child.jsonl"),
+      `${JSON.stringify({ type: "session_meta", payload: { id: "child", session_id: "child", source: "cli", thread_source: "subagent", cwd: "/work/project", timestamp: "2026-01-01T00:00:00Z" } })}\n`,
+    );
+    await writeFile(
       join(sessions, "one.jsonl"),
       `${JSON.stringify({ type: "session_meta", payload: { id: "one", session_id: "one", source: "cli", thread_source: "user", cwd: "/work/project", timestamp: "2020-01-01T00:00:00Z" } })}\nbody`,
     );

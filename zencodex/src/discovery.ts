@@ -1,7 +1,7 @@
 /** Adapted narrowly from FlickLog's JSONL session metadata scanner. */
 import { open, readFile, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import type { NamedSession } from "./types";
 const normal = (v: string) =>
   process.platform === "win32" ? resolve(v).toLowerCase() : resolve(v);
@@ -75,7 +75,7 @@ export async function discoverSessions(
             p?.id &&
             p.id === (p as { session_id?: unknown }).session_id &&
             p.cwd &&
-            p.cwd.startsWith("/") &&
+            isAbsolute(p.cwd) &&
             ((p as { source?: unknown }).source === "cli" ||
               (p as { source?: unknown }).source === "exec") &&
             (p as { thread_source?: unknown }).thread_source === "user" &&
