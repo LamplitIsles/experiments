@@ -475,6 +475,7 @@ export class ConversationReader {
     if (!this.started && !this.disposed) {
       this.started = true;
       this.attachWatcher();
+      this.composer.focus();
       this.schedulePosition(() => this.scrollToBottom());
       this.renderer.requestRender();
     }
@@ -835,6 +836,7 @@ export class ConversationReader {
 
   private handleKey(key: KeyEvent): void {
     if (this.disposed) return;
+    if (this.composer.focused && !key.ctrl) return;
     this.clipboardNote = undefined;
     if (key.ctrl && key.name === "c") {
       key.preventDefault();
@@ -846,12 +848,6 @@ export class ConversationReader {
         key.preventDefault();
         this.cancelSearch();
       }
-      return;
-    }
-
-    if (key.name === "return" && !key.shift) {
-      key.preventDefault();
-      this.composer.submit();
       return;
     }
 
