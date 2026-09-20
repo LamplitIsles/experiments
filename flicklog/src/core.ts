@@ -70,6 +70,7 @@ export type ScanObserver = {
 };
 
 const USER_PHASES = new Set(["commentary", "final_answer"]);
+const SESSION_SOURCES = new Set(["cli", "exec", "vscode"]);
 const IGNORED = new Set([
   "agents_md.instructions",
   "collaboration_mode.instructions",
@@ -188,8 +189,8 @@ function meta(x: unknown): Meta | undefined {
     !validTime(p.timestamp) ||
     !string(p.cwd) ||
     !isAbsolute(p.cwd) ||
-    !["cli", "exec"].includes(String(p.source)) ||
-    p.thread_source !== "user"
+    !SESSION_SOURCES.has(String(p.source)) ||
+    ("thread_source" in p && p.thread_source !== "user")
   )
     return;
   return { id: p.id, cwd: normalizeCwd(p.cwd) };

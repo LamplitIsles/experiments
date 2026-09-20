@@ -20,7 +20,9 @@ afterEach(async () => {
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
 });
-async function fixture() {
+async function fixture(
+  options: { source?: string; omitThreadSource?: boolean } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), "flicklog-test-"));
   roots.push(root);
   const home = join(root, "codex"),
@@ -42,8 +44,8 @@ async function fixture() {
       id: "s1",
       session_id: "s1",
       cwd: "/project",
-      source: "cli",
-      thread_source: "user",
+      source: options.source ?? "cli",
+      ...(options.omitThreadSource ? {} : { thread_source: "user" }),
       timestamp: "2026-01-01T00:00:00Z",
     },
   };
@@ -103,6 +105,26 @@ async function fixture() {
   return { root, home, path, final, record };
 }
 describe("incremental Codex projection", () => {
+  test("indexes app-server vscode sessions with no thread source", async () => {
+    const f = await fixture({ source: "vscode", omitThreadSource: true });
+    const env = {
+      CODEX_HOME: f.home,
+      FLICKLOG_STATE_DIR: join(f.root, "state"),
+    };
+    const batches: any[] = [];
+    expect(
+      (
+        await scan(env, async (items) => {
+          batches.push(items);
+        })
+      ).indexed,
+    ).toBe(3);
+    expect(batches[0].map((item: any) => item.sessionId)).toEqual([
+      "s1",
+      "s1",
+      "s1",
+    ]);
+  });
   test("indexes only eligible records, preserves source ordinals, and appends", async () => {
     const f = await fixture(),
       batches: any[] = [];
