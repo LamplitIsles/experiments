@@ -5,6 +5,7 @@ import {
   createCliRenderer,
   InputRenderable,
   InputRenderableEvents,
+  TextareaRenderable,
   MarkdownRenderable,
   ScrollBoxRenderable,
   SyntaxStyle,
@@ -242,13 +243,13 @@ export class ConversationReader {
   private readonly searchPrompt: TextRenderable;
   private readonly searchInput: InputRenderable;
   private readonly status: TextRenderable;
-  private readonly composer: InputRenderable;
+  private readonly composer: TextareaRenderable;
   private readonly keyHandler: (key: KeyEvent) => void;
   private readonly frameHandler: () => void;
   private readonly rendererDestroyHandler: () => void;
   private readonly inputHandler: (value: string) => void;
   private readonly enterHandler: (value: string) => void;
-  private readonly submitHandler: (value: string) => void;
+  private readonly submitHandler: () => void;
   private readonly onSubmit?: (value: string) => Promise<void> | void;
   private readonly onInterrupt?: () => boolean;
   private readonly footerInfo?: () => string;
@@ -394,8 +395,9 @@ export class ConversationReader {
         truncate: true,
         fg: "#fbbf24",
       });
-      this.composer = new InputRenderable(this.renderer, {
+      this.composer = new TextareaRenderable(this.renderer, {
         width: "100%",
+        height: 3,
         flexShrink: 0,
         placeholder:
           "Message Codex · Enter submit · Ctrl-/ search · Ctrl-C stop/exit",
@@ -440,9 +442,10 @@ export class ConversationReader {
         this.updateFooter();
       };
       this.enterHandler = (value) => this.applySearch(value);
-      this.submitHandler = (value) => {
+      this.submitHandler = () => {
+        const value = this.composer.plainText;
         if (!value.trim() || !this.onSubmit) return;
-        this.composer.value = "";
+        this.composer.setText("");
         void Promise.resolve(this.onSubmit(value)).catch((error) =>
           this.setRefreshError(`submit error: ${errorText(error)}`),
         );
@@ -453,7 +456,7 @@ export class ConversationReader {
       this.renderer.once("destroy", this.rendererDestroyHandler);
       this.searchInput.on(InputRenderableEvents.INPUT, this.inputHandler);
       this.searchInput.on(InputRenderableEvents.ENTER, this.enterHandler);
-      this.composer.on(InputRenderableEvents.ENTER, this.submitHandler);
+      this.composer.onSubmit = this.submitHandler;
 
       this.replaceMessageViews(this.messages);
       this.updateHeader();
@@ -541,7 +544,7 @@ export class ConversationReader {
     this.renderer.off("destroy", this.rendererDestroyHandler);
     this.searchInput.off(InputRenderableEvents.INPUT, this.inputHandler);
     this.searchInput.off(InputRenderableEvents.ENTER, this.enterHandler);
-    this.composer.off(InputRenderableEvents.ENTER, this.submitHandler);
+    this.composer.onSubmit = undefined;
     if (!this.composer.isDestroyed) this.composer.blur();
     if (!this.searchInput.isDestroyed) this.searchInput.blur();
     if (
@@ -803,6 +806,7 @@ export class ConversationReader {
       const query = safeDisplay(this.pendingSearchQuery);
       return `search: /${query} · Enter apply · Esc cancel`;
     }
+
     if (this.refreshInFlight) return "refreshing…";
     if (this.refreshError) return statusText(this.refreshError);
     if (this.searchQuery.length > 0) {
@@ -838,6 +842,12 @@ export class ConversationReader {
         key.preventDefault();
         this.cancelSearch();
       }
+      return;
+    }
+
+    if (key.name === "return" && !key.shift) {
+      key.preventDefault();
+      this.composer.submit();
       return;
     }
 
