@@ -3,6 +3,7 @@ import { open, readFile, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import type { NamedSession } from "./types";
+const SESSION_SOURCES = new Set(["cli", "exec", "vscode"]);
 const normal = (v: string) =>
   process.platform === "win32" ? resolve(v).toLowerCase() : resolve(v);
 export function epoch(v: unknown): number | undefined {
@@ -76,9 +77,9 @@ export async function discoverSessions(
             p.id === (p as { session_id?: unknown }).session_id &&
             p.cwd &&
             isAbsolute(p.cwd) &&
-            ((p as { source?: unknown }).source === "cli" ||
-              (p as { source?: unknown }).source === "exec") &&
-            (p as { thread_source?: unknown }).thread_source === "user" &&
+            SESSION_SOURCES.has(String((p as { source?: unknown }).source)) &&
+            (!("thread_source" in p) ||
+              (p as { thread_source?: unknown }).thread_source === "user") &&
             epoch(p.timestamp) !== undefined &&
             normal(p.cwd) === normal(cwd)
           )

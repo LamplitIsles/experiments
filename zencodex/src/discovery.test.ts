@@ -22,16 +22,24 @@ test("bounded discovery merges index title/activity and filters exact cwd", asyn
       `${JSON.stringify({ type: "session_meta", payload: { id: "one", session_id: "one", source: "cli", thread_source: "user", cwd: "/work/project", timestamp: "2020-01-01T00:00:00Z" } })}\nbody`,
     );
     await writeFile(
+      join(sessions, "app-server.jsonl"),
+      `${JSON.stringify({ type: "session_meta", payload: { id: "vscode", session_id: "vscode", source: "vscode", cwd: "/work/project", timestamp: "2026-01-01T00:00:00Z" } })}\n`,
+    );
+    await writeFile(
       join(sessions, "other.jsonl"),
       `${JSON.stringify({ type: "session_meta", payload: { id: "other", cwd: "/work/other", timestamp: 1_700_000_000_000 } })}\n`,
     );
     await writeFile(join(sessions, "bad.jsonl"), "{".repeat(70_000));
     const found = await discoverSessions("/work/project", home);
-    expect(found).toHaveLength(1);
-    expect(found[0]).toMatchObject({
+    expect(found).toHaveLength(2);
+    expect(found.find((session) => session.id === "one")).toMatchObject({
       id: "one",
       name: "Indexed title",
       activityMs: 1_700_000_000_000,
+    });
+    expect(found.find((session) => session.id === "vscode")).toMatchObject({
+      id: "vscode",
+      name: "Untitled session",
     });
   } finally {
     await rm(home, { recursive: true, force: true });
