@@ -365,7 +365,7 @@ export class ConversationReader {
         height: 1,
         flexShrink: 0,
         truncate: true,
-        fg: "#cbd5e1",
+        fg: "#64748b",
         content:
           "q quit · b/Esc back · / search · j/k ↑↓ · ^d/^u half · gg/G ends · n/N · r refresh",
       });
@@ -404,9 +404,9 @@ export class ConversationReader {
       searchLine.add(this.searchHint);
       searchLine.add(this.searchPrompt);
       searchLine.add(this.searchInput);
-      this.footer.add(searchLine);
-      this.footer.add(this.status);
       this.footer.add(this.composer);
+      this.footer.add(this.status);
+      this.footer.add(searchLine);
       this.appRoot.add(this.title);
       this.appRoot.add(this.subtitle);
       this.appRoot.add(this.scrollBox);
