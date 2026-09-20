@@ -42,7 +42,7 @@ export async function pickSession(
     }
   };
   try {
-    const title = attach(
+    attach(
       new TextRenderable(renderer, {
         height: 1,
         flexShrink: 0,

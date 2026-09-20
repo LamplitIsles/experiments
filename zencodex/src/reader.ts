@@ -646,9 +646,7 @@ export class ConversationReader {
         this.refreshQueued = false;
         this.resolveIdleWaiters();
         this.resolveRefreshWaiters();
-        return;
-      }
-      if (this.refreshQueued) {
+      } else if (this.refreshQueued) {
         this.refreshQueued = false;
         this.queueRefresh(true);
       } else {

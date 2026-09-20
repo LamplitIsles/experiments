@@ -6,7 +6,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 
 // Defaults keep this copied CFL fixture directly runnable through the
@@ -205,7 +205,7 @@ function turnView(turn, itemsView) {
       ? itemsView
       : "summary";
   if (view === "notLoaded") {
-    const { items, ...metadata } = turn;
+    const { items: _items, ...metadata } = turn;
     return { ...metadata, itemsView: view };
   }
   if (view === "summary") {
@@ -232,7 +232,6 @@ const state = readJson(statePath, {
   trusted: false,
 });
 state.threadId ??= "thread-fake";
-const serverRequests = new Map();
 
 function createNativeImage(kind, number) {
   const path = join(nativeRoot, `${kind}-${number}.png`);
@@ -243,10 +242,6 @@ function createNativeImage(kind, number) {
     });
   }
   return path;
-}
-
-async function waitForTool(id) {
-  return new Promise((resolve) => serverRequests.set(id, resolve));
 }
 
 async function runTurn(turn) {
@@ -827,15 +822,6 @@ lines.on("line", async (line) => {
   if (!line.trim()) return;
   const request = JSON.parse(line);
   log(request);
-  if (
-    request.id !== undefined &&
-    !request.method &&
-    serverRequests.has(request.id)
-  ) {
-    serverRequests.get(request.id)(request.result);
-    serverRequests.delete(request.id);
-    return;
-  }
   if (request.id !== undefined && request.method === "item/tool/call") return;
   if (request.id === undefined) return;
   try {

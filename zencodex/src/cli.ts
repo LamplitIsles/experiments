@@ -6,7 +6,7 @@ import { connect } from "./app-server";
 import { ReaderConversation } from "./conversation";
 import { createHerdrReporter } from "./herdr";
 import { discoverSessions } from "./discovery";
-import type { NamedSession, TranscriptMessage } from "./types";
+import type { TranscriptMessage } from "./types";
 
 const noWatch = () => ({ close() {} });
 const NEW = "zencodex:new";
