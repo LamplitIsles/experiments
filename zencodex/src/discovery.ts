@@ -1,5 +1,5 @@
 /** Adapted narrowly from FlickLog's JSONL session metadata scanner. */
-import { open, readdir } from "node:fs/promises";
+import { open, readFile, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { NamedSession } from "./types";
@@ -30,6 +30,23 @@ export async function discoverSessions(
   cwd: string,
   home = process.env.CODEX_HOME ?? join(homedir(), ".codex"),
 ): Promise<NamedSession[]> {
+  const names = new Map<string, { name: string; activity: number }>();
+  try {
+    for (const line of (
+      await readFile(join(home, "session_index.jsonl"), "utf8")
+    ).split("\n")) {
+      try {
+        const x = JSON.parse(line) as {
+          id?: string;
+          thread_name?: string;
+          updated_at?: unknown;
+        };
+        const activity = epoch(x.updated_at);
+        if (x.id && x.thread_name && activity !== undefined)
+          names.set(x.id, { name: x.thread_name, activity });
+      } catch {}
+    }
+  } catch {}
   const out: NamedSession[] = [];
   const walk = async (dir: string): Promise<void> => {
     let entries;
@@ -61,10 +78,11 @@ export async function discoverSessions(
           )
             out.push({
               id: p.id,
-              name: p.thread_name ?? "Untitled session",
+              name:
+                names.get(p.id)?.name ?? p.thread_name ?? "Untitled session",
               cwd: p.cwd,
               path,
-              activityMs: epoch(p.timestamp) ?? 0,
+              activityMs: names.get(p.id)?.activity ?? epoch(p.timestamp) ?? 0,
             });
         } catch {}
     }

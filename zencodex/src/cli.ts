@@ -5,6 +5,7 @@ import { pickSession, type PickerState } from "./picker";
 import { connect } from "./app-server";
 import { ReaderConversation } from "./conversation";
 import { createHerdrReporter } from "./herdr";
+import { discoverSessions } from "./discovery";
 import type { NamedSession, TranscriptMessage } from "./types";
 
 const noWatch = () => ({ close() {} });
@@ -49,14 +50,11 @@ function toTranscript(conversation: ReaderConversation): TranscriptMessage[] {
 
 async function main(): Promise<void> {
   const cwd = process.cwd();
-  const server = await connect(cwd);
   const renderer = await createTerminalRenderer();
   const picker: PickerState = { query: "" };
   try {
     while (!renderer.isDestroyed) {
-      const sessions = (await server.sessions()).map((item) =>
-        display(item, cwd),
-      );
+      const sessions = await discoverSessions(cwd);
       const choice = await pickSession(
         renderer,
         [
@@ -73,6 +71,7 @@ async function main(): Promise<void> {
         picker,
       );
       if (!choice) break;
+      const server = await connect(cwd);
       const threadId =
         choice.id === NEW ? await server.startThread() : choice.id;
       if (choice.id !== NEW) await server.resumeThread(threadId);
@@ -122,7 +121,6 @@ async function main(): Promise<void> {
     }
   } finally {
     if (!renderer.isDestroyed) renderer.destroy();
-    await server.close();
   }
 }
 void main();
