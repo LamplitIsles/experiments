@@ -15,7 +15,7 @@ test("bounded discovery merges index title/activity and filters exact cwd", asyn
     );
     await writeFile(
       join(sessions, "one.jsonl"),
-      `${JSON.stringify({ type: "session_meta", payload: { id: "one", cwd: "/work/project", timestamp: "2020-01-01T00:00:00Z" } })}\nbody`,
+      `${JSON.stringify({ type: "session_meta", payload: { id: "one", session_id: "one", source: "cli", thread_source: "user", cwd: "/work/project", timestamp: "2020-01-01T00:00:00Z" } })}\nbody`,
     );
     await writeFile(
       join(sessions, "other.jsonl"),

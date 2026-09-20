@@ -350,7 +350,7 @@ export class ConversationReader {
       });
       this.footer = new BoxRenderable(this.renderer, {
         width: "100%",
-        height: 3,
+        height: 5,
         flexShrink: 0,
         flexDirection: "column",
         backgroundColor: "#111827",

@@ -73,7 +73,13 @@ export async function discoverSessions(
           if (
             x.type === "session_meta" &&
             p?.id &&
+            p.id === (p as { session_id?: unknown }).session_id &&
             p.cwd &&
+            p.cwd.startsWith("/") &&
+            ((p as { source?: unknown }).source === "cli" ||
+              (p as { source?: unknown }).source === "exec") &&
+            (p as { thread_source?: unknown }).thread_source === "user" &&
+            epoch(p.timestamp) !== undefined &&
             normal(p.cwd) === normal(cwd)
           )
             out.push({
