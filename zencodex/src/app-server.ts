@@ -2,14 +2,7 @@
 import { CodexAppServerClient } from "@jaminzhou/codex-app-server-client";
 import type { AppServer } from "./conversation";
 
-export type Session = {
-  id: string;
-  name: string;
-  updatedAt?: string | number;
-  cwd?: string;
-};
 export type ZencodexClient = AppServer & {
-  sessions(): Promise<Session[]>;
   startThread(): Promise<string>;
   resumeThread(id: string): Promise<void>;
 };
@@ -33,17 +26,6 @@ export async function connect(
     call: client.call.bind(client),
     onNotification: client.onNotification.bind(client),
     close: () => client.close(),
-    async sessions() {
-      const page = await client.threadList({ cwd, sortDirection: "desc" });
-      return page.data
-        .filter((thread) => thread.cwd === cwd)
-        .map((thread) => ({
-          id: thread.id,
-          name: thread.name ?? "Untitled session",
-          updatedAt: thread.updatedAt,
-          cwd: thread.cwd,
-        }));
-    },
     async startThread() {
       return (
         await client.threadStart({

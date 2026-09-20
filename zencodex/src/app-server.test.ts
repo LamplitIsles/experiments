@@ -15,15 +15,17 @@ async function requests(cwd: string): Promise<Array<{ method: string }>> {
     .map((line) => JSON.parse(line) as { method: string });
 }
 
-test("published client connects to the test-owned CFL stdio fake", async () => {
+test("published client initializes against the test-owned stdio fake", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "zencodex-client-"));
   const fake = fileURLToPath(
     new URL("./fake-app-server-entry.mjs", import.meta.url),
   );
   try {
     const client = await connect(cwd, fake);
-    expect(await client.sessions()).toEqual([]);
     await client.close();
+    expect((await requests(cwd)).map((request) => request.method)).toContain(
+      "initialize",
+    );
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
