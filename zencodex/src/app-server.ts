@@ -20,8 +20,10 @@ export async function connect(
 > {
   // Keep the maintained generated protocol client at the process boundary rather
   // than duplicating JSON-RPC schemas here.
-  // @ts-expect-error resolved from the package's pinned Git dependency at install time.
-  const mod = await import("@jaminzhou/codex-app-server-client");
+  // Bun resolves the pinned maintained client at runtime; its generated
+  // protocol performs request validation at the transport boundary.
+  const clientPackage = "@jaminzhou/codex-app-server-client";
+  const mod = await import(clientPackage);
   const client = new mod.CodexAppServerClient({
     codexPath,
     codexExecutableType: "app-server",

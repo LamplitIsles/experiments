@@ -6,25 +6,33 @@ export function createHerdrReporter(
   env: NodeJS.ProcessEnv = process.env,
   run = spawn,
 ): Reporter {
-  const pane = env.HERDR_ENV === "1" ? env.HERDR_PANE : undefined;
+  const pane = env.HERDR_ENV === "1" ? env.HERDR_PANE_ID : undefined;
   let sequence = 0;
   const report = (state: "working" | "idle" | "release") => {
     if (!pane) return;
     const args =
       state === "release"
-        ? ["pane", "release-agent", pane]
+        ? [
+            "pane",
+            "release-agent",
+            "--source",
+            "zencodex",
+            "--agent",
+            "zencodex",
+            pane,
+          ]
         : [
             "pane",
             "report-agent",
-            pane,
             "--source",
             "zencodex",
             "--agent",
             "zencodex",
             "--state",
             state,
-            "--sequence",
+            "--seq",
             String(++sequence),
+            pane,
           ];
     try {
       const child = run("herdr", args, { stdio: "ignore", detached: true });

@@ -33,7 +33,8 @@ has no approval surface.
 - `/compact` invokes native compaction and is never displayed as chat text.
 - The footer shows only server-reported active-window `totalTokens / context
 window`; unavailable means the server has not supplied a usable observation.
-- Ctrl-/ is reserved for transcript search; `/` remains available to Codex
+- Ctrl-/ is reserved for transcript search (with `n`/`N` result navigation);
+  `j`/`k`, arrows, Ctrl-D/Ctrl-U, `gg`, and `G` retain reader scrolling; `/` remains available to Codex
   slash commands. The reader retains OpenTUI Markdown, scroll, and OSC 52 copy
   behavior adapted directly from `utterlog`.
 
@@ -42,7 +43,7 @@ inspector, durable zencodex transcript or queue, remote-session browser,
 automatic compaction, model selector, or compatibility layer. Do not edit
 Codex logs to use zencodex.
 
-When `HERDR_ENV=1` and `HERDR_PANE` are present, lifecycle reporting is an
+When `HERDR_ENV=1` and `HERDR_PANE_ID` are present, lifecycle reporting is an
 optional best-effort `working`/`idle`/release signal. It cannot delay or change
 the conversation.
 

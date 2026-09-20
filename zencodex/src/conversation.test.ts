@@ -103,7 +103,7 @@ describe("reader-first native projection", () => {
 
   test("Herdr reporting failures are isolated from native conversation work", async () => {
     const reporter = createHerdrReporter(
-      { HERDR_ENV: "1", HERDR_PANE: "test:pane" },
+      { HERDR_ENV: "1", HERDR_PANE_ID: "test:pane" },
       (() => {
         throw new Error("missing herdr");
       }) as any,
@@ -113,5 +113,56 @@ describe("reader-first native projection", () => {
     await c.submit("still sends");
     expect(server.requests[0].method).toBe("turn/start");
     await c.close();
+  });
+
+  test("Herdr uses the documented ordered pane protocol", () => {
+    const calls: string[][] = [];
+    const reporter = createHerdrReporter(
+      { HERDR_ENV: "1", HERDR_PANE_ID: "w:p" },
+      ((_bin: string, args: string[]) => {
+        calls.push(args);
+        return { unref() {} };
+      }) as any,
+    );
+    reporter.working();
+    reporter.idle();
+    reporter.release();
+    expect(calls).toEqual([
+      [
+        "pane",
+        "report-agent",
+        "--source",
+        "zencodex",
+        "--agent",
+        "zencodex",
+        "--state",
+        "working",
+        "--seq",
+        "1",
+        "w:p",
+      ],
+      [
+        "pane",
+        "report-agent",
+        "--source",
+        "zencodex",
+        "--agent",
+        "zencodex",
+        "--state",
+        "idle",
+        "--seq",
+        "2",
+        "w:p",
+      ],
+      [
+        "pane",
+        "release-agent",
+        "--source",
+        "zencodex",
+        "--agent",
+        "zencodex",
+        "w:p",
+      ],
+    ]);
   });
 });
