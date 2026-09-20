@@ -114,6 +114,7 @@ export class ReaderConversation {
   private stagedFinal = new Map<string, NativeItem[]>();
   private held: Array<{ id: string; input: string }> = [];
   private unacknowledged = new Map<string, string>();
+  private admission: Promise<void> = Promise.resolve();
   private unsubscribers: Array<() => void> = [];
 
   constructor(
@@ -172,7 +173,9 @@ export class ReaderConversation {
       this.held.push({ id, input });
       return;
     }
-    await this.send(input, id);
+    const task = this.admission.then(() => this.send(input, id));
+    this.admission = task.catch(() => {});
+    await task;
   }
 
   consumeReadingOrigin(): number | undefined {
@@ -188,10 +191,12 @@ export class ReaderConversation {
     };
     if (this.activeTurnId) {
       try {
-        await this.server.call("turn/steer", {
+        const response = await this.server.call("turn/steer", {
           ...params,
           expectedTurnId: this.activeTurnId,
         });
+        if (typeof response.turn?.id === "string")
+          this.activeTurnId = response.turn.id;
       } catch (error) {
         // CFL reconciliation rule: inspect authority before deciding it was not accepted.
         await this.loadHistory();
@@ -199,7 +204,11 @@ export class ReaderConversation {
         if (!this.visible.some((m) => m.role === "user" && m.body === input))
           throw error;
       }
-    } else await this.server.call("turn/start", params);
+    } else {
+      const response = await this.server.call("turn/start", params);
+      if (typeof response.turn?.id === "string")
+        this.activeTurnId = response.turn.id;
+    }
   }
 
   async interrupt(): Promise<void> {
@@ -208,6 +217,9 @@ export class ReaderConversation {
       threadId: this.threadId,
       turnId: this.activeTurnId,
     });
+    // Native history remains authority; only IDs it has not acknowledged survive.
+    for (const [id, input] of this.unacknowledged)
+      this.held.push({ id, input });
   }
 
   async compact(): Promise<void> {
@@ -271,9 +283,13 @@ export class ReaderConversation {
   private async flushHeld(): Promise<void> {
     const values = this.held;
     this.held = [];
-    for (const value of values)
-      if (!this.activeTurnId && !this.compacting)
-        await this.send(value.input, value.id);
+    for (const value of values) {
+      if (this.activeTurnId || this.compacting) {
+        this.held.push(value);
+        continue;
+      }
+      await this.send(value.input, value.id);
+    }
   }
   contextLabel(): string {
     const total = this.tokenUsage?.last?.totalTokens,
