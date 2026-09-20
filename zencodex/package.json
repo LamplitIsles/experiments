@@ -1,0 +1,22 @@
+{
+  "name": "zencodex",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "zencodex": "./src/cli.ts"
+  },
+  "type": "module",
+  "scripts": {
+    "start": "bun src/cli.ts",
+    "test": "TZ=Asia/Shanghai bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@jaminzhou/codex-app-server-client": "github:lamplitisles/codex-app-server-client#56ab11736036d6a5c3dd6e150498dec2d95b2bf5",
+    "@opentui/core": "^0.5.11"
+  },
+  "devDependencies": {
+    "bun-types": "^1.4.2",
+    "typescript": "7.0.2"
+  }
+}
