@@ -1,32 +1,25 @@
-/** Directly adapted from Codex-for-Love's app-server construction (MIT client). */
+/** Narrow direct CFL client setup transplant; runtime remains PATH `codex`. */
+import { CodexAppServerClient } from "@jaminzhou/codex-app-server-client";
 import type { AppServer } from "./conversation";
 
 export type Session = {
   id: string;
   name: string;
-  updatedAt?: string;
+  updatedAt?: string | number;
   cwd?: string;
+};
+export type ZencodexClient = AppServer & {
+  sessions(): Promise<Session[]>;
+  startThread(): Promise<string>;
+  resumeThread(id: string): Promise<void>;
 };
 
 export async function connect(
   cwd: string,
   codexPath = "codex",
-): Promise<
-  AppServer & {
-    sessions(): Promise<Session[]>;
-    start(): Promise<string>;
-    resume(id: string): Promise<void>;
-  }
-> {
-  // Keep the maintained generated protocol client at the process boundary rather
-  // than duplicating JSON-RPC schemas here.
-  // Bun resolves the pinned maintained client at runtime; its generated
-  // protocol performs request validation at the transport boundary.
-  const clientPackage = "@jaminzhou/codex-app-server-client";
-  const mod = await import(clientPackage);
-  const client = new mod.CodexAppServerClient({
+): Promise<ZencodexClient> {
+  const client = new CodexAppServerClient({
     codexPath,
-    codexExecutableType: "app-server",
     cwd,
     capabilities: { experimentalApi: true, requestAttestation: false },
     clientInfo: { name: "zencodex", title: "zencodex", version: "0.1.0" },
@@ -35,41 +28,37 @@ export async function connect(
   });
   await client.connect();
   return {
-    call: (method, params) => client.call(method as never, params as never),
-    onNotification: (method, listener) =>
-      client.onNotification(method as never, listener as never),
+    call: client.call.bind(client),
+    onNotification: client.onNotification.bind(client),
     close: () => client.close(),
     async sessions() {
-      const page = await client.call("thread/list", {
-        cwd,
-        sortDirection: "desc",
-      });
+      const page = await client.threadList({ cwd, sortDirection: "desc" });
       return page.data
-        .filter((thread: any) => thread.cwd === cwd)
-        .map((thread: any) => ({
+        .filter((thread) => thread.cwd === cwd)
+        .map((thread) => ({
           id: thread.id,
           name: thread.name ?? "Untitled session",
           updatedAt: thread.updatedAt,
           cwd: thread.cwd,
         }));
     },
-    async start() {
-      const result = await client.call("thread/start", {
-        cwd,
-        approvalPolicy: "never",
-        sandbox: "danger-full-access",
-        historyMode: "paginated",
-        sessionStartSource: "startup",
-      });
-      return result.thread.id;
+    async startThread() {
+      return (
+        await client.threadStart({
+          cwd,
+          approvalPolicy: "never",
+          sandbox: "danger-full-access",
+          historyMode: "paginated",
+          sessionStartSource: "startup",
+        })
+      ).thread.id;
     },
-    async resume(id) {
-      await client.call("thread/resume", {
+    async resumeThread(id: string) {
+      await client.threadResume({
         threadId: id,
         cwd,
         approvalPolicy: "never",
         sandbox: "danger-full-access",
-        historyMode: "paginated",
       });
     },
   };

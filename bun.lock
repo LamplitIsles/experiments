@@ -46,7 +46,7 @@
         "zencodex": "./src/cli.ts",
       },
       "dependencies": {
-        "@jaminzhou/codex-app-server-client": "github:lamplitisles/codex-app-server-client#56ab11736036d6a5c3dd6e150498dec2d95b2bf5",
+        "@jaminzhou/codex-app-server-client": "0.2.1",
         "@opentui/core": "^0.5.11",
       },
       "devDependencies": {
@@ -56,7 +56,7 @@
     },
   },
   "packages": {
-    "@jaminzhou/codex-app-server-client": ["@jaminzhou/codex-app-server-client@github:lamplitisles/codex-app-server-client#56ab117", { "dependencies": { "@openai/codex": "0.154.0", "@types/node": "26.1.1", "ajv": "8.20.0", "ws": "8.21.1" } }, "LamplitIsles-codex-app-server-client-56ab117", "sha512-Zj6bpMaruRWy/CrGH2TpgVaULxm6ppl8rotel0nmPEY0vWJfDwARqNah6ZgtjW0l9Zjqlhgq4qa5OTtYe15dew=="],
+    "@jaminzhou/codex-app-server-client": ["@jaminzhou/codex-app-server-client@0.2.1", "", { "dependencies": { "@openai/codex": "0.154.0", "@types/node": "26.1.1", "ajv": "8.20.0", "ws": "8.21.1" } }, "sha512-FbhtuvWt/bGvKfbtMCUrNueDFRqqCcFuKCDNJ1wSy4Dx+EqR0jnxhDjB5hybihTAfLvBTlSicsnU+NgtQqp1GA=="],
 
     "@openai/codex": ["@openai/codex@0.154.0", "", { "optionalDependencies": { "@openai/codex-darwin-arm64": "npm:@openai/codex@0.154.0-darwin-arm64", "@openai/codex-darwin-x64": "npm:@openai/codex@0.154.0-darwin-x64", "@openai/codex-linux-arm64": "npm:@openai/codex@0.154.0-linux-arm64", "@openai/codex-linux-x64": "npm:@openai/codex@0.154.0-linux-x64", "@openai/codex-win32-arm64": "npm:@openai/codex@0.154.0-win32-arm64", "@openai/codex-win32-x64": "npm:@openai/codex@0.154.0-win32-x64" }, "bin": { "codex": "bin/codex.js" } }, "sha512-FV/x1OHXYv/ifjf3mXj9ThTTAWcUZN6cGIRQRhRxkKNOPuImu1WW0c8ev1vUkE9XGH90dEnYG1tBjIkxRikg0w=="],
 

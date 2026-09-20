@@ -102,7 +102,7 @@ export async function pickSession(
           .includes(state.query.toLocaleLowerCase()),
       );
       list.options = filtered.map((session) => ({
-        name: `${messageTimestamp(new Date(session.activityMs).toISOString())} · ${session.name.replace(/[\r\n\t]/g, " ")} · ${session.id.slice(0, identityLength)}`,
+        name: `${messageTimestamp(Number.isFinite(session.activityMs) ? new Date(session.activityMs).toISOString() : undefined)} · ${session.name.replace(/[\r\n\t]/g, " ")} · ${session.id.slice(0, identityLength)}`,
         description: "",
       }));
       list.setSelectedIndex(

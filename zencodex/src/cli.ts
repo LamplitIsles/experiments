@@ -11,15 +11,19 @@ const noWatch = () => ({ close() {} });
 const NEW = "zencodex:new";
 
 function display(
-  session: { id: string; name: string; updatedAt?: string },
+  session: { id: string; name: string; updatedAt?: string | number },
   cwd: string,
 ): NamedSession {
+  const parsed =
+    typeof session.updatedAt === "string"
+      ? Date.parse(session.updatedAt)
+      : Number(session.updatedAt);
   return {
     id: session.id,
     name: session.name,
     cwd,
     path: session.id,
-    activityMs: Date.parse(session.updatedAt ?? "") || 0,
+    activityMs: Number.isFinite(parsed) ? parsed : 0,
   };
 }
 function bar(total?: number, max?: number): string {
@@ -69,8 +73,9 @@ async function main(): Promise<void> {
         picker,
       );
       if (!choice) break;
-      const threadId = choice.id === NEW ? await server.start() : choice.id;
-      if (choice.id !== NEW) await server.resume(threadId);
+      const threadId =
+        choice.id === NEW ? await server.startThread() : choice.id;
+      if (choice.id !== NEW) await server.resumeThread(threadId);
       const selected =
         choice.id === NEW
           ? { ...choice, id: threadId, name: "New session", path: threadId }
