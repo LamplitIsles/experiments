@@ -17,8 +17,10 @@ bun run --cwd zencodex start
 ```
 
 Run it from the project directory whose Codex sessions you intend to use.
-zencodex launches your unmodified `codex app-server` from `PATH` for that cwd;
-it neither reads nor writes Codex rollout logs. The official app-server remains
+Before launch, zencodex reads only bounded `session_meta` prefixes plus the
+small native `session_index.jsonl` metadata index to populate the exact-cwd
+picker; it never scans message content or writes a cache. After selection it
+launches your unmodified `codex app-server` from `PATH` for that cwd. The official app-server remains
 the sole authority for session discovery, history, active turns, execution and
 compaction.
 
