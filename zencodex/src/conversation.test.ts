@@ -32,6 +32,26 @@ function fake(): AppServer & {
 }
 
 describe("reader-first native projection", () => {
+  test("exposes user input before a slow native start responds", async () => {
+    const server = fake();
+    const originalCall = server.call;
+    let resolveStart: ((value: unknown) => void) | undefined;
+    server.call = async (method, params) => {
+      if (method !== "turn/start") return originalCall(method, params);
+      return new Promise((resolve) => {
+        resolveStart = resolve;
+      });
+    };
+    const c = new ReaderConversation(server, "thread-1");
+    const submitted = c.submit("visible before native response");
+    expect(c.visible).toMatchObject([
+      { role: "user", body: "visible before native response" },
+    ]);
+    await Bun.sleep(0);
+    resolveStart?.({ turn: { id: "turn-1" } });
+    await submitted;
+  });
+
   test("admits user input immediately, hides deltas, and atomically adds final pieces", async () => {
     const server = fake();
     const c = new ReaderConversation(server, "thread-1");

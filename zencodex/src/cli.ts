@@ -11,22 +11,6 @@ import type { NamedSession, TranscriptMessage } from "./types";
 const noWatch = () => ({ close() {} });
 const NEW = "zencodex:new";
 
-function display(
-  session: { id: string; name: string; updatedAt?: string | number },
-  cwd: string,
-): NamedSession {
-  const parsed =
-    typeof session.updatedAt === "string"
-      ? Date.parse(session.updatedAt)
-      : Number(session.updatedAt);
-  return {
-    id: session.id,
-    name: session.name,
-    cwd,
-    path: session.id,
-    activityMs: Number.isFinite(parsed) ? parsed : 0,
-  };
-}
 function bar(total?: number, max?: number): string {
   if (typeof total !== "number" || typeof max !== "number" || max <= 0)
     return "context unavailable";
@@ -97,11 +81,13 @@ async function main(): Promise<void> {
         ownsRenderer: false,
         watchFactory: noWatch,
         onSubmit: async (input) => {
-          await conversation.submit(input);
+          const submitted = conversation.submit(input);
           reader?.project(
             toTranscript(conversation),
             conversation.consumeReadingOrigin(),
           );
+          await submitted;
+          project();
         },
         onInterrupt: () => {
           if (!conversation.activeTurnId) return false;
