@@ -5,10 +5,13 @@ import {
   createCliRenderer,
   InputRenderable,
   InputRenderableEvents,
+  SelectRenderable,
   TextareaRenderable,
   MarkdownRenderable,
   ScrollBoxRenderable,
   SyntaxStyle,
+  RGBA,
+  StyledText,
   TextRenderable,
   type CliRenderer,
   type KeyEvent,
@@ -42,8 +45,11 @@ export interface ConversationReaderOptions {
   coalesceDelayMs?: number;
   /** zencodex adapter: source reader stays the interaction owner. */
   onSubmit?: (value: string) => Promise<void> | void;
-  onInterrupt?: () => boolean;
   footerInfo?: () => string;
+  loadSkills?: () => Promise<Array<{ name: string; description?: string }>>;
+  skillsVersion?: () => number;
+  statusLines?: () => { identity: string; telemetry: string };
+  title?: () => string | undefined;
 }
 
 export interface ReaderSnapshot {
@@ -55,6 +61,8 @@ export interface ReaderSnapshot {
   searchMatches: number;
   searchEditing: boolean;
   status: string;
+  focus: "COMPOSING" | "READING";
+  completion: "command" | "skill" | undefined;
   disposed: boolean;
 }
 
@@ -88,6 +96,8 @@ const syntaxStyle = {
   "markup.list": { fg: "#fbbf24" },
   "markup.raw": { fg: "#a7f3d0" },
   "markup.link": { fg: "#7dd3fc", underline: true },
+  "search.match": { bg: "#665500", fg: "#fef3c7" },
+  "search.current": { bg: "#b45309", fg: "#ffffff", bold: true },
 };
 
 function errorText(error: unknown): string {
@@ -235,14 +245,15 @@ export class ConversationReader {
   private readonly syntax: SyntaxStyle;
   private readonly appRoot: BoxRenderable;
   private readonly title: TextRenderable;
-  private readonly subtitle: TextRenderable;
   private readonly scrollBox: ScrollBoxRenderable;
   private readonly footer: BoxRenderable;
   private readonly searchHint: TextRenderable;
   private readonly searchPrompt: TextRenderable;
   private readonly searchInput: InputRenderable;
   private readonly status: TextRenderable;
+  private readonly identityStatus: TextRenderable;
   private readonly composer: TextareaRenderable;
+  private readonly completion: SelectRenderable;
   private readonly keyHandler: (key: KeyEvent) => void;
   private readonly frameHandler: () => void;
   private readonly rendererDestroyHandler: () => void;
@@ -250,8 +261,11 @@ export class ConversationReader {
   private readonly enterHandler: (value: string) => void;
   private readonly submitHandler: () => void;
   private readonly onSubmit?: (value: string) => Promise<void> | void;
-  private readonly onInterrupt?: () => boolean;
   private readonly footerInfo?: () => string;
+  private readonly statusLines?: ConversationReaderOptions["statusLines"];
+  private readonly nativeTitle?: ConversationReaderOptions["title"];
+  private readonly loadSkills?: ConversationReaderOptions["loadSkills"];
+  private readonly skillsVersion?: ConversationReaderOptions["skillsVersion"];
 
   private messages: TranscriptMessage[];
   private messageViews: MessageView[] = [];
@@ -276,6 +290,13 @@ export class ConversationReader {
   private searchMatches: SearchMatch[] = [];
   private searchMatchIndex = -1;
   private searchEditing = false;
+  private focus: "COMPOSING" | "READING" = "COMPOSING";
+  private completionKind: "command" | "skill" | undefined;
+  private completionValues: Array<{ insert: string; name: string }> = [];
+  private skills: Array<{ name: string; description?: string }> = [];
+  private skillsLoaded = false;
+  private skillsLoading: Promise<void> | undefined;
+  private loadedSkillsVersion = -1;
   private pendingG = false;
   private watcher: WatchHandle | undefined;
   private watcherRetryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -304,8 +325,11 @@ export class ConversationReader {
     this.watchFactory = options.watchFactory ?? makeWatchFactory();
     this.coalesceDelayMs = options.coalesceDelayMs ?? DEFAULT_COALESCE_DELAY_MS;
     this.onSubmit = options.onSubmit;
-    this.onInterrupt = options.onInterrupt;
     this.footerInfo = options.footerInfo;
+    this.statusLines = options.statusLines;
+    this.nativeTitle = options.title;
+    this.loadSkills = options.loadSkills;
+    this.skillsVersion = options.skillsVersion;
     this.syntax = SyntaxStyle.fromStyles(syntaxStyle);
     this.exitPromise = new Promise<ReaderExit>((resolve) => {
       this.resolveExit = resolve;
@@ -325,13 +349,6 @@ export class ConversationReader {
         truncate: true,
         fg: "#f8fafc",
       });
-      this.subtitle = new TextRenderable(this.renderer, {
-        width: "100%",
-        height: 1,
-        flexShrink: 0,
-        truncate: true,
-        fg: "#94a3b8",
-      });
       this.scrollBox = new ScrollBoxRenderable(this.renderer, {
         width: "100%",
         flexGrow: 1,
@@ -348,7 +365,7 @@ export class ConversationReader {
       });
       this.footer = new BoxRenderable(this.renderer, {
         width: "100%",
-        height: 5,
+        height: 8,
         flexShrink: 0,
         flexDirection: "column",
         backgroundColor: "#111827",
@@ -366,7 +383,7 @@ export class ConversationReader {
         truncate: true,
         fg: "#64748b",
         content:
-          "q quit · b/Esc back · / search · j/k ↑↓ · ^d/^u half · gg/G ends · n/N · r refresh",
+          "READING · q quit · b/Esc back · / search · j/k ↑↓ · ^d/^u half · gg/G ends · n/N",
       });
       this.searchPrompt = new TextRenderable(this.renderer, {
         width: 2,
@@ -393,15 +410,37 @@ export class ConversationReader {
         truncate: true,
         fg: "#fbbf24",
       });
+      this.identityStatus = new TextRenderable(this.renderer, {
+        width: "100%",
+        height: 1,
+        flexShrink: 0,
+        truncate: true,
+        fg: "#94a3b8",
+      });
+      this.completion = new SelectRenderable(this.renderer, {
+        width: "100%",
+        height: 2,
+        flexShrink: 0,
+        visible: false,
+        backgroundColor: "#172033",
+        textColor: "#e5e7eb",
+        selectedBackgroundColor: "#1e3a5f",
+        selectedTextColor: "#f8fafc",
+        showDescription: true,
+        showScrollIndicator: false,
+      });
       this.composer = new TextareaRenderable(this.renderer, {
         width: "100%",
         height: 3,
         flexShrink: 0,
-        placeholder:
-          "Message Codex · Enter submit · Ctrl-/ search · Ctrl-C stop/exit",
+        placeholder: "Message Codex · Enter submit · Ctrl-J newline · Tab read",
+        backgroundColor: "#111827",
+        focusedBackgroundColor: "#172033",
+        textColor: "#f8fafc",
+        focusedTextColor: "#f8fafc",
         keyBindings: [
           { name: "return", action: "submit" },
-          { name: "return", shift: true, action: "newline" },
+          { name: "j", ctrl: true, action: "newline" },
         ],
       });
 
@@ -409,10 +448,11 @@ export class ConversationReader {
       searchLine.add(this.searchPrompt);
       searchLine.add(this.searchInput);
       this.footer.add(this.composer);
+      this.footer.add(this.completion);
+      this.footer.add(this.identityStatus);
       this.footer.add(this.status);
       this.footer.add(searchLine);
       this.appRoot.add(this.title);
-      this.appRoot.add(this.subtitle);
       this.appRoot.add(this.scrollBox);
       this.appRoot.add(this.footer);
       // Events bubble here after ScrollBox has applied its native wheel movement.
@@ -506,6 +546,8 @@ export class ConversationReader {
       searchMatches: this.searchMatches.length,
       searchEditing: this.searchEditing,
       status: this.currentStatus(),
+      focus: this.focus,
+      completion: this.completionKind,
       disposed: this.disposed,
     };
   }
@@ -766,22 +808,22 @@ export class ConversationReader {
   }
 
   private updateHeader(): void {
-    const name = safeDisplay(this.session.name);
-    this.title.content = `zencodex · ${name} · ${this.session.id.slice(0, 8)}`;
-    this.subtitle.content = `${this.messages.length} message${this.messages.length === 1 ? "" : "s"} · local time (${Intl.DateTimeFormat().resolvedOptions().timeZone || "local time"})`;
+    this.title.content = safeDisplay(this.nativeTitle?.() ?? this.session.name);
   }
 
   private updateFooter(): void {
     this.searchHint.visible = !this.searchEditing;
     this.searchPrompt.visible = this.searchEditing;
     this.searchInput.visible = this.searchEditing;
+    const lines = this.statusLines?.();
+    this.identityStatus.content = lines?.identity ?? "";
     this.status.content = this.currentStatus();
     this.renderer.requestRender();
   }
 
   private currentStatus(): string {
     const readingStatus = this.currentReadingStatus();
-    const native = this.footerInfo?.();
+    const native = this.statusLines?.().telemetry ?? this.footerInfo?.();
     const full = native ? `${native} · ${readingStatus}` : readingStatus;
     return this.clipboardNote ? `${full} · ${this.clipboardNote}` : full;
   }
@@ -812,13 +854,63 @@ export class ConversationReader {
 
   private handleKey(key: KeyEvent): void {
     if (this.disposed) return;
-    if (this.composer.focused && !key.ctrl) return;
-    this.clipboardNote = undefined;
-    if (key.ctrl && key.name === "c") {
+    if (this.focus === "COMPOSING" && key.ctrl && key.name === "c") {
       key.preventDefault();
-      if (!this.onInterrupt?.()) this.finish("quit", false);
+      key.stopPropagation();
+      this.composer.setText("");
+      this.closeCompletion();
       return;
     }
+    if (this.focus === "COMPOSING" && key.ctrl && key.name === "d") {
+      key.preventDefault();
+      key.stopPropagation();
+      this.finish("quit", false);
+      return;
+    }
+    if (this.focus === "READING" && key.ctrl && key.name === "c") {
+      key.preventDefault();
+      key.stopPropagation();
+      return;
+    }
+    if (this.completionKind) {
+      if (key.name === "escape") {
+        key.preventDefault();
+        this.closeCompletion();
+      } else if (key.name === "up") {
+        key.preventDefault();
+        this.completion.moveUp();
+      } else if (key.name === "down") {
+        key.preventDefault();
+        this.completion.moveDown();
+      } else if (key.name === "return" || key.name === "tab") {
+        key.preventDefault();
+        this.acceptCompletion();
+      }
+      return;
+    }
+    if (key.name === "tab") {
+      key.preventDefault();
+      this.switchFocus();
+      return;
+    }
+    if (this.focus === "COMPOSING" && this.composer.focused) {
+      if (key.ctrl && key.name === "j") {
+        // Global reader handlers run before focused renderables. Route Ctrl-J
+        // through TextareaRenderable so its configured newline action wins.
+        this.composer.handleKeyPress(key);
+        key.preventDefault();
+        key.stopPropagation();
+        return;
+      }
+      if (!key.ctrl) {
+        setTimeout(() => this.updateCompletion(), 0);
+        return;
+      }
+      if (key.name === "/" || key.name === "$") {
+        setTimeout(() => this.updateCompletion(), 0);
+      }
+    }
+    this.clipboardNote = undefined;
     if (this.searchEditing) {
       if (key.name === "escape") {
         key.preventDefault();
@@ -833,12 +925,12 @@ export class ConversationReader {
     } else if (key.name === "b" || key.name === "escape") {
       key.preventDefault();
       this.finish("back", false);
-    } else if (key.ctrl && (key.name === "/" || key.name === "slash")) {
+    } else if (
+      key.name === "/" ||
+      (key.ctrl && (key.name === "/" || key.name === "slash"))
+    ) {
       key.preventDefault();
       this.beginSearch();
-    } else if (key.name === "r") {
-      key.preventDefault();
-      this.queueRefresh(true);
     } else if (key.name === "n") {
       key.preventDefault();
       this.moveMatch(key.shift ? -1 : 1);
@@ -879,6 +971,8 @@ export class ConversationReader {
   }
 
   private beginSearch(): void {
+    this.focus = "READING";
+    this.composer.blur();
     this.searchEditing = true;
     this.pendingSearchQuery = "";
     this.searchInput.value = this.pendingSearchQuery;
@@ -889,10 +983,123 @@ export class ConversationReader {
     this.updateFooter();
   }
 
+  private switchFocus(): void {
+    this.focus = this.focus === "COMPOSING" ? "READING" : "COMPOSING";
+    if (this.focus === "COMPOSING") {
+      this.searchEditing = false;
+      this.searchInput.blur();
+      this.composer.focus();
+    } else {
+      this.composer.blur();
+    }
+    this.updateFooter();
+  }
+
+  private async ensureSkills(): Promise<void> {
+    if (this.skillsVersion && this.loadedSkillsVersion !== this.skillsVersion())
+      this.skillsLoaded = false;
+    if (this.skillsLoaded || !this.loadSkills) return;
+    if (!this.skillsLoading) {
+      this.skillsLoading = this.loadSkills()
+        .then((skills) => {
+          this.skills = skills.filter((skill) => Boolean(skill.name));
+          this.skillsLoaded = true;
+          this.loadedSkillsVersion = this.skillsVersion?.() ?? 0;
+        })
+        .catch((error) =>
+          this.setRefreshError(`skills error: ${errorText(error)}`),
+        )
+        .finally(() => {
+          this.skillsLoading = undefined;
+        });
+    }
+    await this.skillsLoading;
+  }
+
+  private updateCompletion(): void {
+    if (this.focus !== "COMPOSING" || this.disposed) return;
+    const value = this.composer.plainText;
+    const match = /(^|\s)([/$][^\s]*)$/.exec(value);
+    if (!match) {
+      this.closeCompletion();
+      return;
+    }
+    const prefix = match[2];
+    if (prefix.startsWith("/")) {
+      const query = prefix.slice(1).toLocaleLowerCase();
+      const commands = [
+        {
+          name: "/compact",
+          description: "Compact this thread",
+          insert: "/compact",
+        },
+      ].filter((command) =>
+        command.name.slice(1).toLocaleLowerCase().includes(query),
+      );
+      this.showCompletion("command", commands);
+      return;
+    }
+    if (!this.loadSkills) return;
+    void this.ensureSkills().then(() => {
+      if (this.composer.plainText === value) this.updateCompletion();
+    });
+    const query = prefix.slice(1).toLocaleLowerCase();
+    this.showCompletion(
+      "skill",
+      this.skills
+        .filter((skill) => skill.name.toLocaleLowerCase().includes(query))
+        .map((skill) => ({
+          name: `$${skill.name}`,
+          description: skill.description ?? "",
+          insert: `$${skill.name}`,
+        })),
+    );
+  }
+
+  private showCompletion(
+    kind: "command" | "skill",
+    values: Array<{ name: string; description: string; insert: string }>,
+  ): void {
+    this.completionKind = values.length ? kind : undefined;
+    this.completionValues = values;
+    this.completion.options = values.map(({ name, description }) => ({
+      name,
+      description,
+    }));
+    this.completion.setSelectedIndex(0);
+    this.completion.visible = values.length > 0;
+    this.updateFooter();
+  }
+
+  private closeCompletion(): void {
+    this.completionKind = undefined;
+    this.completionValues = [];
+    this.completion.visible = false;
+    if (!this.composer.focused && this.focus === "COMPOSING")
+      this.composer.focus();
+    this.updateFooter();
+  }
+
+  private acceptCompletion(): void {
+    const selected = this.completionValues[this.completion.getSelectedIndex()];
+    if (!selected) {
+      this.closeCompletion();
+      return;
+    }
+    this.composer.setText(
+      this.composer.plainText.replace(/([/$])[^\s]*$/, selected.insert),
+    );
+    this.closeCompletion();
+  }
+
   private cancelSearch(): void {
     this.searchEditing = false;
-    this.pendingSearchQuery = this.searchQuery;
-    this.searchInput.value = this.searchQuery;
+    this.searchQuery = "";
+    this.pendingSearchQuery = "";
+    this.searchInput.value = "";
+    this.searchMatches = [];
+    this.searchMatchIndex = -1;
+    this.applySearchHighlights();
     this.searchInput.blur();
     this.updateFooter();
   }
@@ -907,6 +1114,7 @@ export class ConversationReader {
     this.refreshNote = undefined;
     this.searchMatches = findMatches(this.messages, query);
     this.searchMatchIndex = this.searchMatches.length > 0 ? 0 : -1;
+    this.applySearchHighlights();
     if (this.searchMatchIndex >= 0)
       this.schedulePosition(() => this.scrollToCurrentMatch());
     this.updateFooter();
@@ -915,6 +1123,135 @@ export class ConversationReader {
   private updateSearchMatches(previous: SearchMatch | undefined): void {
     this.searchMatches = findMatches(this.messages, this.searchQuery);
     this.searchMatchIndex = findMatchIndex(this.searchMatches, previous);
+    this.applySearchHighlights();
+  }
+
+  /** Paint the already-rendered markdown text buffers; source text is unchanged. */
+  private applySearchHighlights(): void {
+    const matchStyle = this.syntax.getStyleId("search.match");
+    const currentStyle = this.syntax.getStyleId("search.current");
+    if (matchStyle === null || currentStyle === null) return;
+    const selected = this.searchMatches[this.searchMatchIndex];
+    const needle = this.searchQuery.toLocaleLowerCase();
+    const descendants = (node: Renderable): Renderable[] => {
+      const values: Renderable[] = [];
+      const walk = (candidate: Renderable) => {
+        if (
+          typeof (candidate as { plainText?: unknown }).plainText ===
+            "string" &&
+          "textBuffer" in candidate
+        )
+          values.push(candidate);
+        for (const child of candidate.getChildren()) walk(child);
+      };
+      walk(node);
+      return values;
+    };
+    this.messageViews.forEach((view, messageIndex) => {
+      for (const part of ["heading", "body"] as const) {
+        let occurrence = 0;
+        const selectedOccurrence = this.searchMatches
+          .filter(
+            (match) =>
+              match.messageIndex === messageIndex && match.part === part,
+          )
+          .findIndex((match) => match.offset === selected?.offset);
+        for (const node of descendants(view[part])) {
+          if (node instanceof CodeRenderable) {
+            const firstOccurrence = occurrence;
+            const codeText = (node as unknown as { plainText: string })
+              .plainText;
+            const matchesInNode = needle
+              ? [
+                  ...codeText
+                    .toLocaleLowerCase()
+                    .matchAll(
+                      new RegExp(
+                        needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+                        "g",
+                      ),
+                    ),
+                ].length
+              : 0;
+            occurrence += matchesInNode;
+            if (!needle) {
+              // Clearing only initialStyledText invalidates CodeRenderable's
+              // highlighter but leaves its last painted buffer on screen until
+              // the asynchronous markdown pass wins. Replace that buffer now
+              // so Esc visibly removes search decoration immediately.
+              node.updateStreamingPreview(
+                codeText,
+                new StyledText([{ __isChunk: true, text: codeText }]),
+              );
+            } else {
+              const selectedInNode = selectedOccurrence - firstOccurrence;
+              let match = 0;
+              const pieces = codeText
+                .split(
+                  new RegExp(
+                    `(${needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`,
+                    "ig",
+                  ),
+                )
+                .filter(Boolean)
+                .map((text) => {
+                  const highlighted = text.toLocaleLowerCase() === needle;
+                  const piece = highlighted
+                    ? {
+                        __isChunk: true as const,
+                        text,
+                        bg: RGBA.fromHex(
+                          match === selectedInNode ? "#b45309" : "#665500",
+                        ),
+                        fg: RGBA.fromHex(
+                          match === selectedInNode ? "#ffffff" : "#fef3c7",
+                        ),
+                      }
+                    : { __isChunk: true as const, text };
+                  if (highlighted) match += 1;
+                  return piece;
+                });
+              node.initialStyledText = new StyledText(pieces);
+            }
+            node.requestRender();
+            continue;
+          }
+          const buffer = (node as any).textBuffer as {
+            clearAllHighlights(): void;
+            addHighlightByCharRange(value: {
+              start: number;
+              end: number;
+              styleId: number;
+              priority: number;
+            }): void;
+          };
+          buffer.clearAllHighlights();
+          if (!needle) continue;
+          const value = (
+            node as unknown as { plainText: string }
+          ).plainText.toLocaleLowerCase();
+          for (
+            let offset = value.indexOf(needle);
+            offset >= 0;
+            offset = value.indexOf(needle, offset + needle.length)
+          ) {
+            const current =
+              selected?.messageIndex === messageIndex &&
+              selected.part === part &&
+              occurrence === selectedOccurrence;
+            buffer.addHighlightByCharRange({
+              start: offset,
+              end: offset + needle.length,
+              styleId: current ? currentStyle : matchStyle,
+              priority: current ? 2 : 1,
+            });
+            if (!(node instanceof CodeRenderable)) occurrence += 1;
+          }
+          node.requestRender();
+        }
+      }
+    });
+    this.renderer.requestRender();
   }
 
   private moveMatch(direction: 1 | -1): void {
@@ -926,6 +1263,7 @@ export class ConversationReader {
     this.searchMatchIndex =
       (this.searchMatchIndex + direction + this.searchMatches.length) %
       this.searchMatches.length;
+    this.applySearchHighlights();
     this.schedulePosition(() => this.scrollToCurrentMatch());
     this.updateFooter();
   }
@@ -1025,6 +1363,7 @@ export class ConversationReader {
   /** Presentation-only update used by zencodex native event projection. */
   public project(messages: TranscriptMessage[], originIndex?: number): void {
     this.applyMessages(messages);
+    this.updateHeader();
     if (originIndex !== undefined && originIndex >= 0) {
       this.unreadBelow = false;
       this.schedulePosition(() => {

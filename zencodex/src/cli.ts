@@ -5,7 +5,8 @@ import { pickSession, type PickerState } from "./picker";
 import { connect } from "./app-server";
 import { ReaderConversation } from "./conversation";
 import { createHerdrReporter } from "./herdr";
-import { discoverSessions } from "./discovery";
+import { discoverSessions, latestTokenUsage } from "./discovery";
+import { resumeAdmission } from "./admission";
 import type { TranscriptMessage } from "./types";
 
 const noWatch = () => ({ close() {} });
@@ -16,7 +17,7 @@ function bar(total?: number, max?: number): string {
     return "context unavailable";
   const ratio = Math.min(1, total / max);
   const filled = Math.round(ratio * 12);
-  return `context [${"█".repeat(filled)}${"░".repeat(12 - filled)}] ${Math.round(ratio * 100)}% (${total}/${max})`;
+  return `context ${"━".repeat(filled)}${"─".repeat(12 - filled)} ${Math.round(ratio * 100)}%`;
 }
 function clock(ms?: number): string {
   return ms === undefined
@@ -56,18 +57,36 @@ async function main(): Promise<void> {
       );
       if (!choice) break;
       const server = await connect(cwd);
-      const threadId =
-        choice.id === NEW ? await server.startThread() : choice.id;
-      if (choice.id !== NEW) await server.resumeThread(threadId);
+      let opened;
+      try {
+        opened =
+          choice.id === NEW
+            ? await server.startThread()
+            : await server.resumeThread(choice.id);
+      } catch (error) {
+        await server.close();
+        picker.notice = resumeAdmission(error);
+        continue;
+      }
+      const threadId = opened.id;
       const selected =
         choice.id === NEW
-          ? { ...choice, id: threadId, name: "New session", path: threadId }
-          : choice;
+          ? {
+              ...choice,
+              id: threadId,
+              name: opened.name ?? "New session",
+              path: threadId,
+            }
+          : { ...choice, name: opened.name ?? choice.name };
+      picker.notice = undefined;
       const conversation = new ReaderConversation(
         server,
         threadId,
         createHerdrReporter(),
       );
+      conversation.setRuntime(opened);
+      if (choice.id !== NEW)
+        conversation.seedTokenUsage(await latestTokenUsage(choice.path));
       await conversation.loadHistory();
       let reader:
         | Awaited<ReturnType<typeof createConversationReader>>
@@ -89,13 +108,13 @@ async function main(): Promise<void> {
           await submitted;
           project();
         },
-        onInterrupt: () => {
-          if (!conversation.activeTurnId) return false;
-          void conversation.interrupt();
-          return true;
-        },
-        footerInfo: () =>
-          `${bar(conversation.tokenUsage?.last?.totalTokens, conversation.tokenUsage?.modelContextWindow)} · ${clock(conversation.workingDurationMs()) || conversation.status}`,
+        loadSkills: () => conversation.listSkills(cwd),
+        skillsVersion: () => conversation.skillVersion,
+        title: () => conversation.runtime.name,
+        statusLines: () => ({
+          identity: `${cwd} · ${conversation.runtime.model ?? "model unavailable"}${conversation.runtime.effort ? ` · ${conversation.runtime.effort}` : ""}`,
+          telemetry: `${bar(conversation.tokenUsage?.last?.totalTokens, conversation.tokenUsage?.modelContextWindow)}${clock(conversation.workingDurationMs()) ? ` · ${clock(conversation.workingDurationMs())}` : ""}`,
+        }),
       });
       reader.start();
       const ticker = setInterval(project, 200);

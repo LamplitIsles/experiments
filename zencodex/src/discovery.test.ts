@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { discoverSessions } from "./discovery";
+import { discoverSessions, latestTokenUsage } from "./discovery";
 
 test("bounded discovery merges index title/activity and filters exact cwd", async () => {
   const home = await mkdtemp(join(tmpdir(), "zencodex-discovery-"));
@@ -43,5 +43,47 @@ test("bounded discovery merges index title/activity and filters exact cwd", asyn
     });
   } finally {
     await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("selected rollout seeds the pre-notification meter from native last token usage", async () => {
+  const root = await mkdtemp(join(tmpdir(), "zencodex-tokens-"));
+  const rollout = join(root, "thread.jsonl");
+  try {
+    await writeFile(
+      rollout,
+      [
+        JSON.stringify({
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              total_token_usage: { total_tokens: 1_000 },
+              last_token_usage: { total_tokens: 10 },
+              model_context_window: 100,
+            },
+          },
+        }),
+        "not json",
+        JSON.stringify({
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              total_token_usage: { total_tokens: 8_000 },
+              last_token_usage: { total_tokens: 40 },
+              model_context_window: 400,
+            },
+          },
+        }),
+        '{"type":"event_msg",',
+      ].join("\n"),
+    );
+    expect(await latestTokenUsage(rollout)).toEqual({
+      totalTokens: 40,
+      modelContextWindow: 400,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

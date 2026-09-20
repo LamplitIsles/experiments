@@ -75,7 +75,7 @@ The list and reader share one terminal renderer. Returning with `b` reloads the 
 
 ## Reader
 
-The reader starts at the newest content with follow enabled. Each user-facing message has a separate role/time boundary, and its body is lightly rendered as local Markdown. Headings, lists, emphasis, code blocks, links, Chinese text, and ordinary line wrapping remain readable. Tool calls/output, reasoning, mirrored activity, injected context, shell activity, images, and inter-agent messages stay excluded. Message bodies are not summarized or truncated. Times are local `YYYY-MM-DD HH:mm`; the header states the local IANA timezone once. Missing or invalid source timestamps display as `unknown time`.
+The reader starts at the newest content with follow enabled. Each user-facing message has a separate role/time boundary, and its body is lightly rendered as local Markdown. Headings, lists, emphasis, code blocks, links, Chinese text, and ordinary line wrapping remain readable. Tool calls/output, reasoning, mirrored activity, injected context, shell activity, images, and inter-agent messages stay excluded. Message bodies are not summarized or truncated. Times are local `YYYY-MM-DD HH:mm`; missing or invalid source timestamps display as `unknown time`.
 
 Drag to select text with the mouse; releasing copies the selected text through the terminal’s OSC 52 clipboard support. The status reports that the copy was sent, or that clipboard support is unavailable. This requires a terminal that permits OSC 52 writes.
 

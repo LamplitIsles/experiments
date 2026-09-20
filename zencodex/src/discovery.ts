@@ -97,3 +97,48 @@ export async function discoverSessions(
   await walk(join(home, "sessions"));
   return out.sort((a, b) => b.activityMs - a.activityMs);
 }
+
+/** Reads one bounded suffix; rollout history stays authoritative and untouched. */
+export async function latestTokenUsage(path: string): Promise<
+  | {
+      totalTokens: number;
+      modelContextWindow: number;
+    }
+  | undefined
+> {
+  let file: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    file = await open(path, "r");
+    const size = (await file.stat()).size;
+    const length = Math.min(size, 64 * 1024);
+    const buffer = Buffer.alloc(length);
+    await file.read(buffer, 0, length, size - length);
+    const text = buffer.toString("utf8");
+    const lines = text.split("\n");
+    if (size > length) lines.shift(); // first record is a truncated suffix
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      try {
+        const record = JSON.parse(lines[index]);
+        const payload =
+          record?.type === "event_msg" ? record.payload : undefined;
+        if (payload?.type !== "token_count") continue;
+        // Native rollout observations put the context total under the last
+        // per-turn usage, not the cumulative lifetime total_token_usage.
+        const totalTokens = payload?.info?.last_token_usage?.total_tokens;
+        const modelContextWindow = payload?.info?.model_context_window;
+        if (
+          Number.isFinite(totalTokens) &&
+          totalTokens >= 0 &&
+          Number.isFinite(modelContextWindow) &&
+          modelContextWindow > 0
+        )
+          return { totalTokens, modelContextWindow };
+      } catch {}
+    }
+  } catch {
+    return undefined;
+  } finally {
+    await file?.close();
+  }
+  return undefined;
+}

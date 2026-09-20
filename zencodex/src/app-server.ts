@@ -3,8 +3,15 @@ import { CodexAppServerClient } from "@jaminzhou/codex-app-server-client";
 import type { AppServer } from "./conversation";
 
 export type ZencodexClient = AppServer & {
-  startThread(): Promise<string>;
-  resumeThread(id: string): Promise<void>;
+  startThread(): Promise<{
+    id: string;
+    name?: string;
+    model?: string;
+    effort?: string;
+  }>;
+  resumeThread(
+    id: string,
+  ): Promise<{ id: string; name?: string; model?: string; effort?: string }>;
 };
 
 export async function connect(
@@ -27,23 +34,39 @@ export async function connect(
     onNotification: client.onNotification.bind(client),
     close: () => client.close(),
     async startThread() {
-      return (
-        await client.threadStart({
-          cwd,
-          approvalPolicy: "never",
-          sandbox: "danger-full-access",
-          historyMode: "paginated",
-          sessionStartSource: "startup",
-        })
-      ).thread.id;
+      const response = await client.threadStart({
+        cwd,
+        approvalPolicy: "never",
+        sandbox: "danger-full-access",
+        historyMode: "paginated",
+        sessionStartSource: "startup",
+      });
+      return {
+        id: response.thread.id,
+        name: response.thread.name ?? undefined,
+        model: response.thread.model ?? undefined,
+        effort:
+          response.reasoningEffort ??
+          response.thread.reasoningEffort ??
+          undefined,
+      };
     },
     async resumeThread(id: string) {
-      await client.threadResume({
+      const response = await client.threadResume({
         threadId: id,
         cwd,
         approvalPolicy: "never",
         sandbox: "danger-full-access",
       });
+      return {
+        id: response.thread.id,
+        name: response.thread.name ?? undefined,
+        model: response.model ?? response.thread.model ?? undefined,
+        effort:
+          response.reasoningEffort ??
+          response.thread.reasoningEffort ??
+          undefined,
+      };
     },
   };
 }

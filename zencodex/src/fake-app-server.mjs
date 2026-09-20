@@ -723,7 +723,7 @@ async function handle(request) {
         approvalsReviewer: "user",
         sandbox: { type: "dangerFullAccess" },
         activePermissionProfile: null,
-        reasoningEffort: null,
+        reasoningEffort: control().resumeReasoningEffort ?? null,
         multiAgentMode: "explicitRequestOnly",
       };
     }
@@ -733,6 +733,11 @@ async function handle(request) {
         rpcError(
           -32600,
           `no rollout found for thread id ${String(p.threadId ?? "")}`,
+        );
+      if (control().resumeError)
+        rpcError(
+          Number(control().resumeError.code),
+          String(control().resumeError.message),
         );
       if (control().failResume) rpcError(-32603, "fixture resume rejected");
       if (Array.isArray(p.history)) {
@@ -755,7 +760,7 @@ async function handle(request) {
         approvalsReviewer: "user",
         sandbox: { type: "dangerFullAccess" },
         activePermissionProfile: null,
-        reasoningEffort: null,
+        reasoningEffort: control().resumeReasoningEffort ?? null,
         multiAgentMode: "explicitRequestOnly",
       };
     }
@@ -789,26 +794,6 @@ async function handle(request) {
     }
     case "turn/steer":
       return steerTurn(p);
-    case "turn/interrupt": {
-      const active = state.turns.find(
-        (candidate) => candidate.id === state.active,
-      );
-      if (!active) rpcError(-32600, "no active turn to interrupt");
-      if (active.id !== p.turnId)
-        rpcError(
-          -32600,
-          `expected active turn id ${p.turnId} but found ${active.id}`,
-        );
-      active.status = "interrupted";
-      active.error = { message: "interrupted" };
-      state.active = null;
-      save();
-      send({
-        method: "turn/completed",
-        params: { threadId: state.threadId, turn: active },
-      });
-      return {};
-    }
     case "thread/compact/start":
       void compact();
       return {};

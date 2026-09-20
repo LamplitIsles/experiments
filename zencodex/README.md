@@ -30,15 +30,33 @@ has no approval surface.
 
 ## Controls and boundaries
 
-- Enter submits the multiline composer; a normal active turn receives a native
-  steer. Ctrl-C stops an active turn or exits while idle.
-- `/compact` invokes native compaction and is never displayed as chat text.
-- The footer shows only server-reported active-window `totalTokens / context
-window`; unavailable means the server has not supplied a usable observation.
-- Ctrl-/ is reserved for transcript search (with `n`/`N` result navigation);
-  `j`/`k`, arrows, Ctrl-D/Ctrl-U, `gg`, and `G` retain reader scrolling; `/` remains available to Codex
-  slash commands. The reader retains OpenTUI Markdown, scroll, and OSC 52 copy
-  behavior adapted directly from `utterlog`.
+zencodex has two focus regions. It opens in **COMPOSING**: Enter submits,
+Ctrl-J inserts a newline, and Tab moves to **READING**. In READING, `/` starts
+literal transcript search; `j`/`k`, arrows, Ctrl-D/Ctrl-U, `gg`, `G`, and
+`n`/`N` navigate without taking composition keys. Matches are visibly marked
+and the active result is distinct. Tab returns to COMPOSING. In COMPOSING,
+Ctrl-C clears only the unsent draft and completion popup, while Ctrl-D quits.
+In READING, Ctrl-D pages down and Ctrl-C is a no-op; zencodex has no keyboard
+turn-interrupt or exit command on Ctrl-C.
+
+Typing `/` offers only supported `/compact`, inserted before submission and
+then run as native compaction without chat text. Typing `$` offers enabled
+skills from the selected cwd's official `skills/list` result. Arrows select;
+Enter or Tab inserts; Esc dismisses. A skill selection inserts literal `$name`
+and never invokes a zencodex skill runtime. `skills/changed` only invalidates
+the next official list request.
+
+The fixed two-line status area shows cwd plus authoritative model/reasoning
+effort, then native context telemetry and working duration. On resume it may
+seed context only from the newest valid `token_count` in a bounded suffix of
+the selected rollout; the first native token update wins. Missing evidence is
+unavailable, never estimated. The title, model, and effort follow authoritative
+thread updates. If another Codex client holds the thread writer, zencodex
+closes its client and returns safely to the picker; it never takes over, forks,
+or creates a replacement session.
+
+The reader retains OpenTUI Markdown, scroll, and OSC 52 copy behavior adapted
+directly from `utterlog`.
 
 There is no streaming prose, reasoning/tools/diffs/images/plans, execution
 inspector, durable zencodex transcript or queue, remote-session browser,

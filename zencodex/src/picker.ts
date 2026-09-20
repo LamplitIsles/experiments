@@ -10,7 +10,11 @@ import {
 } from "@opentui/core";
 import { messageTimestamp, type NamedSession } from "./types";
 
-export type PickerState = { query: string; selectedId?: string };
+export type PickerState = {
+  query: string;
+  selectedId?: string;
+  notice?: string;
+};
 
 export async function pickSession(
   renderer: CliRenderer,
@@ -117,7 +121,7 @@ export async function pickSession(
           filtered.findIndex((session) => session.id === state.selectedId),
         ),
       );
-      status.content = `${filtered.length ? `${filtered.length}/${sessions.length} sessions · newest first` : "No matching sessions"}${state.query ? ` · /${state.query}` : ""}${unnamedCount ? ` · ${unnamedCount} unnamed omitted` : ""}`;
+      status.content = `${state.notice ? `${state.notice} · ` : ""}${filtered.length ? `${filtered.length}/${sessions.length} sessions · newest first` : "No matching sessions"}${state.query ? ` · /${state.query}` : ""}${unnamedCount ? ` · ${unnamedCount} unnamed omitted` : ""}`;
     };
     const endEditing = () => {
       editing = false;

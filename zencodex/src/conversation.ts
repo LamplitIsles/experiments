@@ -28,6 +28,8 @@ export type TokenUsage = {
   last?: { totalTokens?: number };
   modelContextWindow?: number;
 };
+export type ThreadRuntime = { name?: string; model?: string; effort?: string };
+export type Skill = { name: string; description?: string };
 
 export interface AppServer {
   call(method: string, params?: Record<string, unknown>): Promise<any>;
@@ -109,6 +111,10 @@ export class ReaderConversation {
   activeTurnId: string | undefined;
   compacting = false;
   tokenUsage: TokenUsage | undefined;
+  readonly runtime: ThreadRuntime = {};
+  private skillsInvalid = true;
+  skillVersion = 0;
+  private cachedSkills: Skill[] = [];
   private pendingOrigin: number | undefined;
   activeStartedAt: string | number | undefined;
   status = "idle";
@@ -128,7 +134,27 @@ export class ReaderConversation {
       server.onNotification("item/completed", (p) => this.item(p)),
       server.onNotification("turn/completed", (p) => void this.completed(p)),
       server.onNotification("thread/tokenUsage/updated", (p) => {
-        this.tokenUsage = p.tokenUsage;
+        if (p.threadId === undefined || p.threadId === this.threadId)
+          this.tokenUsage = p.tokenUsage;
+      }),
+      server.onNotification("thread/name/updated", (p) => {
+        if (
+          p.threadId === this.threadId &&
+          typeof (p.threadName ?? p.name) === "string"
+        )
+          this.runtime.name = p.threadName ?? p.name;
+      }),
+      server.onNotification("thread/settings/updated", (p) => {
+        if (p.threadId !== this.threadId) return;
+        const settings = p.threadSettings ?? p.settings ?? p;
+        if (typeof settings.model === "string")
+          this.runtime.model = settings.model;
+        if (typeof (settings.effort ?? settings.reasoningEffort) === "string")
+          this.runtime.effort = settings.effort ?? settings.reasoningEffort;
+      }),
+      server.onNotification("skills/changed", () => {
+        this.skillsInvalid = true;
+        this.skillVersion += 1;
       }),
       server.onNotification("thread/compacted", () => {
         this.compacting = false;
@@ -153,6 +179,48 @@ export class ReaderConversation {
     } while (cursor);
     this.acknowledge(turns);
     this.visible.splice(0, this.visible.length, ...messages(turns));
+  }
+
+  seedTokenUsage(
+    value: { totalTokens: number; modelContextWindow: number } | undefined,
+  ): void {
+    if (value)
+      this.tokenUsage = {
+        last: { totalTokens: value.totalTokens },
+        modelContextWindow: value.modelContextWindow,
+      };
+  }
+
+  setRuntime(value: ThreadRuntime): void {
+    Object.assign(this.runtime, value);
+  }
+
+  async listSkills(cwd: string): Promise<Skill[]> {
+    if (!this.skillsInvalid) return this.cachedSkills;
+    const response = await this.server.call("skills/list", { cwds: [cwd] });
+    const values = Array.isArray(response.data)
+      ? response.data.flatMap((entry: any) =>
+          Array.isArray(entry.skills) ? entry.skills : [],
+        )
+      : [];
+    this.cachedSkills = values.flatMap((skill: any) => {
+      const name = typeof skill.name === "string" ? skill.name : undefined;
+      const enabled = skill.enabled ?? skill.isEnabled ?? true;
+      return name && enabled
+        ? [
+            {
+              name,
+              description:
+                typeof (skill.description ?? skill.shortDescription) ===
+                "string"
+                  ? (skill.description ?? skill.shortDescription)
+                  : undefined,
+            },
+          ]
+        : [];
+    });
+    this.skillsInvalid = false;
+    return this.cachedSkills;
   }
 
   /** Only an official userMessage client ID confirms a locally admitted input. */
@@ -253,19 +321,6 @@ export class ReaderConversation {
         throw error;
       }
     }
-  }
-
-  async interrupt(): Promise<void> {
-    if (!this.activeTurnId) return;
-    await this.server.call("turn/interrupt", {
-      threadId: this.threadId,
-      turnId: this.activeTurnId,
-    });
-    // Native history remains authority; only IDs it has not acknowledged survive.
-    await this.loadHistory();
-    for (const [id, input] of this.unacknowledged)
-      if (!this.held.some((held) => held.id === id))
-        this.held.push({ id, input });
   }
 
   async compact(): Promise<void> {

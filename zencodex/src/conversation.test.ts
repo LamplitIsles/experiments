@@ -125,6 +125,69 @@ describe("reader-first native projection", () => {
     expect(server.requests[1].method).toBe("turn/start");
   });
 
+  test("uses official enabled skills only, invalidates them, and keeps selection side-effect free", async () => {
+    const server = fake();
+    server.call = async (method, params) => {
+      server.requests.push({ method, params });
+      return method === "skills/list"
+        ? {
+            data: [
+              {
+                skills: [
+                  { name: "review", description: "Review code", enabled: true },
+                  { name: "off", enabled: false },
+                ],
+              },
+            ],
+          }
+        : {};
+    };
+    const c = new ReaderConversation(server, "thread-1");
+    expect(await c.listSkills("/work")).toEqual([
+      { name: "review", description: "Review code" },
+    ]);
+    expect(server.requests[0]).toMatchObject({
+      method: "skills/list",
+      params: { cwds: ["/work"] },
+    });
+    server.emit("skills/changed", {});
+    await c.listSkills("/work");
+    expect(
+      server.requests.filter((request) => request.method === "skills/list"),
+    ).toHaveLength(2);
+    expect(
+      server.requests.some((request) => request.method === "turn/start"),
+    ).toBe(false);
+  });
+
+  test("tracks authoritative title/settings and lets live token usage replace a rollout seed", () => {
+    const server = fake();
+    const c = new ReaderConversation(server, "thread-1");
+    c.seedTokenUsage({ totalTokens: 30, modelContextWindow: 300 });
+    expect(c.contextLabel()).toBe("context 30 / 300");
+    server.emit("thread/tokenUsage/updated", {
+      threadId: "thread-1",
+      tokenUsage: { last: { totalTokens: 50 }, modelContextWindow: 500 },
+    });
+    server.emit("thread/name/updated", {
+      threadId: "thread-1",
+      threadName: "Native name",
+    });
+    server.emit("thread/settings/updated", {
+      threadId: "thread-1",
+      threadSettings: { model: "gpt-5", effort: "high" },
+    });
+    expect(c.tokenUsage).toEqual({
+      last: { totalTokens: 50 },
+      modelContextWindow: 500,
+    });
+    expect(c.runtime).toEqual({
+      name: "Native name",
+      model: "gpt-5",
+      effort: "high",
+    });
+  });
+
   test("Herdr reporting failures are isolated from native conversation work", async () => {
     const reporter = createHerdrReporter(
       { HERDR_ENV: "1", HERDR_PANE_ID: "test:pane" },
