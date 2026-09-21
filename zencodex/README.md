@@ -32,9 +32,10 @@ has no approval surface.
 
 zencodex has two focus regions. It opens in **COMPOSING**: Enter submits,
 Ctrl-J inserts a newline, and Tab moves to **READING**. In READING, `/` starts
-literal transcript search; `j`/`k`, arrows, Ctrl-D/Ctrl-U, `gg`, `G`, and
-`n`/`N` navigate without taking composition keys. Matches are visibly marked
-and the active result is distinct. Tab returns to COMPOSING. In COMPOSING,
+literal rendered-transcript search; `j`/`k`, arrows, Ctrl-D/Ctrl-U, `gg`, `G`, and
+`n`/`N` navigate without taking composition keys. Literal text remains searchable
+across Markdown formatting and visual wrapping. Matches are visibly marked and
+the active result is distinct. Tab returns to COMPOSING. In COMPOSING,
 Ctrl-C clears only the unsent draft and completion popup, while Ctrl-D quits.
 In READING, Ctrl-D pages down and Ctrl-C is a no-op; zencodex has no keyboard
 turn-interrupt or exit command on Ctrl-C.

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
-import { TextareaRenderable } from "@opentui/core";
+import { TextRenderable, TextareaRenderable } from "@opentui/core";
 import { createConversationReader } from "./reader";
 import type { NamedSession, TranscriptMessage } from "./types";
 
@@ -407,6 +407,366 @@ test("reader search visibly marks every literal result and strengthens the selec
     });
   } finally {
     reader.dispose();
+    setup.renderer.destroy();
+  }
+});
+
+test("reader decorates the visible word-wrap coordinates of a selected match", async () => {
+  const setup = await createTestRenderer({ width: 24, height: 20 });
+  const messages: TranscriptMessage[] = [
+    {
+      role: "assistant",
+      body: "padding padding explicitly requires it.",
+      timestampLabel: "2026-09-20 10:00",
+    },
+  ];
+  const reader = await createConversationReader({
+    session,
+    messages,
+    load: async () => messages,
+    renderer: setup.renderer,
+    ownsRenderer: false,
+    watchFactory: noWatch,
+  });
+  try {
+    reader.start();
+    await setup.flush();
+    await Bun.sleep(100);
+    await setup.flush();
+    setup.mockInput.pressTab();
+    setup.mockInput.pressKey("/");
+    await setup.mockInput.typeText("requi");
+    setup.mockInput.pressEnter();
+    await setup.flush();
+    const selected = setup
+      .captureSpans()
+      .lines.flatMap((line) => line.spans)
+      .filter(
+        (span) =>
+          span.bg.toString() === "rgba(0.71, 0.33, 0.04, 1.00)" &&
+          (span.attributes & 1) !== 0 &&
+          (span.attributes & 32) !== 0,
+      )
+      .map((span) => span.text);
+    expect(reader.snapshot().searchMatches).toBe(1);
+    expect(selected).toEqual(["requi"]);
+  } finally {
+    reader.dispose();
+    setup.renderer.destroy();
+  }
+});
+
+test("reader finds and decorates a selected match after many newline source rows", async () => {
+  const setup = await createTestRenderer({ width: 40, height: 14 });
+  const messages: TranscriptMessage[] = [
+    {
+      role: "assistant",
+      body: [
+        ...Array.from(
+          { length: 40 },
+          (_, index) => `filler row ${String(index).padStart(2, "0")}`,
+        ),
+        "offscreen target",
+      ].join("\n"),
+      timestampLabel: "2026-09-20 10:00",
+    },
+  ];
+  const reader = await createConversationReader({
+    session,
+    messages,
+    load: async () => messages,
+    renderer: setup.renderer,
+    ownsRenderer: false,
+    watchFactory: noWatch,
+  });
+  try {
+    reader.start();
+    await setup.flush();
+    await Bun.sleep(100);
+    await setup.flush();
+    setup.mockInput.pressTab();
+    setup.mockInput.pressKey("/");
+    await setup.mockInput.typeText("target");
+    setup.mockInput.pressEnter();
+    await setup.flush();
+    const frame = setup.captureCharFrame();
+    const selected = setup
+      .captureSpans()
+      .lines.flatMap((line) => line.spans)
+      .filter(
+        (span) =>
+          span.bg.toString() === "rgba(0.71, 0.33, 0.04, 1.00)" &&
+          (span.attributes & 1) !== 0 &&
+          (span.attributes & 32) !== 0,
+      )
+      .map((span) => span.text);
+    expect(frame).toContain("offscreen target");
+    expect(reader.snapshot()).toMatchObject({
+      searchMatches: 1,
+      searchMatch: 1,
+    });
+    expect(selected).toEqual(["target"]);
+  } finally {
+    reader.dispose();
+    setup.renderer.destroy();
+  }
+});
+
+test("reader decorates combining and ZWJ graphemes without styling the next cell", async () => {
+  for (const { body, query, selectedText } of [
+    { body: "before e\u0301x target", query: "e\u0301", selectedText: "e" },
+    {
+      body: "before 👩‍💻x target",
+      query: "👩‍💻",
+      selectedText: "👩",
+    },
+  ]) {
+    const setup = await createTestRenderer({ width: 40, height: 14 });
+    const messages: TranscriptMessage[] = [
+      { role: "assistant", body, timestampLabel: "2026-09-20 10:00" },
+    ];
+    const reader = await createConversationReader({
+      session,
+      messages,
+      load: async () => messages,
+      renderer: setup.renderer,
+      ownsRenderer: false,
+      watchFactory: noWatch,
+    });
+    try {
+      reader.start();
+      await setup.flush();
+      await Bun.sleep(100);
+      await setup.flush();
+      setup.mockInput.pressTab();
+      setup.mockInput.pressKey("/");
+      await setup.mockInput.pasteBracketedText(query);
+      setup.mockInput.pressEnter();
+      await setup.flush();
+      const selected = setup
+        .captureSpans()
+        .lines.flatMap((line) => line.spans)
+        .filter(
+          (span) =>
+            span.bg.toString() === "rgba(0.71, 0.33, 0.04, 1.00)" &&
+            (span.attributes & 1) !== 0 &&
+            (span.attributes & 32) !== 0,
+        )
+        .map((span) => span.text);
+      expect(reader.snapshot().searchMatches).toBe(1);
+      expect(selected).toEqual([selectedText]);
+      expect(selected.join("")).not.toContain("x");
+    } finally {
+      reader.dispose();
+      setup.renderer.destroy();
+    }
+  }
+});
+
+test("reader decorates a Markdown literal across a physical rendered row boundary", async () => {
+  const setup = await createTestRenderer({ width: 20, height: 14 });
+  const messages: TranscriptMessage[] = [
+    {
+      role: "assistant",
+      body: "padding search **phrase** next search **phrase**",
+      timestampLabel: "2026-09-20 10:00",
+    },
+  ];
+  const reader = await createConversationReader({
+    session,
+    messages,
+    load: async () => messages,
+    renderer: setup.renderer,
+    ownsRenderer: false,
+    watchFactory: noWatch,
+  });
+  try {
+    reader.start();
+    await setup.flush();
+    await Bun.sleep(100);
+    await setup.flush();
+    setup.mockInput.pressTab();
+    setup.mockInput.pressKey("/");
+    await setup.mockInput.typeText("search phrase");
+    setup.mockInput.pressEnter();
+    await setup.flush();
+    const frame = setup.captureCharFrame();
+    const markedLines = (background: string) =>
+      setup
+        .captureSpans()
+        .lines.map((line) =>
+          line.spans.filter(
+            (span) =>
+              span.bg.toString() === background && (span.attributes & 8) !== 0,
+          ),
+        );
+    const markedText = (background: string) =>
+      markedLines(background)
+        .flatMap((line) => line)
+        .map((span) => span.text);
+    expect(reader.snapshot()).toMatchObject({
+      searchMatches: 2,
+      searchMatch: 1,
+    });
+    expect(frame).toContain("phrase next search");
+    expect(markedText("rgba(0.71, 0.33, 0.04, 1.00)")).toEqual([
+      "search",
+      "phrase",
+    ]);
+    expect(markedText("rgba(0.40, 0.33, 0.00, 1.00)")).toEqual([
+      "search",
+      "phrase",
+    ]);
+    expect(
+      markedLines("rgba(0.71, 0.33, 0.04, 1.00)").filter(
+        (line) => line.length > 0,
+      ),
+    ).toHaveLength(2);
+    expect(
+      markedLines("rgba(0.40, 0.33, 0.00, 1.00)").filter(
+        (line) => line.length > 0,
+      ),
+    ).toHaveLength(2);
+    setup.mockInput.pressKey("n");
+    await setup.flush();
+    expect(reader.snapshot().searchMatch).toBe(2);
+    setup.mockInput.pressKey("N");
+    await setup.flush();
+    expect(reader.snapshot().searchMatch).toBe(1);
+  } finally {
+    reader.dispose();
+    setup.renderer.destroy();
+  }
+});
+
+test("reader finds a literal across rendered Markdown formatting and wrapping", async () => {
+  const setup = await createTestRenderer({ width: 34, height: 14 });
+  const messages: TranscriptMessage[] = [
+    {
+      role: "assistant",
+      body: "prefix search **phrase** suffix search *phrase*",
+      timestampLabel: "2026-09-20 10:00",
+    },
+  ];
+  const reader = await createConversationReader({
+    session,
+    messages,
+    load: async () => messages,
+    renderer: setup.renderer,
+    ownsRenderer: false,
+    watchFactory: noWatch,
+  });
+  try {
+    reader.start();
+    await setup.flush();
+    await Bun.sleep(100);
+    await setup.flush();
+    setup.mockInput.pressTab();
+    setup.mockInput.pressKey("/");
+    await setup.mockInput.typeText("search phrase");
+    setup.mockInput.pressEnter();
+    await setup.flush();
+    const frame = setup.captureCharFrame();
+    const spans = setup.captureSpans().lines.flatMap((line) => line.spans);
+    const marked = spans.filter((span) =>
+      ["rgba(0.40, 0.33, 0.00, 1.00)", "rgba(0.71, 0.33, 0.04, 1.00)"].includes(
+        span.bg.toString(),
+      ),
+    );
+    expect(reader.snapshot()).toMatchObject({
+      searchMatches: 2,
+      searchMatch: 1,
+    });
+    expect(frame).toContain("search");
+    expect(marked.some((span) => (span.attributes & 8) !== 0)).toBe(true);
+    expect(
+      marked.some(
+        (span) => (span.attributes & 1) !== 0 && (span.attributes & 32) !== 0,
+      ),
+    ).toBe(true);
+    setup.mockInput.pressKey("n");
+    await setup.flush();
+    expect(reader.snapshot().searchMatch).toBe(2);
+    setup.mockInput.pressKey("n");
+    await setup.flush();
+    expect(reader.snapshot().searchMatch).toBe(1);
+    setup.mockInput.pressKey("N");
+    await setup.flush();
+    expect(reader.snapshot().searchMatch).toBe(2);
+  } finally {
+    reader.dispose();
+    setup.renderer.destroy();
+  }
+});
+
+test("rendered search rebuilds on reflow and transcript refresh without stale frame decoration", async () => {
+  const setup = await createTestRenderer({ width: 44, height: 14 });
+  let messages: TranscriptMessage[] = [
+    {
+      role: "assistant",
+      body: "宽世界 needle follows a long rendered line that will wrap",
+      timestampLabel: "2026-09-20 10:00",
+    },
+  ];
+  const reader = await createConversationReader({
+    session,
+    messages,
+    load: async () => messages,
+    renderer: setup.renderer,
+    ownsRenderer: false,
+    watchFactory: noWatch,
+  });
+  const searchColors = new Set([
+    "rgba(0.40, 0.33, 0.00, 1.00)",
+    "rgba(0.71, 0.33, 0.04, 1.00)",
+  ]);
+  try {
+    reader.start();
+    await setup.flush();
+    await Bun.sleep(100);
+    await setup.flush();
+    setup.mockInput.pressTab();
+    setup.mockInput.pressKey("/");
+    await setup.mockInput.typeText("世界 needle");
+    setup.mockInput.pressEnter();
+    await setup.flush();
+    expect(reader.snapshot().searchMatches).toBe(1);
+    setup.resize(28, 14);
+    await setup.flush();
+    expect(reader.snapshot().searchMatches).toBe(1);
+    setup.mockInput.pressKey("n");
+    await setup.flush();
+    expect(reader.snapshot().searchMatch).toBe(1);
+    messages = [
+      {
+        role: "assistant",
+        body: "replacement contains no selected text",
+        timestampLabel: "2026-09-20 10:01",
+      },
+    ];
+    await reader.refresh();
+    await setup.flush();
+    expect(reader.snapshot()).toMatchObject({
+      searchMatches: 0,
+      searchMatch: 0,
+    });
+    expect(
+      setup
+        .captureSpans()
+        .lines.flatMap((line) => line.spans)
+        .filter((span) => searchColors.has(span.bg.toString())),
+    ).toEqual([]);
+  } finally {
+    reader.dispose();
+    const text = new TextRenderable(setup.renderer, { content: "世界 needle" });
+    setup.renderer.root.add(text);
+    await setup.renderOnce();
+    expect(
+      setup
+        .captureSpans()
+        .lines.flatMap((line) => line.spans)
+        .filter((span) => searchColors.has(span.bg.toString())),
+    ).toEqual([]);
     setup.renderer.destroy();
   }
 });
