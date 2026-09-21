@@ -590,28 +590,46 @@ test("reader decorates a Markdown literal across a physical rendered row boundar
     await setup.mockInput.typeText("search phrase");
     setup.mockInput.pressEnter();
     await setup.flush();
-    const selectedLines = setup
-      .captureSpans()
-      .lines.map((line) =>
-        line.spans.filter(
-          (span) =>
-            span.bg.toString() === "rgba(0.71, 0.33, 0.04, 1.00)" &&
-            (span.attributes & 1) !== 0 &&
-            (span.attributes & 32) !== 0,
-        ),
-      );
-    const selected = selectedLines
-      .flatMap((line) => line)
-      .map((span) => span.text);
+    const frame = setup.captureCharFrame();
+    const markedLines = (background: string) =>
+      setup
+        .captureSpans()
+        .lines.map((line) =>
+          line.spans.filter(
+            (span) =>
+              span.bg.toString() === background && (span.attributes & 8) !== 0,
+          ),
+        );
+    const markedText = (background: string) =>
+      markedLines(background)
+        .flatMap((line) => line)
+        .map((span) => span.text);
     expect(reader.snapshot()).toMatchObject({
-      searchMatches: 1,
+      searchMatches: 2,
       searchMatch: 1,
     });
-    expect(selected).toEqual(["search", "phrase"]);
-    expect(selectedLines.filter((line) => line.length > 0)).toHaveLength(2);
+    expect(frame).toContain("phrase next search");
+    expect(markedText("rgba(0.71, 0.33, 0.04, 1.00)")).toEqual([
+      "search",
+      "phrase",
+    ]);
+    expect(markedText("rgba(0.40, 0.33, 0.00, 1.00)")).toEqual([
+      "search",
+      "phrase",
+    ]);
+    expect(
+      markedLines("rgba(0.71, 0.33, 0.04, 1.00)").filter(
+        (line) => line.length > 0,
+      ),
+    ).toHaveLength(2);
+    expect(
+      markedLines("rgba(0.40, 0.33, 0.00, 1.00)").filter(
+        (line) => line.length > 0,
+      ),
+    ).toHaveLength(2);
     setup.mockInput.pressKey("n");
     await setup.flush();
-    expect(reader.snapshot().searchMatch).toBe(1);
+    expect(reader.snapshot().searchMatch).toBe(2);
     setup.mockInput.pressKey("N");
     await setup.flush();
     expect(reader.snapshot().searchMatch).toBe(1);

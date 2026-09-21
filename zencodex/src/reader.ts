@@ -87,6 +87,11 @@ type RenderedCell = {
   column: number;
   text: string;
   width: number;
+  source: {
+    node: number;
+    line: number;
+    column: number;
+  };
 };
 
 type Anchor = {
@@ -1155,6 +1160,7 @@ export class ConversationReader {
   /** Build a literal corpus from laid-out text cells, never Markdown source. */
   private renderedTranscriptCells(): RenderedCell[] {
     const cells: RenderedCell[] = [];
+    let sourceNode = 0;
     const visit = (node: Renderable) => {
       const textNode = node as Renderable & {
         plainText?: unknown;
@@ -1165,7 +1171,12 @@ export class ConversationReader {
         };
       };
       if (typeof textNode.plainText === "string" && textNode.lineInfo) {
-        const sourceCells = new Map<number, Array<Omit<RenderedCell, "row">>>();
+        const nodeSource = sourceNode;
+        sourceNode += 1;
+        const sourceCells = new Map<
+          number,
+          Array<Pick<RenderedCell, "column" | "text" | "width">>
+        >();
         let source = 0;
         let column = 0;
         for (const character of graphemes(textNode.plainText)) {
@@ -1218,6 +1229,11 @@ export class ConversationReader {
               column: Math.round(node.x) + sourceCell.column - start,
               text: sourceCell.text,
               width: sourceCell.width,
+              source: {
+                node: nodeSource,
+                line: source,
+                column: sourceCell.column,
+              },
             });
             cursor += 1;
           }
@@ -1256,10 +1272,15 @@ export class ConversationReader {
     };
     for (const cell of cells) {
       if (previous) {
+        const sourceGap =
+          cell.source.node === previous.source.node &&
+          (cell.source.line !== previous.source.line ||
+            cell.source.column > previous.source.column + previous.width);
         const wrappedWord =
           cell.row === previous.row + 1 &&
           !/\s/u.test(previous.text) &&
-          !/\s/u.test(cell.text);
+          !/\s/u.test(cell.text) &&
+          !sourceGap;
         if (
           !wrappedWord &&
           (cell.row !== previous.row ||
