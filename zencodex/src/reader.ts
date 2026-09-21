@@ -169,7 +169,15 @@ function hasPrefix(
 
 function displayWidth(character: string): number {
   const width = Bun.stringWidth(character);
-  return width > 0 ? width : 1;
+  return Math.max(0, width);
+}
+
+const graphemeSegmenter = new Intl.Segmenter(undefined, {
+  granularity: "grapheme",
+});
+
+function graphemes(value: string): string[] {
+  return [...graphemeSegmenter.segment(value)].map(({ segment }) => segment);
 }
 
 function messageHeading(message: TranscriptMessage, index: number): string {
@@ -190,26 +198,26 @@ export class ConversationReader {
   private readonly watchFactory: WatchFactory;
   private readonly coalesceDelayMs: number;
   private readonly syntax: SyntaxStyle;
-  private readonly appRoot: BoxRenderable;
+  private readonly appRoot!: BoxRenderable;
   private readonly title: TextRenderable;
   private readonly scrollBox: ScrollBoxRenderable;
   private readonly footer: BoxRenderable;
   private readonly searchHint: TextRenderable;
   private readonly searchPrompt: TextRenderable;
-  private readonly searchInput: InputRenderable;
+  private readonly searchInput!: InputRenderable;
   private readonly status: TextRenderable;
   private readonly identityStatus: BoxRenderable;
   private readonly cwdStatus: TextRenderable;
   private readonly runtimeStatus: TextRenderable;
   private readonly composerFrame: BoxRenderable;
-  private readonly composer: TextareaRenderable;
+  private readonly composer!: TextareaRenderable;
   private readonly completion: SelectRenderable;
-  private readonly keyHandler: (key: KeyEvent) => void;
-  private readonly frameHandler: () => void;
+  private readonly keyHandler!: (key: KeyEvent) => void;
+  private readonly frameHandler!: () => void;
   private readonly searchDecorator: (buffer: OptimizedBuffer) => void;
-  private readonly rendererDestroyHandler: () => void;
-  private readonly inputHandler: (value: string) => void;
-  private readonly enterHandler: (value: string) => void;
+  private readonly rendererDestroyHandler!: () => void;
+  private readonly inputHandler!: (value: string) => void;
+  private readonly enterHandler!: (value: string) => void;
   private readonly submitHandler: () => void;
   private readonly onSubmit?: (value: string) => Promise<void> | void;
   private readonly statusLines?: ConversationReaderOptions["statusLines"];
@@ -286,6 +294,17 @@ export class ConversationReader {
       this.resolveExit = resolve;
     });
 
+    let registeredSearchDecorator:
+      | ((buffer: OptimizedBuffer, deltaTime: number) => void)
+      | undefined;
+    let rootAttached = false;
+    let keyInputAttached = false;
+    let frameAttached = false;
+    let selectionAttached = false;
+    let destroyAttached = false;
+    let inputAttached = false;
+    let enterAttached = false;
+    let submitAttached = false;
     try {
       this.appRoot = new BoxRenderable(this.renderer, {
         width: "100%",
@@ -441,6 +460,7 @@ export class ConversationReader {
         }
       };
       this.renderer.root.add(this.appRoot);
+      rootAttached = true;
 
       this.keyHandler = (key) => this.handleKey(key);
       this.frameHandler = () => this.applyPendingPosition();
@@ -460,18 +480,42 @@ export class ConversationReader {
         );
       };
       this.renderer.keyInput.on("keypress", this.keyHandler);
+      keyInputAttached = true;
       this.renderer.on("frame", this.frameHandler);
+      frameAttached = true;
       this.renderer.addPostProcessFn(this.searchDecorator);
+      registeredSearchDecorator = this.searchDecorator;
       this.renderer.on("selection", this.selectionHandler);
+      selectionAttached = true;
       this.renderer.once("destroy", this.rendererDestroyHandler);
+      destroyAttached = true;
       this.searchInput.on(InputRenderableEvents.INPUT, this.inputHandler);
+      inputAttached = true;
       this.searchInput.on(InputRenderableEvents.ENTER, this.enterHandler);
+      enterAttached = true;
       this.composer.onSubmit = this.submitHandler;
+      submitAttached = true;
 
       this.replaceMessageViews(this.messages);
       this.updateHeader();
       this.updateFooter();
     } catch (error) {
+      if (registeredSearchDecorator)
+        this.renderer.removePostProcessFn(registeredSearchDecorator);
+      if (keyInputAttached)
+        this.renderer.keyInput.off("keypress", this.keyHandler);
+      if (frameAttached) this.renderer.off("frame", this.frameHandler);
+      if (selectionAttached)
+        this.renderer.off("selection", this.selectionHandler);
+      if (destroyAttached)
+        this.renderer.off("destroy", this.rendererDestroyHandler);
+      if (inputAttached)
+        this.searchInput.off(InputRenderableEvents.INPUT, this.inputHandler);
+      if (enterAttached)
+        this.searchInput.off(InputRenderableEvents.ENTER, this.enterHandler);
+      if (submitAttached) this.composer.onSubmit = undefined;
+      if (rootAttached && !this.appRoot.isDestroyed)
+        this.appRoot.destroyRecursively();
       this.syntax.destroy();
       throw error;
     }
@@ -1121,23 +1165,21 @@ export class ConversationReader {
         };
       };
       if (typeof textNode.plainText === "string" && textNode.lineInfo) {
-        const sourceCells: Array<RenderedCell & { source: number }> = [];
+        const sourceCells = new Map<number, Array<Omit<RenderedCell, "row">>>();
         let source = 0;
         let column = 0;
-        for (const character of Array.from(textNode.plainText)) {
+        for (const character of graphemes(textNode.plainText)) {
           if (character === "\n") {
             source += 1;
             column = 0;
             continue;
           }
           const characterWidth = displayWidth(character);
-          sourceCells.push({
-            source,
-            row: 0,
-            column,
-            text: character,
-            width: characterWidth,
-          });
+          if (characterWidth > 0) {
+            const cells = sourceCells.get(source) ?? [];
+            cells.push({ column, text: character, width: characterWidth });
+            sourceCells.set(source, cells);
+          }
           column += characterWidth;
         }
         const lineCount = Math.min(
@@ -1153,25 +1195,33 @@ export class ConversationReader {
             Math.min(sourceBases.get(source) ?? start, start),
           );
         }
+        const sourceCursors = new Map<number, number>();
         for (let line = 0; line < lineCount; line += 1) {
           const source = textNode.lineInfo.lineSources[line];
           const start =
             textNode.lineInfo.lineStartCols[line] - sourceBases.get(source)!;
           const end = start + textNode.lineInfo.lineWidthCols[line];
-          for (const sourceCell of sourceCells) {
-            if (
-              sourceCell.source !== source ||
-              sourceCell.column < start ||
-              sourceCell.column >= end
-            )
-              continue;
+          const sourceLine = sourceCells.get(source) ?? [];
+          let cursor = sourceCursors.get(source) ?? 0;
+          while (
+            cursor < sourceLine.length &&
+            sourceLine[cursor].column + sourceLine[cursor].width <= start
+          )
+            cursor += 1;
+          while (
+            cursor < sourceLine.length &&
+            sourceLine[cursor].column < end
+          ) {
+            const sourceCell = sourceLine[cursor];
             cells.push({
               row: Math.round(node.y + this.scrollBox.scrollTop) + line,
               column: Math.round(node.x) + sourceCell.column - start,
               text: sourceCell.text,
               width: sourceCell.width,
             });
+            cursor += 1;
           }
+          sourceCursors.set(source, cursor);
         }
       }
       for (const child of node.getChildren()) visit(child);
@@ -1180,11 +1230,7 @@ export class ConversationReader {
       visit(view.heading);
       visit(view.body);
     }
-    return cells.sort((left, right) =>
-      left.row === right.row
-        ? left.column - right.column
-        : left.row - right.row,
-    );
+    return cells;
   }
 
   private rebuildRenderedSearch(): void {
@@ -1234,7 +1280,7 @@ export class ConversationReader {
         });
       previous = cell;
     }
-    const needle = Array.from(oneLine(this.searchQuery).toLocaleLowerCase());
+    const needle = graphemes(oneLine(this.searchQuery).toLocaleLowerCase());
     const matches: SearchMatch[] = [];
     for (let start = 0; start <= corpus.length - needle.length; start += 1) {
       if (
@@ -1278,6 +1324,7 @@ export class ConversationReader {
   /** Final-frame overlay: paint only the viewport cells belonging to matches. */
   private decorateSearchFrame(buffer: OptimizedBuffer): void {
     if (this.disposed) return;
+    if (this.searchQuery.length === 0) return;
     this.rebuildRenderedSearch();
     const current = this.searchMatches[this.searchMatchIndex];
     for (const [matchIndex, match] of this.searchMatches.entries()) {
@@ -1296,18 +1343,8 @@ export class ConversationReader {
           x += 1
         ) {
           const index = y * buffer.width + x;
-          const character = buffer.buffers.char[index];
-          // Continuation and metadata cells use values outside Unicode's range.
-          // Their leading cell owns the glyph and carries this visual treatment.
-          if (character === 0 || character > 0x10ffff) continue;
-          buffer.setCell(
-            x,
-            y,
-            String.fromCodePoint(character),
-            RGBA.fromArray(buffer.buffers.fg.slice(index * 4, index * 4 + 4)),
-            background,
-            buffer.buffers.attributes[index] | attributes,
-          );
+          buffer.buffers.bg.set(background.buffer, index * 4);
+          buffer.buffers.attributes[index] |= attributes;
         }
       }
     }

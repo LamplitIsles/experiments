@@ -512,6 +512,115 @@ test("reader finds and decorates a selected match after many newline source rows
   }
 });
 
+test("reader decorates combining and ZWJ graphemes without styling the next cell", async () => {
+  for (const { body, query, selectedText } of [
+    { body: "before e\u0301x target", query: "e\u0301", selectedText: "e" },
+    {
+      body: "before 👩‍💻x target",
+      query: "👩‍💻",
+      selectedText: "👩",
+    },
+  ]) {
+    const setup = await createTestRenderer({ width: 40, height: 14 });
+    const messages: TranscriptMessage[] = [
+      { role: "assistant", body, timestampLabel: "2026-09-20 10:00" },
+    ];
+    const reader = await createConversationReader({
+      session,
+      messages,
+      load: async () => messages,
+      renderer: setup.renderer,
+      ownsRenderer: false,
+      watchFactory: noWatch,
+    });
+    try {
+      reader.start();
+      await setup.flush();
+      await Bun.sleep(100);
+      await setup.flush();
+      setup.mockInput.pressTab();
+      setup.mockInput.pressKey("/");
+      await setup.mockInput.pasteBracketedText(query);
+      setup.mockInput.pressEnter();
+      await setup.flush();
+      const selected = setup
+        .captureSpans()
+        .lines.flatMap((line) => line.spans)
+        .filter(
+          (span) =>
+            span.bg.toString() === "rgba(0.71, 0.33, 0.04, 1.00)" &&
+            (span.attributes & 1) !== 0 &&
+            (span.attributes & 32) !== 0,
+        )
+        .map((span) => span.text);
+      expect(reader.snapshot().searchMatches).toBe(1);
+      expect(selected).toEqual([selectedText]);
+      expect(selected.join("")).not.toContain("x");
+    } finally {
+      reader.dispose();
+      setup.renderer.destroy();
+    }
+  }
+});
+
+test("reader decorates a Markdown literal across a physical rendered row boundary", async () => {
+  const setup = await createTestRenderer({ width: 20, height: 14 });
+  const messages: TranscriptMessage[] = [
+    {
+      role: "assistant",
+      body: "padding search **phrase** next search **phrase**",
+      timestampLabel: "2026-09-20 10:00",
+    },
+  ];
+  const reader = await createConversationReader({
+    session,
+    messages,
+    load: async () => messages,
+    renderer: setup.renderer,
+    ownsRenderer: false,
+    watchFactory: noWatch,
+  });
+  try {
+    reader.start();
+    await setup.flush();
+    await Bun.sleep(100);
+    await setup.flush();
+    setup.mockInput.pressTab();
+    setup.mockInput.pressKey("/");
+    await setup.mockInput.typeText("search phrase");
+    setup.mockInput.pressEnter();
+    await setup.flush();
+    const selectedLines = setup
+      .captureSpans()
+      .lines.map((line) =>
+        line.spans.filter(
+          (span) =>
+            span.bg.toString() === "rgba(0.71, 0.33, 0.04, 1.00)" &&
+            (span.attributes & 1) !== 0 &&
+            (span.attributes & 32) !== 0,
+        ),
+      );
+    const selected = selectedLines
+      .flatMap((line) => line)
+      .map((span) => span.text);
+    expect(reader.snapshot()).toMatchObject({
+      searchMatches: 1,
+      searchMatch: 1,
+    });
+    expect(selected).toEqual(["search", "phrase"]);
+    expect(selectedLines.filter((line) => line.length > 0)).toHaveLength(2);
+    setup.mockInput.pressKey("n");
+    await setup.flush();
+    expect(reader.snapshot().searchMatch).toBe(1);
+    setup.mockInput.pressKey("N");
+    await setup.flush();
+    expect(reader.snapshot().searchMatch).toBe(1);
+  } finally {
+    reader.dispose();
+    setup.renderer.destroy();
+  }
+});
+
 test("reader finds a literal across rendered Markdown formatting and wrapping", async () => {
   const setup = await createTestRenderer({ width: 34, height: 14 });
   const messages: TranscriptMessage[] = [
