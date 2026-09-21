@@ -1114,33 +1114,53 @@ export class ConversationReader {
     const visit = (node: Renderable) => {
       const textNode = node as Renderable & {
         plainText?: unknown;
-        wrapMode?: "none" | "char" | "word";
-        truncate?: boolean;
+        lineInfo?: {
+          lineStartCols: number[];
+          lineWidthCols: number[];
+          lineSources: number[];
+        };
       };
-      if (typeof textNode.plainText === "string") {
-        const width = Math.max(1, Math.floor(node.width));
-        let row = Math.round(node.y + this.scrollBox.scrollTop);
-        let column = Math.round(node.x);
+      if (typeof textNode.plainText === "string" && textNode.lineInfo) {
+        const sourceCells: Array<RenderedCell & { source: number }> = [];
+        let source = 0;
+        let column = 0;
         for (const character of Array.from(textNode.plainText)) {
           if (character === "\n") {
-            row += 1;
-            column = Math.round(node.x);
+            source += 1;
+            column = 0;
             continue;
           }
           const characterWidth = displayWidth(character);
-          if (column > node.x && column + characterWidth > node.x + width) {
-            if (textNode.truncate) break;
-            row += 1;
-            column = Math.round(node.x);
-          }
-          if (column < node.x + width) {
-            cells.push({ row, column, text: character, width: characterWidth });
-          }
+          sourceCells.push({
+            source,
+            row: 0,
+            column,
+            text: character,
+            width: characterWidth,
+          });
           column += characterWidth;
-          if (column >= node.x + width) {
-            if (textNode.truncate) break;
-            row += Math.floor((column - node.x) / width);
-            column = node.x + ((column - node.x) % width);
+        }
+        const lineCount = Math.min(
+          textNode.lineInfo.lineSources.length,
+          Math.max(0, Math.ceil(node.height)),
+        );
+        for (let line = 0; line < lineCount; line += 1) {
+          const source = textNode.lineInfo.lineSources[line];
+          const start = textNode.lineInfo.lineStartCols[line];
+          const end = start + textNode.lineInfo.lineWidthCols[line];
+          for (const sourceCell of sourceCells) {
+            if (
+              sourceCell.source !== source ||
+              sourceCell.column < start ||
+              sourceCell.column >= end
+            )
+              continue;
+            cells.push({
+              row: Math.round(node.y + this.scrollBox.scrollTop) + line,
+              column: Math.round(node.x) + sourceCell.column - start,
+              text: sourceCell.text,
+              width: sourceCell.width,
+            });
           }
         }
       }
