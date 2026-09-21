@@ -456,6 +456,62 @@ test("reader decorates the visible word-wrap coordinates of a selected match", a
   }
 });
 
+test("reader finds and decorates a selected match after many newline source rows", async () => {
+  const setup = await createTestRenderer({ width: 40, height: 14 });
+  const messages: TranscriptMessage[] = [
+    {
+      role: "assistant",
+      body: [
+        ...Array.from(
+          { length: 40 },
+          (_, index) => `filler row ${String(index).padStart(2, "0")}`,
+        ),
+        "offscreen target",
+      ].join("\n"),
+      timestampLabel: "2026-09-20 10:00",
+    },
+  ];
+  const reader = await createConversationReader({
+    session,
+    messages,
+    load: async () => messages,
+    renderer: setup.renderer,
+    ownsRenderer: false,
+    watchFactory: noWatch,
+  });
+  try {
+    reader.start();
+    await setup.flush();
+    await Bun.sleep(100);
+    await setup.flush();
+    setup.mockInput.pressTab();
+    setup.mockInput.pressKey("/");
+    await setup.mockInput.typeText("target");
+    setup.mockInput.pressEnter();
+    await setup.flush();
+    const frame = setup.captureCharFrame();
+    const selected = setup
+      .captureSpans()
+      .lines.flatMap((line) => line.spans)
+      .filter(
+        (span) =>
+          span.bg.toString() === "rgba(0.71, 0.33, 0.04, 1.00)" &&
+          (span.attributes & 1) !== 0 &&
+          (span.attributes & 32) !== 0,
+      )
+      .map((span) => span.text);
+    expect(frame).toContain("offscreen target");
+    expect(reader.snapshot()).toMatchObject({
+      searchMatches: 1,
+      searchMatch: 1,
+    });
+    expect(selected).toEqual(["target"]);
+  } finally {
+    reader.dispose();
+    setup.renderer.destroy();
+  }
+});
+
 test("reader finds a literal across rendered Markdown formatting and wrapping", async () => {
   const setup = await createTestRenderer({ width: 34, height: 14 });
   const messages: TranscriptMessage[] = [

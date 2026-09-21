@@ -1144,9 +1144,19 @@ export class ConversationReader {
           textNode.lineInfo.lineSources.length,
           Math.max(0, Math.ceil(node.height)),
         );
+        const sourceBases = new Map<number, number>();
         for (let line = 0; line < lineCount; line += 1) {
           const source = textNode.lineInfo.lineSources[line];
           const start = textNode.lineInfo.lineStartCols[line];
+          sourceBases.set(
+            source,
+            Math.min(sourceBases.get(source) ?? start, start),
+          );
+        }
+        for (let line = 0; line < lineCount; line += 1) {
+          const source = textNode.lineInfo.lineSources[line];
+          const start =
+            textNode.lineInfo.lineStartCols[line] - sourceBases.get(source)!;
           const end = start + textNode.lineInfo.lineWidthCols[line];
           for (const sourceCell of sourceCells) {
             if (
