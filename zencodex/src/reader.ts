@@ -11,10 +11,11 @@ import {
   ScrollBoxRenderable,
   SyntaxStyle,
   RGBA,
-  StyledText,
+  TextAttributes,
   TextRenderable,
   type CliRenderer,
   type KeyEvent,
+  type OptimizedBuffer,
   type Renderable,
   type Selection,
 } from "@opentui/core";
@@ -72,10 +73,20 @@ type MessageView = {
 };
 
 type SearchMatch = {
-  messageIndex: number;
-  part: "heading" | "body";
-  offset: number;
-  messageKey: string;
+  ranges: RenderedRange[];
+};
+
+type RenderedRange = {
+  row: number;
+  start: number;
+  end: number;
+};
+
+type RenderedCell = {
+  row: number;
+  column: number;
+  text: string;
+  width: number;
 };
 
 type Anchor = {
@@ -95,8 +106,6 @@ const syntaxStyle = {
   "markup.list": { fg: "#fbbf24" },
   "markup.raw": { fg: "#a7f3d0" },
   "markup.link": { fg: "#7dd3fc", underline: true },
-  "search.match": { bg: "#665500", fg: "#fef3c7" },
-  "search.current": { bg: "#b45309", fg: "#ffffff", bold: true },
 };
 
 function errorText(error: unknown): string {
@@ -163,78 +172,9 @@ function displayWidth(character: string): number {
   return width > 0 ? width : 1;
 }
 
-function wrappedLineAt(text: string, offset: number, width: number): number {
-  const lineWidth = Math.max(1, Math.floor(width));
-  let line = 0;
-  let column = 0;
-  for (const character of Array.from(text.slice(0, offset))) {
-    if (character === "\n") {
-      line += 1;
-      column = 0;
-      continue;
-    }
-    const characterWidth = displayWidth(character);
-    if (column > 0 && column + characterWidth > lineWidth) {
-      line += 1;
-      column = 0;
-    }
-    column += characterWidth;
-    if (column >= lineWidth) {
-      line += Math.floor(column / lineWidth);
-      column %= lineWidth;
-    }
-  }
-  return line;
-}
-
 function messageHeading(message: TranscriptMessage, index: number): string {
   const role = message.role === "user" ? "User" : "Assistant";
   return `▸ ${role} · ${message.timestampLabel} · message ${index + 1}`;
-}
-
-function findMatches(
-  messages: TranscriptMessage[],
-  query: string,
-): SearchMatch[] {
-  if (query.length === 0) return [];
-  const needle = query.toLocaleLowerCase();
-  const matches: SearchMatch[] = [];
-  messages.forEach((message, messageIndex) => {
-    for (const part of ["heading", "body"] as const) {
-      const haystack = (
-        part === "heading"
-          ? messageHeading(message, messageIndex)
-          : message.body
-      ).toLocaleLowerCase();
-      let offset = 0;
-      while (offset <= haystack.length - needle.length) {
-        const match = haystack.indexOf(needle, offset);
-        if (match < 0) break;
-        matches.push({
-          messageIndex,
-          part,
-          offset: match,
-          messageKey: messageKey(message),
-        });
-        offset = match + needle.length;
-      }
-    }
-  });
-  return matches;
-}
-
-function findMatchIndex(
-  matches: SearchMatch[],
-  selected: SearchMatch | undefined,
-): number {
-  if (!selected) return matches.length > 0 ? 0 : -1;
-  const index = matches.findIndex(
-    (match) =>
-      match.messageKey === selected.messageKey &&
-      match.part === selected.part &&
-      match.offset === selected.offset,
-  );
-  return index >= 0 ? index : matches.length > 0 ? 0 : -1;
 }
 
 function makeWatchFactory(): WatchFactory {
@@ -266,6 +206,7 @@ export class ConversationReader {
   private readonly completion: SelectRenderable;
   private readonly keyHandler: (key: KeyEvent) => void;
   private readonly frameHandler: () => void;
+  private readonly searchDecorator: (buffer: OptimizedBuffer) => void;
   private readonly rendererDestroyHandler: () => void;
   private readonly inputHandler: (value: string) => void;
   private readonly enterHandler: (value: string) => void;
@@ -298,6 +239,8 @@ export class ConversationReader {
   private pendingSearchQuery = "";
   private searchMatches: SearchMatch[] = [];
   private searchMatchIndex = -1;
+  private searchLayoutSignature = "";
+  private searchNeedsRebuild = true;
   private searchEditing = false;
   private focus: "COMPOSING" | "READING" = "COMPOSING";
   private completionKind: "command" | "skill" | undefined;
@@ -501,6 +444,7 @@ export class ConversationReader {
 
       this.keyHandler = (key) => this.handleKey(key);
       this.frameHandler = () => this.applyPendingPosition();
+      this.searchDecorator = (buffer) => this.decorateSearchFrame(buffer);
       this.rendererDestroyHandler = () => this.handleRendererDestroy();
       this.inputHandler = (value) => {
         this.pendingSearchQuery = value;
@@ -517,6 +461,7 @@ export class ConversationReader {
       };
       this.renderer.keyInput.on("keypress", this.keyHandler);
       this.renderer.on("frame", this.frameHandler);
+      this.renderer.addPostProcessFn(this.searchDecorator);
       this.renderer.on("selection", this.selectionHandler);
       this.renderer.once("destroy", this.rendererDestroyHandler);
       this.searchInput.on(InputRenderableEvents.INPUT, this.inputHandler);
@@ -606,6 +551,7 @@ export class ConversationReader {
     this.pendingPosition = undefined;
     this.renderer.keyInput.off("keypress", this.keyHandler);
     this.renderer.off("frame", this.frameHandler);
+    this.renderer.removePostProcessFn(this.searchDecorator);
     this.renderer.off("selection", this.selectionHandler);
     this.renderer.clearSelection();
     this.renderer.off("destroy", this.rendererDestroyHandler);
@@ -743,7 +689,6 @@ export class ConversationReader {
 
     const oldAnchor = this.captureAnchor();
     const wasAtEnd = this.scrollBox.scrollTop >= this.maximumScrollTop();
-    const oldSelected = this.searchMatches[this.searchMatchIndex];
     const appendOnly = hasPrefix(oldMessages, nextMessages);
     this.messages = nextMessages.slice();
     if (appendOnly) {
@@ -761,7 +706,7 @@ export class ConversationReader {
       this.replaceMessageViews(this.messages);
     }
 
-    this.updateSearchMatches(oldSelected);
+    this.invalidateRenderedSearch();
     this.refreshError = undefined;
     if (appendOnly) {
       if (!wasAtEnd) this.unreadBelow = true;
@@ -959,9 +904,13 @@ export class ConversationReader {
     if (key.name === "q") {
       key.preventDefault();
       this.finish("quit", false);
-    } else if (key.name === "b" || key.name === "escape") {
+    } else if (key.name === "b") {
       key.preventDefault();
       this.finish("back", false);
+    } else if (key.name === "escape") {
+      key.preventDefault();
+      if (this.searchQuery.length > 0) this.cancelSearch();
+      else this.finish("back", false);
     } else if (!key.ctrl && key.name === "/") {
       key.preventDefault();
       this.beginSearch();
@@ -1133,7 +1082,8 @@ export class ConversationReader {
     this.searchInput.value = "";
     this.searchMatches = [];
     this.searchMatchIndex = -1;
-    this.applySearchHighlights();
+    this.searchLayoutSignature = "";
+    this.searchNeedsRebuild = false;
     this.searchInput.blur();
     this.updateFooter();
   }
@@ -1146,146 +1096,191 @@ export class ConversationReader {
     this.pendingSearchQuery = query;
     this.searchQuery = query;
     this.refreshNote = undefined;
-    this.searchMatches = findMatches(this.messages, query);
-    this.searchMatchIndex = this.searchMatches.length > 0 ? 0 : -1;
-    this.applySearchHighlights();
-    if (this.searchMatchIndex >= 0)
+    this.searchMatches = [];
+    this.searchMatchIndex = -1;
+    this.invalidateRenderedSearch();
+    this.updateFooter();
+  }
+
+  private invalidateRenderedSearch(): void {
+    this.searchNeedsRebuild = true;
+    this.searchLayoutSignature = "";
+    this.renderer.requestRender();
+  }
+
+  /** Build a literal corpus from laid-out text cells, never Markdown source. */
+  private renderedTranscriptCells(): RenderedCell[] {
+    const cells: RenderedCell[] = [];
+    const visit = (node: Renderable) => {
+      const textNode = node as Renderable & {
+        plainText?: unknown;
+        wrapMode?: "none" | "char" | "word";
+        truncate?: boolean;
+      };
+      if (typeof textNode.plainText === "string") {
+        const width = Math.max(1, Math.floor(node.width));
+        let row = Math.round(node.y + this.scrollBox.scrollTop);
+        let column = Math.round(node.x);
+        for (const character of Array.from(textNode.plainText)) {
+          if (character === "\n") {
+            row += 1;
+            column = Math.round(node.x);
+            continue;
+          }
+          const characterWidth = displayWidth(character);
+          if (column > node.x && column + characterWidth > node.x + width) {
+            if (textNode.truncate) break;
+            row += 1;
+            column = Math.round(node.x);
+          }
+          if (column < node.x + width) {
+            cells.push({ row, column, text: character, width: characterWidth });
+          }
+          column += characterWidth;
+          if (column >= node.x + width) {
+            if (textNode.truncate) break;
+            row += Math.floor((column - node.x) / width);
+            column = node.x + ((column - node.x) % width);
+          }
+        }
+      }
+      for (const child of node.getChildren()) visit(child);
+    };
+    for (const view of this.messageViews) {
+      visit(view.heading);
+      visit(view.body);
+    }
+    return cells.sort((left, right) =>
+      left.row === right.row
+        ? left.column - right.column
+        : left.row - right.row,
+    );
+  }
+
+  private rebuildRenderedSearch(): void {
+    const cells = this.renderedTranscriptCells();
+    const signature = cells
+      .map((cell) => `${cell.row}:${cell.column}:${cell.text}`)
+      .join("|");
+    if (!this.searchNeedsRebuild && signature === this.searchLayoutSignature)
+      return;
+    const selected = this.searchMatches[this.searchMatchIndex]?.ranges[0];
+    this.searchLayoutSignature = signature;
+    this.searchNeedsRebuild = false;
+    if (!this.searchQuery) {
+      this.searchMatches = [];
+      this.searchMatchIndex = -1;
+      return;
+    }
+
+    const corpus: Array<{ value: string; range?: RenderedRange }> = [];
+    let previous: RenderedCell | undefined;
+    const addWhitespace = () => {
+      if (corpus.at(-1)?.value !== " ") corpus.push({ value: " " });
+    };
+    for (const cell of cells) {
+      if (previous) {
+        const wrappedWord =
+          cell.row === previous.row + 1 &&
+          !/\s/u.test(previous.text) &&
+          !/\s/u.test(cell.text);
+        if (
+          !wrappedWord &&
+          (cell.row !== previous.row ||
+            cell.column > previous.column + previous.width)
+        )
+          addWhitespace();
+      }
+      const value = /\s/u.test(cell.text) ? " " : cell.text.toLocaleLowerCase();
+      if (value === " ") addWhitespace();
+      else
+        corpus.push({
+          value,
+          range: {
+            row: cell.row,
+            start: cell.column,
+            end: cell.column + cell.width,
+          },
+        });
+      previous = cell;
+    }
+    const needle = Array.from(oneLine(this.searchQuery).toLocaleLowerCase());
+    const matches: SearchMatch[] = [];
+    for (let start = 0; start <= corpus.length - needle.length; start += 1) {
+      if (
+        !needle.every((value, offset) => corpus[start + offset].value === value)
+      )
+        continue;
+      const ranges: RenderedRange[] = [];
+      for (const item of corpus.slice(start, start + needle.length)) {
+        const range = item.range;
+        if (!range) continue;
+        const last = ranges.at(-1);
+        if (last && last.row === range.row && last.end === range.start)
+          last.end = range.end;
+        else ranges.push({ ...range });
+      }
+      if (ranges.length > 0) matches.push({ ranges });
+    }
+    this.searchMatches = matches;
+    const preserved = selected
+      ? matches.findIndex((match) => {
+          const first = match.ranges[0];
+          return (
+            first?.row === selected.row &&
+            first.start === selected.start &&
+            first.end === selected.end
+          );
+        })
+      : -1;
+    const previousIndex = this.searchMatchIndex;
+    this.searchMatchIndex =
+      preserved >= 0
+        ? preserved
+        : matches.length > 0
+          ? Math.min(Math.max(previousIndex, 0), matches.length - 1)
+          : -1;
+    if (this.searchMatchIndex >= 0 && previousIndex < 0)
       this.schedulePosition(() => this.scrollToCurrentMatch());
     this.updateFooter();
   }
 
-  private updateSearchMatches(previous: SearchMatch | undefined): void {
-    this.searchMatches = findMatches(this.messages, this.searchQuery);
-    this.searchMatchIndex = findMatchIndex(this.searchMatches, previous);
-    this.applySearchHighlights();
-  }
-
-  /** Paint the already-rendered markdown text buffers; source text is unchanged. */
-  private applySearchHighlights(): void {
-    const matchStyle = this.syntax.getStyleId("search.match");
-    const currentStyle = this.syntax.getStyleId("search.current");
-    if (matchStyle === null || currentStyle === null) return;
-    const selected = this.searchMatches[this.searchMatchIndex];
-    const needle = this.searchQuery.toLocaleLowerCase();
-    const descendants = (node: Renderable): Renderable[] => {
-      const values: Renderable[] = [];
-      const walk = (candidate: Renderable) => {
-        if (
-          typeof (candidate as { plainText?: unknown }).plainText ===
-            "string" &&
-          "textBuffer" in candidate
-        )
-          values.push(candidate);
-        for (const child of candidate.getChildren()) walk(child);
-      };
-      walk(node);
-      return values;
-    };
-    this.messageViews.forEach((view, messageIndex) => {
-      for (const part of ["heading", "body"] as const) {
-        let occurrence = 0;
-        const selectedOccurrence = this.searchMatches
-          .filter(
-            (match) =>
-              match.messageIndex === messageIndex && match.part === part,
-          )
-          .findIndex((match) => match.offset === selected?.offset);
-        for (const node of descendants(view[part])) {
-          if (node instanceof CodeRenderable) {
-            const firstOccurrence = occurrence;
-            const codeText = (node as unknown as { plainText: string })
-              .plainText;
-            const matchesInNode = needle
-              ? [
-                  ...codeText
-                    .toLocaleLowerCase()
-                    .matchAll(
-                      new RegExp(
-                        needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-                        "g",
-                      ),
-                    ),
-                ].length
-              : 0;
-            occurrence += matchesInNode;
-            if (!needle) {
-              // Clearing only initialStyledText invalidates CodeRenderable's
-              // highlighter but leaves its last painted buffer on screen until
-              // the asynchronous markdown pass wins. Replace that buffer now
-              // so Esc visibly removes search decoration immediately.
-              node.updateStreamingPreview(
-                codeText,
-                new StyledText([{ __isChunk: true, text: codeText }]),
-              );
-            } else {
-              const selectedInNode = selectedOccurrence - firstOccurrence;
-              let match = 0;
-              const pieces = codeText
-                .split(
-                  new RegExp(
-                    `(${needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`,
-                    "ig",
-                  ),
-                )
-                .filter(Boolean)
-                .map((text) => {
-                  const highlighted = text.toLocaleLowerCase() === needle;
-                  const piece = highlighted
-                    ? {
-                        __isChunk: true as const,
-                        text,
-                        bg: RGBA.fromHex(
-                          match === selectedInNode ? "#b45309" : "#665500",
-                        ),
-                        fg: RGBA.fromHex(
-                          match === selectedInNode ? "#ffffff" : "#fef3c7",
-                        ),
-                      }
-                    : { __isChunk: true as const, text };
-                  if (highlighted) match += 1;
-                  return piece;
-                });
-              node.initialStyledText = new StyledText(pieces);
-            }
-            node.requestRender();
-            continue;
-          }
-          const buffer = (node as any).textBuffer as {
-            clearAllHighlights(): void;
-            addHighlightByCharRange(value: {
-              start: number;
-              end: number;
-              styleId: number;
-              priority: number;
-            }): void;
-          };
-          buffer.clearAllHighlights();
-          if (!needle) continue;
-          const value = (
-            node as unknown as { plainText: string }
-          ).plainText.toLocaleLowerCase();
-          for (
-            let offset = value.indexOf(needle);
-            offset >= 0;
-            offset = value.indexOf(needle, offset + needle.length)
-          ) {
-            const current =
-              selected?.messageIndex === messageIndex &&
-              selected.part === part &&
-              occurrence === selectedOccurrence;
-            buffer.addHighlightByCharRange({
-              start: offset,
-              end: offset + needle.length,
-              styleId: current ? currentStyle : matchStyle,
-              priority: current ? 2 : 1,
-            });
-            if (!(node instanceof CodeRenderable)) occurrence += 1;
-          }
-          node.requestRender();
+  /** Final-frame overlay: paint only the viewport cells belonging to matches. */
+  private decorateSearchFrame(buffer: OptimizedBuffer): void {
+    if (this.disposed) return;
+    this.rebuildRenderedSearch();
+    const current = this.searchMatches[this.searchMatchIndex];
+    for (const [matchIndex, match] of this.searchMatches.entries()) {
+      const isCurrent =
+        match === current && matchIndex === this.searchMatchIndex;
+      const background = RGBA.fromHex(isCurrent ? "#b45309" : "#665500");
+      const attributes =
+        TextAttributes.UNDERLINE |
+        (isCurrent ? TextAttributes.BOLD | TextAttributes.INVERSE : 0);
+      for (const range of match.ranges) {
+        const y = range.row - Math.round(this.scrollBox.scrollTop);
+        if (y < 0 || y >= buffer.height) continue;
+        for (
+          let x = Math.max(0, range.start);
+          x < Math.min(buffer.width, range.end);
+          x += 1
+        ) {
+          const index = y * buffer.width + x;
+          const character = buffer.buffers.char[index];
+          // Continuation and metadata cells use values outside Unicode's range.
+          // Their leading cell owns the glyph and carries this visual treatment.
+          if (character === 0 || character > 0x10ffff) continue;
+          buffer.setCell(
+            x,
+            y,
+            String.fromCodePoint(character),
+            RGBA.fromArray(buffer.buffers.fg.slice(index * 4, index * 4 + 4)),
+            background,
+            buffer.buffers.attributes[index] | attributes,
+          );
         }
       }
-    });
-    this.renderer.requestRender();
+    }
   }
 
   private moveMatch(direction: 1 | -1): void {
@@ -1297,7 +1292,6 @@ export class ConversationReader {
     this.searchMatchIndex =
       (this.searchMatchIndex + direction + this.searchMatches.length) %
       this.searchMatches.length;
-    this.applySearchHighlights();
     this.schedulePosition(() => this.scrollToCurrentMatch());
     this.updateFooter();
   }
@@ -1412,23 +1406,10 @@ export class ConversationReader {
 
   private scrollToCurrentMatch(): void {
     const match = this.searchMatches[this.searchMatchIndex];
-    if (!match) return;
-    const view = this.messageViews[match.messageIndex];
-    const message = this.messages[match.messageIndex];
-    if (!view || !message) return;
-    const width =
-      view.body.width > 0
-        ? view.body.width
-        : Math.max(1, this.scrollBox.viewport.width - 2);
-    const line =
-      match.part === "body"
-        ? wrappedLineAt(message.body, match.offset, width)
-        : 0;
-    const contentY = view[match.part].y + this.scrollBox.scrollTop;
+    const range = match?.ranges[0];
+    if (!range) return;
     const target =
-      contentY +
-      line -
-      Math.floor(Math.max(1, this.scrollBox.viewport.height) / 3);
+      range.row - Math.floor(Math.max(1, this.scrollBox.viewport.height) / 3);
     this.scrollBox.scrollTo(target);
   }
 
