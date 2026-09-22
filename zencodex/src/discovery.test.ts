@@ -1,36 +1,81 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { Database } from "bun:sqlite";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discoverSessions, latestTokenUsage } from "./discovery";
 
-test("bounded discovery merges index title/activity and filters exact cwd", async () => {
+test("indexed discovery filters cwd, archived and child sessions without rollout reads", async () => {
   const home = await mkdtemp(join(tmpdir(), "zencodex-discovery-"));
   try {
-    const sessions = join(home, "sessions", "2026");
-    await mkdir(sessions, { recursive: true });
-    await writeFile(
-      join(home, "session_index.jsonl"),
-      `${JSON.stringify({ id: "one", thread_name: "Indexed title", updated_at: 1_700_000_000 })}\n`,
+    const sqlite = join(home, "state");
+    await mkdir(sqlite);
+    await writeFile(join(home, "config.toml"), 'sqlite_home = "state"');
+    const db = new Database(join(sqlite, "state_5.sqlite"));
+    db.run(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, cwd TEXT,
+      rollout_path TEXT, updated_at_ms INTEGER, archived INTEGER, source TEXT, thread_source TEXT)`);
+    const insert = db.query(
+      "INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
-    await writeFile(
-      join(sessions, "child.jsonl"),
-      `${JSON.stringify({ type: "session_meta", payload: { id: "child", session_id: "child", source: "cli", thread_source: "subagent", cwd: "/work/project", timestamp: "2026-01-01T00:00:00Z" } })}\n`,
+    insert.run(
+      "one",
+      "Indexed title",
+      "Old title",
+      "/work/project",
+      "/not-read/one",
+      1700000000000,
+      0,
+      "cli",
+      "user",
     );
-    await writeFile(
-      join(sessions, "one.jsonl"),
-      `${JSON.stringify({ type: "session_meta", payload: { id: "one", session_id: "one", source: "cli", thread_source: "user", cwd: "/work/project", timestamp: "2020-01-01T00:00:00Z" } })}\nbody`,
+    insert.run(
+      "vscode",
+      null,
+      "",
+      "/work/project",
+      "/not-read/two",
+      1800000000000,
+      0,
+      "vscode",
+      null,
     );
-    await writeFile(
-      join(sessions, "app-server.jsonl"),
-      `${JSON.stringify({ type: "session_meta", payload: { id: "vscode", session_id: "vscode", source: "vscode", cwd: "/work/project", timestamp: "2026-01-01T00:00:00Z" } })}\n`,
+    insert.run(
+      "child",
+      null,
+      "Child",
+      "/work/project",
+      "",
+      1900000000000,
+      0,
+      "cli",
+      "subagent",
     );
-    await writeFile(
-      join(sessions, "other.jsonl"),
-      `${JSON.stringify({ type: "session_meta", payload: { id: "other", cwd: "/work/other", timestamp: 1_700_000_000_000 } })}\n`,
+    insert.run(
+      "archived",
+      null,
+      "Archived",
+      "/work/project",
+      "",
+      1900000000000,
+      1,
+      "cli",
+      "user",
     );
-    await writeFile(join(sessions, "bad.jsonl"), "{".repeat(70_000));
-    const found = await discoverSessions("/work/project", home);
+    insert.run(
+      "other",
+      null,
+      "Other",
+      "/work/project-other",
+      "",
+      1900000000000,
+      0,
+      "cli",
+      "user",
+    );
+    db.close();
+    const found = await discoverSessions("/work/project", home, undefined, {
+      CODEX_SQLITE_HOME: "/must-not-be-used",
+    });
     expect(found).toHaveLength(2);
     expect(found.find((session) => session.id === "one")).toMatchObject({
       id: "one",
@@ -41,6 +86,7 @@ test("bounded discovery merges index title/activity and filters exact cwd", asyn
       id: "vscode",
       name: "Untitled session",
     });
+    expect(found.map((session) => session.id)).toEqual(["vscode", "one"]);
   } finally {
     await rm(home, { recursive: true, force: true });
   }
@@ -85,5 +131,21 @@ test("selected rollout seeds the pre-notification meter from native last token u
     });
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("missing state database permits a new session without creating or scanning files", async () => {
+  const home = await mkdtemp(join(tmpdir(), "zencodex-no-index-"));
+  try {
+    expect(
+      await discoverSessions("/work/project", home, undefined, {}),
+    ).toEqual([]);
+    expect(await readdir(home)).toEqual([]);
+    await writeFile(join(home, "state_5.sqlite"), "corrupt");
+    await expect(
+      discoverSessions("/work/project", home, undefined, {}),
+    ).rejects.toThrow();
+  } finally {
+    await rm(home, { recursive: true, force: true });
   }
 });

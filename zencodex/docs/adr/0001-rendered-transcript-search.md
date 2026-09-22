@@ -1,4 +1,11 @@
+---
+status: superseded by ADR-0002
+---
+
 # Search the rendered transcript, not Markdown source
+
+ADR-0002 replaces this design and its implementation. This document records the
+historical decision; zencodex no longer performs rendered-transcript search.
 
 Transcript search is indexed from the complete laid-out transcript rows and decorates its row-and-column ranges as the final reader frame step. Raw Markdown offsets and per-node text-buffer highlights are rejected because they diverge from visible text across formatting, wrapping, and later Markdown redraws.
 

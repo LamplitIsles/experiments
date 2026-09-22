@@ -61,7 +61,6 @@ describe("reader-first native projection", () => {
     const c = new ReaderConversation(server, "thread-1");
     await c.submit("Please answer in **Markdown**");
     expect(c.visible).toHaveLength(1);
-    expect(c.consumeReadingOrigin()).toBe(0);
     expect(server.requests[0]).toMatchObject({
       method: "turn/start",
       params: { threadId: "thread-1" },
@@ -98,7 +97,7 @@ describe("reader-first native projection", () => {
     });
   });
 
-  test("steers with the authoritative turn, retains its new reading origin, and reports native context only", async () => {
+  test("steers with the authoritative turn and reports native context only", async () => {
     const server = fake();
     const c = new ReaderConversation(server, "thread-1");
     server.emit("turn/started", { turn: { id: "turn-7" } });
@@ -107,7 +106,6 @@ describe("reader-first native projection", () => {
       method: "turn/steer",
       params: { expectedTurnId: "turn-7" },
     });
-    expect(c.consumeReadingOrigin()).toBe(0);
     server.emit("thread/tokenUsage/updated", {
       tokenUsage: { last: { totalTokens: 120 }, modelContextWindow: 200 },
     });

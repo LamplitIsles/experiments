@@ -75,6 +75,85 @@ function fixture() {
   };
 }
 
+test("Tab follow-ups are FIFO turns, Enter steers, and interruption restores remaining jobs", async () => {
+  const f = fixture();
+  await f.c.queue("A");
+  await f.c.queue("B");
+  await f.c.queue("C");
+  expect(f.c.queuedInputs()).toEqual(["B", "C"]);
+  expect(f.requests.filter((r) => r.method === "turn/start")).toHaveLength(1);
+  await f.c.submit("steer A");
+  expect(f.requests.at(-1)?.method).toBe("turn/steer");
+  f.complete("t1");
+  await f.settle();
+  expect(
+    f.requests
+      .filter((r) => r.method === "turn/start")
+      .map((r) => r.params.input[0].text),
+  ).toEqual(["A", "B"]);
+  expect(f.c.queuedInputs()).toEqual(["C"]);
+  await f.c.interrupt();
+  expect(f.requests.at(-1)).toMatchObject({
+    method: "turn/interrupt",
+    params: { turnId: "t2" },
+  });
+  f.complete("t2", "interrupted");
+  await f.settle();
+  expect(f.c.takeRestoredDraft()).toBe("C");
+  expect(f.c.takeRestoredDraft()).toBe("");
+  expect(f.c.queuedInputs()).toEqual([]);
+  expect(f.states).toEqual(["idle", "working", "idle"]);
+  await f.c.close();
+});
+
+test("recent history pages prepend in order without losing messages added after resume", async () => {
+  const f = fixture();
+  let page = 0;
+  const original = f.server.call;
+  f.server.call = async (method, params) => {
+    if (method !== "thread/turns/list") return original(method, params);
+    expect(params?.sortDirection).toBe("desc");
+    page++;
+    return {
+      data: [
+        {
+          id: `old-${page}`,
+          status: "completed",
+          items: [
+            {
+              type: "agentMessage",
+              phase: "final_answer",
+              text: page === 1 ? "recent" : "earlier",
+            },
+          ],
+        },
+      ],
+      nextCursor: page === 1 ? "older" : null,
+    };
+  };
+  await f.c.loadRecentHistory();
+  expect(page).toBe(1);
+  await f.c.submit("live");
+  await f.c.loadEarlierHistory();
+  expect(f.c.visible.map((m) => m.body)).toEqual(["earlier", "recent", "live"]);
+  expect(f.c.hasEarlierHistory()).toBe(false);
+  await f.c.close();
+});
+
+test("Tab during capacity wait preserves the timer and cancel restores queued jobs", async () => {
+  const f = fixture();
+  await f.c.submit("A");
+  f.complete("t1", "failed", { codexErrorInfo: "serverOverloaded" });
+  await f.settle();
+  await f.c.queue("B");
+  expect(f.timers.size).toBe(1);
+  expect(f.requests.filter((r) => r.method === "turn/start")).toHaveLength(1);
+  await f.c.submit("/cancel-retry");
+  expect(f.timers.size).toBe(0);
+  expect(f.c.takeRestoredDraft()).toBe("B");
+  await f.c.close();
+});
+
 test("one lifecycle projection avoids transient idle during held-input handoff and capacity wait", async () => {
   const f = fixture();
   await f.c.compact();

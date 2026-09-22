@@ -13,9 +13,14 @@
   },
   "dependencies": {
     "@jaminzhou/codex-app-server-client": "0.2.1",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/context-async-hooks": "^2.11.0",
+    "@opentelemetry/otlp-transformer": "^0.222.0",
+    "@opentelemetry/sdk-trace": "^2.11.0",
     "@opentui/core": "^0.5.11"
   },
   "devDependencies": {
+    "@xterm/headless": "^6.0.0",
     "bun-types": "^1.4.2",
     "typescript": "7.0.2"
   }

@@ -2,6 +2,7 @@
  * Reader-first projection adapted from Codex-for-Love's native lifecycle
  * reconciliation.  It deliberately owns only disposable presentation state.
  */
+import { noTrace, type Trace } from "./tracing";
 export type Role = "user" | "assistant";
 export type VisibleMessage = {
   role: Role;
@@ -122,6 +123,9 @@ function messages(turns: NativeTurn[]): VisibleMessage[] {
 }
 
 export class ReaderConversation {
+  performance: Trace = noTrace;
+  private historyCursor: string | null = null;
+  private historyTurns: NativeTurn[] = [];
   readonly visible: VisibleMessage[] = [];
   activeTurnId: string | undefined;
   compacting = false;
@@ -130,7 +134,6 @@ export class ReaderConversation {
   private skillsInvalid = true;
   skillVersion = 0;
   private cachedSkills: Skill[] = [];
-  private pendingOrigin: number | undefined;
   activeStartedAt: string | number | undefined;
   status = "idle";
   private reportedStatus: string | undefined;
@@ -145,6 +148,8 @@ export class ReaderConversation {
   private retryGeneration = 0;
   private stagedFinal = new Map<string, NativeItem[]>();
   private held: Array<{ id: string; input: string }> = [];
+  private followUps: string[] = [];
+  private restoredDraft = "";
   private unacknowledged = new Map<string, VisibleMessage>();
   private admission: Promise<void> = Promise.resolve();
   private unsubscribers: Array<() => void> = [];
@@ -290,20 +295,25 @@ export class ReaderConversation {
     }, delay);
   }
 
+  /** Full authoritative reconciliation after an uncertain send; UI startup uses recent pages. */
   async loadHistory(): Promise<void> {
     const turns: NativeTurn[] = [];
     let cursor: string | null | undefined;
     do {
-      const response = await this.server.call("thread/turns/list", {
-        threadId: this.threadId,
-        cursor,
-        limit: 100,
-        itemsView: "full",
-        sortDirection: "asc",
-      });
+      const response = await this.performance.measure("history.page", () =>
+        this.server.call("thread/turns/list", {
+          threadId: this.threadId,
+          cursor,
+          limit: 100,
+          itemsView: "full",
+          sortDirection: "asc",
+        }),
+      );
       turns.push(...(response.data ?? []));
       cursor = response.nextCursor;
     } while (cursor);
+    this.historyCursor = null;
+    this.historyTurns = turns;
     this.acknowledge(turns);
     this.visible.splice(
       0,
@@ -311,6 +321,54 @@ export class ReaderConversation {
       ...messages(turns),
       ...this.unacknowledged.values(),
     );
+  }
+
+  async loadRecentHistory(): Promise<void> {
+    this.historyTurns = [];
+    this.historyCursor = null;
+    await this.readHistoryPage(undefined);
+  }
+
+  async loadEarlierHistory(): Promise<boolean> {
+    if (!this.historyCursor) return false;
+    await this.readHistoryPage(this.historyCursor);
+    return true;
+  }
+
+  hasEarlierHistory(): boolean {
+    return Boolean(this.historyCursor);
+  }
+
+  private async readHistoryPage(cursor: string | undefined): Promise<void> {
+    const historicalCount = messages(this.historyTurns).length;
+    const response = await this.performance.measure("history.page", (span) =>
+      this.server
+        .call("thread/turns/list", {
+          threadId: this.threadId,
+          cursor,
+          limit: 20,
+          itemsView: "full",
+          sortDirection: "desc",
+        })
+        .then((response) => {
+          span.setAttribute("turns", response.data?.length ?? 0);
+          return response;
+        }),
+    );
+    await this.performance.measure("history.projection", () => {
+      this.historyCursor = response.nextCursor ?? null;
+      const liveTail = this.visible.slice(historicalCount);
+      this.historyTurns = [...(response.data ?? [])]
+        .reverse()
+        .concat(this.historyTurns);
+      this.acknowledge(this.historyTurns);
+      this.visible.splice(
+        0,
+        this.visible.length,
+        ...messages(this.historyTurns),
+        ...liveTail,
+      );
+    });
   }
 
   seedTokenUsage(
@@ -345,7 +403,10 @@ export class ReaderConversation {
   async submit(input: string): Promise<void> {
     if (!input.trim() || this.closed) return;
     if (input.trim() === "/cancel-retry") {
+      const wasWaiting = this.retryAt !== undefined;
       this.cancelRecovery();
+      if (wasWaiting)
+        this.restoredDraft = this.followUps.splice(0).join("\n\n");
       this.notice = "Automatic capacity retry cancelled";
       return;
     }
@@ -361,7 +422,6 @@ export class ReaderConversation {
       timestamp: timestamp(new Date().toISOString()),
     };
     this.visible.push(message);
-    this.pendingOrigin = this.visible.length - 1;
     const id = crypto.randomUUID();
     this.unacknowledged.set(id, message);
     this.setStatus("working");
@@ -369,11 +429,39 @@ export class ReaderConversation {
     await this.enqueue(() => this.flushHeld());
   }
 
-  consumeReadingOrigin(): number | undefined {
-    const origin = this.pendingOrigin;
-    this.pendingOrigin = undefined;
-    return origin;
+  async queue(input: string): Promise<void> {
+    if (!input.trim() || this.closed) return;
+    if (
+      this.activeTurnId ||
+      this.compacting ||
+      this.held.length ||
+      this.retryAt !== undefined ||
+      this.status === "working"
+    ) {
+      this.followUps.push(input);
+      return;
+    }
+    await this.submit(input);
   }
+
+  queuedInputs(): readonly string[] {
+    return this.followUps;
+  }
+
+  takeRestoredDraft(): string {
+    const value = this.restoredDraft;
+    this.restoredDraft = "";
+    return value;
+  }
+
+  async interrupt(): Promise<void> {
+    if (this.activeTurnId)
+      await this.server.call("turn/interrupt", {
+        threadId: this.threadId,
+        turnId: this.activeTurnId,
+      });
+  }
+
   private async send(input: string, id: string): Promise<void> {
     const params = {
       threadId: this.threadId,
@@ -547,11 +635,39 @@ export class ReaderConversation {
       return;
     }
     this.cancelRecovery();
-    this.setStatus(this.held.length ? "working" : "idle");
+    if (turn.status === "failed" || turn.status === "interrupted") {
+      this.restoredDraft = this.followUps.splice(0).join("\n\n");
+    }
+    this.setStatus(
+      this.held.length || this.followUps.length ? "working" : "idle",
+    );
     if (turn.status === "completed") this.notice = "";
     if (turn.status === "failed" || turn.status === "interrupted")
       this.notice = turn.error?.message ?? `Turn ${turn.status}`;
     await this.enqueue(() => this.flushHeld()).catch(() => {});
+    while (
+      !this.activeTurnId &&
+      !this.compacting &&
+      this.retryAt === undefined &&
+      turn.status === "completed" &&
+      this.followUps.length
+    ) {
+      const next = this.followUps.shift();
+      if (next !== undefined) {
+        try {
+          await this.submit(next);
+        } catch (error) {
+          // The attempted input already has a stable native client ID in held.
+          // Restoring it as a fresh draft would duplicate an uncertain submission.
+          this.restoredDraft = this.followUps.splice(0).join("\n\n");
+          this.notice =
+            error instanceof Error
+              ? error.message
+              : "Follow-up submission failed";
+          break;
+        }
+      }
+    }
   }
   private async flushHeld(): Promise<void> {
     while (
@@ -573,7 +689,8 @@ export class ReaderConversation {
       !this.activeTurnId &&
       !this.compacting &&
       this.retryAt === undefined &&
-      !this.held.length
+      !this.held.length &&
+      !this.followUps.length
     )
       this.setStatus("idle");
   }

@@ -1,772 +1,297 @@
 import { expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
-import { TextRenderable, TextareaRenderable } from "@opentui/core";
-import { createConversationReader } from "./reader";
-import type { NamedSession, TranscriptMessage } from "./types";
-
-const session: NamedSession = {
-  id: "thread",
-  name: "Thread",
-  cwd: "/tmp/z",
-  path: "thread",
-  activityMs: 0,
-};
-const noWatch = () => ({ close() {} });
-
-test("transplanted reader preserves a submit origin while output appends", async () => {
-  const setup = await createTestRenderer({ width: 70, height: 12 });
-  const messages: TranscriptMessage[] = [
-    {
-      role: "user",
-      body: "needle request",
-      timestampLabel: "2026-09-20 10:00",
+import {
+  createConversationReader,
+  type ConversationReaderOptions,
+} from "./reader";
+import type { TranscriptMessage } from "./types";
+import { PerformanceTrace } from "./tracing";
+import { JsonTraceSerializer } from "@opentelemetry/otlp-transformer";
+const message = (body: string): TranscriptMessage => ({
+  role: "assistant",
+  body,
+  timestampLabel: "now",
+});
+async function fixture(
+  messages: TranscriptMessage[],
+  options: Partial<ConversationReaderOptions> = {},
+) {
+  const ui = await createTestRenderer({
+    width: 80,
+    height: 24,
+    screenMode: "split-footer",
+    footerHeight: 9,
+    externalOutputMode: "capture-stdout",
+  });
+  const reader = await createConversationReader({
+    renderer: ui.renderer,
+    session: {
+      id: "test",
+      name: "Thread",
+      cwd: "/fixture",
+      path: "",
+      activityMs: 0,
     },
-  ];
-  const reader = await createConversationReader({
-    session,
     messages,
-    load: async () => messages,
-    renderer: setup.renderer,
-    ownsRenderer: false,
-    watchFactory: noWatch,
+    ...options,
   });
-  try {
-    reader.start();
-    await setup.renderOnce();
-    await setup.renderOnce();
-    reader.project(
-      [
-        ...messages,
-        {
-          role: "assistant",
-          body: "# completed answer",
-          timestampLabel: "2026-09-20 10:01",
-        },
-      ],
-      0,
-    );
-    await setup.renderOnce();
-    await setup.renderOnce();
-    const frame = setup.captureCharFrame();
-    expect(frame.split("\n")[0].trim()).toBe("Thread");
-    expect(frame).not.toContain("zencodex ·");
-    expect(frame).toContain("needle request");
-    expect(frame).not.toContain("local times");
-    expect(frame).not.toContain("follow:");
-    // The source reader exposes literal-search state and result navigation;
-    // this seam verifies its static transcript remains readable after anchoring.
-    expect(reader.snapshot().messages).toBe(2);
-  } finally {
-    reader.dispose();
-    setup.renderer.destroy();
-  }
-});
-
-test("reader keeps multiline composer, context, and weak shortcuts visible in order", async () => {
-  const setup = await createTestRenderer({ width: 80, height: 18 });
-  let submitted = "";
-  const reader = await createConversationReader({
-    session,
-    messages: [],
-    load: async () => [],
-    renderer: setup.renderer,
-    ownsRenderer: false,
-    watchFactory: noWatch,
-    statusLines: () => ({
-      cwd: "/tmp/z",
-      runtime: "gpt-5 · high",
-      telemetry: "context ━━━━━─ 41%",
-    }),
-    onSubmit: (value) => {
-      submitted = value;
-    },
-  });
-  try {
-    reader.start();
-    await setup.renderOnce();
-    await setup.renderOnce();
-    const frame = setup.captureCharFrame();
-    const compose = frame.indexOf("Message Codex");
-    const context = frame.indexOf("context ━");
-    const shortcuts = frame.indexOf("q quit");
-    expect(compose).toBeGreaterThan(-1);
-    expect(context).toBeGreaterThan(compose);
-    expect(shortcuts).toBeGreaterThan(context);
-    expect(frame).toContain("41%");
-    expect(frame).not.toContain("105512/258400");
-    expect(frame).toContain("┌");
-    expect(frame).toContain("└");
-    const composer = (reader as unknown as { composer: TextareaRenderable })
-      .composer;
-    composer.setText("first\nsecond");
-    composer.submit();
-    await Bun.sleep(0);
-    expect(submitted).toBe("first\nsecond");
-  } finally {
-    reader.dispose();
-    setup.renderer.destroy();
-  }
-});
-
-test("reader keeps model and effort visible beside a truncated working directory", async () => {
-  const setup = await createTestRenderer({ width: 38, height: 14 });
-  const reader = await createConversationReader({
-    session,
-    messages: [],
-    load: async () => [],
-    renderer: setup.renderer,
-    ownsRenderer: false,
-    watchFactory: noWatch,
-    statusLines: () => ({
-      cwd: "/an/intentionally/long/project/working/directory",
-      runtime: "gpt-5 · high",
-      telemetry: "context ━━━━━─ 41%",
-    }),
-  });
-  try {
-    reader.start();
-    await setup.renderOnce();
-    await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("gpt-5 · high");
-  } finally {
-    reader.dispose();
-    setup.renderer.destroy();
-  }
-});
-
-test("composer completion refreshes on each input and fuzzy-matches commands", async () => {
-  const setup = await createTestRenderer({ width: 70, height: 16 });
-  const reader = await createConversationReader({
-    session,
-    messages: [],
-    load: async () => [],
-    renderer: setup.renderer,
-    ownsRenderer: false,
-    watchFactory: noWatch,
-  });
-  try {
-    reader.start();
-    await setup.renderOnce();
-    await setup.mockInput.typeText("/cp");
-    await Promise.resolve();
-    await setup.renderOnce();
-    await setup.renderOnce();
-    expect(reader.snapshot().completion).toBe("command");
-    expect(setup.captureCharFrame()).toContain("/compact");
-    await setup.mockInput.typeText("z");
-    await Promise.resolve();
-    await setup.renderOnce();
-    expect(reader.snapshot().completion).toBeUndefined();
-  } finally {
-    reader.dispose();
-    setup.renderer.destroy();
-  }
-});
-
-test("composer fuzzy-matches enabled skills without treating Ctrl-/ as reader search", async () => {
-  const setup = await createTestRenderer({ width: 70, height: 16 });
-  const reader = await createConversationReader({
-    session,
-    messages: [],
-    load: async () => [],
-    renderer: setup.renderer,
-    ownsRenderer: false,
-    watchFactory: noWatch,
-    loadSkills: async () => [
-      { name: "review-code", description: "Review code" },
-    ],
-  });
-  try {
-    reader.start();
-    await setup.renderOnce();
-    setup.mockInput.pressKey("/", { ctrl: true });
-    await setup.renderOnce();
-    expect(reader.snapshot().searchEditing).toBe(false);
-    setup.mockInput.pressKey("c", { ctrl: true });
-    await setup.mockInput.typeText("$rce");
-    await Promise.resolve();
-    await Promise.resolve();
-    await setup.renderOnce();
-    await setup.renderOnce();
-    expect(reader.snapshot().completion).toBe("skill");
-    expect(setup.captureCharFrame()).toContain("$review-code");
-  } finally {
-    reader.dispose();
-    setup.renderer.destroy();
-  }
-});
-
-test("reader marks an appended reply below without moving a manual reading position", async () => {
-  const setup = await createTestRenderer({ width: 70, height: 12 });
-  const initial = Array.from({ length: 8 }, (_, index): TranscriptMessage => ({
-    role: "user",
-    body: `message ${index}`,
-    timestampLabel: "2026-09-20 10:00",
-  }));
-  const reader = await createConversationReader({
-    session,
-    messages: initial,
-    load: async () => initial,
-    renderer: setup.renderer,
-    ownsRenderer: false,
-    watchFactory: noWatch,
-  });
-  try {
-    reader.start();
-    await setup.renderOnce();
-    (
-      reader as unknown as { scrollBox: { scrollTo(position: number): void } }
-    ).scrollBox.scrollTo(0);
-    const before = reader.snapshot().scrollTop;
-    reader.project([
-      ...initial,
-      {
-        role: "assistant",
-        body: "reply below",
-        timestampLabel: "2026-09-20 10:01",
-      },
-    ]);
-    await setup.renderOnce();
-    expect(reader.snapshot().scrollTop).toBe(before);
-    expect(setup.captureCharFrame()).toContain("new reply below");
-    expect(setup.captureCharFrame()).not.toContain("follow:");
-  } finally {
-    reader.dispose();
-    setup.renderer.destroy();
-  }
-});
-
-test("focused Ctrl-J adds a composer newline without scrolling the transcript", async () => {
-  const setup = await createTestRenderer({ width: 70, height: 12 });
-  const messages = Array.from(
-    { length: 12 },
-    (_, index): TranscriptMessage => ({
-      role: "user",
-      body: `scrollable message ${index}`,
-      timestampLabel: "2026-09-20 10:00",
-    }),
-  );
-  const reader = await createConversationReader({
-    session,
-    messages,
-    load: async () => messages,
-    renderer: setup.renderer,
-    ownsRenderer: false,
-    watchFactory: noWatch,
-  });
-  try {
-    reader.start();
-    await setup.renderOnce();
-    const composer = (reader as unknown as { composer: TextareaRenderable })
-      .composer;
-    composer.setText("first");
-    const before = reader.snapshot().scrollTop;
-    setup.mockInput.pressKey("j", { ctrl: true });
-    await setup.renderOnce();
-    expect(composer.plainText).toContain("\n");
-    expect(composer.plainText.replace("\n", "")).toBe("first");
-    expect(reader.snapshot().scrollTop).toBe(before);
-  } finally {
-    reader.dispose();
-    setup.renderer.destroy();
-  }
-});
-
-test("COMPOSING Ctrl-C clears draft/completion and Ctrl-D quits without a native interrupt", async () => {
-  const setup = await createTestRenderer({ width: 70, height: 12 });
-  const reader = await createConversationReader({
-    session,
-    messages: Array.from({ length: 10 }, (_, index): TranscriptMessage => ({
-      role: "user",
-      body: `message ${index}`,
-      timestampLabel: "2026-09-20 10:00",
-    })),
-    load: async () => [],
-    renderer: setup.renderer,
-    ownsRenderer: false,
-    watchFactory: noWatch,
-  });
-  try {
-    reader.start();
-    await setup.renderOnce();
-    const composer = (reader as unknown as { composer: TextareaRenderable })
-      .composer;
-    composer.setText("discard me");
-    (reader as any).showCompletion("command", [
-      { name: "/compact", description: "", insert: "/compact" },
-    ]);
-    const before = reader.snapshot().scrollTop;
-    setup.mockInput.pressKey("c", { ctrl: true });
-    await setup.renderOnce();
-    expect(composer.plainText).toBe("");
-    expect(reader.snapshot().completion).toBeUndefined();
-    expect(reader.snapshot().scrollTop).toBe(before);
-    setup.mockInput.pressKey("d", { ctrl: true });
-    expect(await reader.waitForExit()).toBe("quit");
-  } finally {
-    reader.dispose();
-    setup.renderer.destroy();
-  }
-});
-
-test("READING retains Ctrl-D paging and makes Ctrl-C a no-op", async () => {
-  const setup = await createTestRenderer({ width: 70, height: 12 });
-  const messages = Array.from(
-    { length: 20 },
-    (_, index): TranscriptMessage => ({
-      role: "user",
-      body: `message ${index}`,
-      timestampLabel: "2026-09-20 10:00",
-    }),
-  );
-  const reader = await createConversationReader({
-    session,
-    messages,
-    load: async () => messages,
-    renderer: setup.renderer,
-    ownsRenderer: false,
-    watchFactory: noWatch,
-  });
-  try {
-    reader.start();
-    await setup.renderOnce();
-    setup.mockInput.pressTab();
-    await setup.renderOnce();
-    (
-      reader as unknown as { scrollBox: { scrollTo(value: number): void } }
-    ).scrollBox.scrollTo(0);
-    const before = reader.snapshot().scrollTop;
-    setup.mockInput.pressKey("d", { ctrl: true });
-    await setup.renderOnce();
-    expect(reader.snapshot().scrollTop).toBeGreaterThan(before);
-    const paged = reader.snapshot().scrollTop;
-    setup.mockInput.pressKey("c", { ctrl: true });
-    await setup.renderOnce();
-    expect(reader.snapshot().disposed).toBe(false);
-    expect(reader.snapshot().scrollTop).toBe(paged);
-  } finally {
-    reader.dispose();
-    setup.renderer.destroy();
-  }
-});
-
-test("reader search visibly marks every literal result and strengthens the selected result", async () => {
-  const setup = await createTestRenderer({ width: 70, height: 14 });
-  const reader = await createConversationReader({
-    session,
-    messages: [
-      {
-        role: "user",
-        body: "needle and NEEDLE",
-        timestampLabel: "2026-09-20 10:00",
-      },
-    ],
-    load: async () => [],
-    renderer: setup.renderer,
-    ownsRenderer: false,
-    watchFactory: noWatch,
-  });
-  try {
-    reader.start();
-    await setup.renderOnce();
-    setup.mockInput.pressTab();
-    await setup.renderOnce();
-    setup.mockInput.pressKey("/");
-    await setup.renderOnce();
-    await setup.mockInput.typeText("needle");
-    setup.mockInput.pressEnter();
-    await setup.waitForVisualIdle();
-    await setup.renderOnce();
-    const highlighted = setup
-      .captureSpans()
-      .lines.flatMap((line) => line.spans)
-      .filter((span) => span.text === "needle" || span.text === "NEEDLE");
-    expect(highlighted.map((span) => span.bg.toString()).sort()).toEqual([
-      "rgba(0.40, 0.33, 0.00, 1.00)",
-      "rgba(0.71, 0.33, 0.04, 1.00)",
-    ]);
-    setup.mockInput.pressKey("/");
-    await setup.renderOnce();
-    setup.mockInput.pressEscape();
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    await setup.waitForVisualIdle();
-    await setup.renderOnce();
-    const searchBackgrounds = new Set([
-      "rgba(0.40, 0.33, 0.00, 1.00)",
-      "rgba(0.71, 0.33, 0.04, 1.00)",
-    ]);
-    expect(
-      setup
-        .captureSpans()
-        .lines.flatMap((line) => line.spans)
-        .filter((span) => searchBackgrounds.has(span.bg.toString())),
-    ).toEqual([]);
-    expect(reader.snapshot()).toMatchObject({
-      disposed: false,
-      searchMatches: 0,
-    });
-  } finally {
-    reader.dispose();
-    setup.renderer.destroy();
-  }
-});
-
-test("reader decorates the visible word-wrap coordinates of a selected match", async () => {
-  const setup = await createTestRenderer({ width: 24, height: 20 });
-  const messages: TranscriptMessage[] = [
-    {
-      role: "assistant",
-      body: "padding padding explicitly requires it.",
-      timestampLabel: "2026-09-20 10:00",
-    },
-  ];
-  const reader = await createConversationReader({
-    session,
-    messages,
-    load: async () => messages,
-    renderer: setup.renderer,
-    ownsRenderer: false,
-    watchFactory: noWatch,
-  });
-  try {
-    reader.start();
-    await setup.flush();
-    await Bun.sleep(100);
-    await setup.flush();
-    setup.mockInput.pressTab();
-    setup.mockInput.pressKey("/");
-    await setup.mockInput.typeText("requi");
-    setup.mockInput.pressEnter();
-    await setup.flush();
-    const selected = setup
-      .captureSpans()
-      .lines.flatMap((line) => line.spans)
-      .filter(
-        (span) =>
-          span.bg.toString() === "rgba(0.71, 0.33, 0.04, 1.00)" &&
-          (span.attributes & 1) !== 0 &&
-          (span.attributes & 32) !== 0,
-      )
-      .map((span) => span.text);
-    expect(reader.snapshot().searchMatches).toBe(1);
-    expect(selected).toEqual(["requi"]);
-  } finally {
-    reader.dispose();
-    setup.renderer.destroy();
-  }
-});
-
-test("reader finds and decorates a selected match after many newline source rows", async () => {
-  const setup = await createTestRenderer({ width: 40, height: 14 });
-  const messages: TranscriptMessage[] = [
-    {
-      role: "assistant",
-      body: [
-        ...Array.from(
-          { length: 40 },
-          (_, index) => `filler row ${String(index).padStart(2, "0")}`,
-        ),
-        "offscreen target",
-      ].join("\n"),
-      timestampLabel: "2026-09-20 10:00",
-    },
-  ];
-  const reader = await createConversationReader({
-    session,
-    messages,
-    load: async () => messages,
-    renderer: setup.renderer,
-    ownsRenderer: false,
-    watchFactory: noWatch,
-  });
-  try {
-    reader.start();
-    await setup.flush();
-    await Bun.sleep(100);
-    await setup.flush();
-    setup.mockInput.pressTab();
-    setup.mockInput.pressKey("/");
-    await setup.mockInput.typeText("target");
-    setup.mockInput.pressEnter();
-    await setup.flush();
-    const frame = setup.captureCharFrame();
-    const selected = setup
-      .captureSpans()
-      .lines.flatMap((line) => line.spans)
-      .filter(
-        (span) =>
-          span.bg.toString() === "rgba(0.71, 0.33, 0.04, 1.00)" &&
-          (span.attributes & 1) !== 0 &&
-          (span.attributes & 32) !== 0,
-      )
-      .map((span) => span.text);
-    expect(frame).toContain("offscreen target");
-    expect(reader.snapshot()).toMatchObject({
-      searchMatches: 1,
-      searchMatch: 1,
-    });
-    expect(selected).toEqual(["target"]);
-  } finally {
-    reader.dispose();
-    setup.renderer.destroy();
-  }
-});
-
-test("reader decorates combining and ZWJ graphemes without styling the next cell", async () => {
-  for (const { body, query, selectedText } of [
-    { body: "before e\u0301x target", query: "e\u0301", selectedText: "e" },
-    {
-      body: "before 👩‍💻x target",
-      query: "👩‍💻",
-      selectedText: "👩",
-    },
-  ]) {
-    const setup = await createTestRenderer({ width: 40, height: 14 });
-    const messages: TranscriptMessage[] = [
-      { role: "assistant", body, timestampLabel: "2026-09-20 10:00" },
-    ];
-    const reader = await createConversationReader({
-      session,
-      messages,
-      load: async () => messages,
-      renderer: setup.renderer,
-      ownsRenderer: false,
-      watchFactory: noWatch,
-    });
-    try {
-      reader.start();
-      await setup.flush();
-      await Bun.sleep(100);
-      await setup.flush();
-      setup.mockInput.pressTab();
-      setup.mockInput.pressKey("/");
-      await setup.mockInput.pasteBracketedText(query);
-      setup.mockInput.pressEnter();
-      await setup.flush();
-      const selected = setup
-        .captureSpans()
-        .lines.flatMap((line) => line.spans)
-        .filter(
-          (span) =>
-            span.bg.toString() === "rgba(0.71, 0.33, 0.04, 1.00)" &&
-            (span.attributes & 1) !== 0 &&
-            (span.attributes & 32) !== 0,
-        )
-        .map((span) => span.text);
-      expect(reader.snapshot().searchMatches).toBe(1);
-      expect(selected).toEqual([selectedText]);
-      expect(selected.join("")).not.toContain("x");
-    } finally {
+  await reader.start();
+  await ui.flush();
+  return {
+    ui,
+    reader,
+    close: async () => {
+      await reader.waitForIdle();
       reader.dispose();
-      setup.renderer.destroy();
-    }
-  }
-});
-
-test("reader decorates a Markdown literal across a physical rendered row boundary", async () => {
-  const setup = await createTestRenderer({ width: 20, height: 14 });
-  const messages: TranscriptMessage[] = [
-    {
-      role: "assistant",
-      body: "padding search **phrase** next search **phrase**",
-      timestampLabel: "2026-09-20 10:00",
+      ui.renderer.destroy();
     },
-  ];
-  const reader = await createConversationReader({
-    session,
-    messages,
-    load: async () => messages,
-    renderer: setup.renderer,
-    ownsRenderer: false,
-    watchFactory: noWatch,
-  });
-  try {
-    reader.start();
-    await setup.flush();
-    await Bun.sleep(100);
-    await setup.flush();
-    setup.mockInput.pressTab();
-    setup.mockInput.pressKey("/");
-    await setup.mockInput.typeText("search phrase");
-    setup.mockInput.pressEnter();
-    await setup.flush();
-    const frame = setup.captureCharFrame();
-    const markedLines = (background: string) =>
-      setup
-        .captureSpans()
-        .lines.map((line) =>
-          line.spans.filter(
-            (span) =>
-              span.bg.toString() === background && (span.attributes & 8) !== 0,
-          ),
-        );
-    const markedText = (background: string) =>
-      markedLines(background)
-        .flatMap((line) => line)
-        .map((span) => span.text);
-    expect(reader.snapshot()).toMatchObject({
-      searchMatches: 2,
-      searchMatch: 1,
-    });
-    expect(frame).toContain("phrase next search");
-    expect(markedText("rgba(0.71, 0.33, 0.04, 1.00)")).toEqual([
-      "search",
-      "phrase",
-    ]);
-    expect(markedText("rgba(0.40, 0.33, 0.00, 1.00)")).toEqual([
-      "search",
-      "phrase",
-    ]);
-    expect(
-      markedLines("rgba(0.71, 0.33, 0.04, 1.00)").filter(
-        (line) => line.length > 0,
-      ),
-    ).toHaveLength(2);
-    expect(
-      markedLines("rgba(0.40, 0.33, 0.00, 1.00)").filter(
-        (line) => line.length > 0,
-      ),
-    ).toHaveLength(2);
-    setup.mockInput.pressKey("n");
-    await setup.flush();
-    expect(reader.snapshot().searchMatch).toBe(2);
-    setup.mockInput.pressKey("N");
-    await setup.flush();
-    expect(reader.snapshot().searchMatch).toBe(1);
-  } finally {
-    reader.dispose();
-    setup.renderer.destroy();
-  }
-});
-
-test("reader finds a literal across rendered Markdown formatting and wrapping", async () => {
-  const setup = await createTestRenderer({ width: 34, height: 14 });
-  const messages: TranscriptMessage[] = [
-    {
-      role: "assistant",
-      body: "prefix search **phrase** suffix search *phrase*",
-      timestampLabel: "2026-09-20 10:00",
+  };
+}
+test("replay and append export submission spans under their rendering operation", async () => {
+  const exported: any[] = [];
+  const trace = new PerformanceTrace({
+    export(spans, callback) {
+      const data = JSON.parse(
+        new TextDecoder().decode(JsonTraceSerializer.serializeRequest(spans)!),
+      );
+      for (const resource of data.resourceSpans)
+        for (const scope of resource.scopeSpans) exported.push(...scope.spans);
+      callback({ code: 0 });
     },
-  ];
-  const reader = await createConversationReader({
-    session,
-    messages,
-    load: async () => messages,
-    renderer: setup.renderer,
-    ownsRenderer: false,
-    watchFactory: noWatch,
+    async shutdown() {},
   });
+  let f: Awaited<ReturnType<typeof fixture>> | undefined;
   try {
-    reader.start();
-    await setup.flush();
-    await Bun.sleep(100);
-    await setup.flush();
-    setup.mockInput.pressTab();
-    setup.mockInput.pressKey("/");
-    await setup.mockInput.typeText("search phrase");
-    setup.mockInput.pressEnter();
-    await setup.flush();
-    const frame = setup.captureCharFrame();
-    const spans = setup.captureSpans().lines.flatMap((line) => line.spans);
-    const marked = spans.filter((span) =>
-      ["rgba(0.40, 0.33, 0.00, 1.00)", "rgba(0.71, 0.33, 0.04, 1.00)"].includes(
-        span.bg.toString(),
-      ),
+    f = await fixture([message("First")], { trace });
+    f.reader.project([message("First"), message("Second")]);
+    await f.reader.waitForIdle();
+    await trace.close();
+    const submissions = exported.filter(
+      (span) => span.name === "scrollback.submit",
     );
-    expect(reader.snapshot()).toMatchObject({
-      searchMatches: 2,
-      searchMatch: 1,
-    });
-    expect(frame).toContain("search");
-    expect(marked.some((span) => (span.attributes & 8) !== 0)).toBe(true);
-    expect(
-      marked.some(
-        (span) => (span.attributes & 1) !== 0 && (span.attributes & 32) !== 0,
-      ),
-    ).toBe(true);
-    setup.mockInput.pressKey("n");
-    await setup.flush();
-    expect(reader.snapshot().searchMatch).toBe(2);
-    setup.mockInput.pressKey("n");
-    await setup.flush();
-    expect(reader.snapshot().searchMatch).toBe(1);
-    setup.mockInput.pressKey("N");
-    await setup.flush();
-    expect(reader.snapshot().searchMatch).toBe(2);
+    expect(submissions).toHaveLength(2);
+    for (const name of ["history.replay", "history.append"]) {
+      const parent = exported.find((span) => span.name === name)!;
+      const child = submissions.find(
+        (span) => span.parentSpanId === parent.spanId,
+      )!;
+      expect(child.traceId).toBe(parent.traceId);
+      expect(child.attributes).toContainEqual({
+        key: "outcome",
+        value: { stringValue: "ok" },
+      });
+    }
   } finally {
-    reader.dispose();
-    setup.renderer.destroy();
+    await f?.close();
+    await trace.close();
+  }
+});
+test("footer ends at shortcuts with completion open or closed", async () => {
+  const f = await fixture([]);
+  const initialRows = f.ui.captureCharFrame().split("\n").length;
+  const expectNoBottomGap = () => {
+    const rows = f.ui.captureCharFrame().split("\n");
+    if (rows.at(-1) === "") rows.pop();
+    expect(rows.at(-1)).toContain("Enter send/steer");
+  };
+  try {
+    expectNoBottomGap();
+    await f.ui.mockInput.typeText("/cmp");
+    await f.ui.flush();
+    expect(f.ui.captureCharFrame()).toContain("Compact this thread");
+    expect(f.ui.captureCharFrame().split("\n").length).toBe(initialRows);
+    expectNoBottomGap();
+    await f.ui.mockInput.pressKey("TAB");
+    await f.ui.flush();
+    expect(f.ui.captureCharFrame()).not.toContain("Compact this thread");
+    expectNoBottomGap();
+  } finally {
+    await f.close();
+  }
+});
+test("loading keeps Enter and Tab drafts unsent until ready", async () => {
+  let ready = false;
+  const sent: string[] = [];
+  const queued: string[] = [];
+  const f = await fixture([], {
+    canSubmit: () => ready,
+    onSubmit: (input) => {
+      sent.push(input);
+    },
+    onQueue: (input) => {
+      queued.push(input);
+    },
+  });
+  try {
+    await f.ui.mockInput.typeText("Draft while connecting");
+    await f.ui.mockInput.pressKey("RETURN");
+    await f.ui.mockInput.pressKey("TAB");
+    await f.ui.flush();
+    expect(sent).toEqual([]);
+    expect(queued).toEqual([]);
+    expect(f.ui.captureCharFrame()).toContain("Draft while connecting");
+    ready = true;
+    await f.ui.mockInput.pressKey("RETURN");
+    expect(sent).toEqual(["Draft while connecting"]);
+  } finally {
+    await f.close();
+  }
+});
+test("completed messages append once and retain a live multiline composer", async () => {
+  const sent: string[] = [],
+    queued: string[] = [];
+  const f = await fixture([message("First answer")], {
+    onSubmit: (v) => {
+      sent.push(v);
+    },
+    onQueue: (v) => {
+      queued.push(v);
+    },
+  });
+  try {
+    expect(f.ui.externalOutput.takeText()).toContain("First answer");
+    f.reader.project([message("First answer"), message("Second answer")]);
+    await f.reader.waitForIdle();
+    await f.ui.flush();
+    const output = f.ui.externalOutput.takeText();
+    expect(output).toContain("Second answer");
+    expect(output).not.toContain("First answer");
+    f.reader.project([message("First answer"), message("Second answer")]);
+    await f.reader.waitForIdle();
+    await f.ui.flush();
+    expect(f.ui.externalOutput.takeText()).toBe("");
+    await f.ui.mockInput.typeText("next job");
+    await f.ui.mockInput.pressKey("TAB");
+    expect(queued).toEqual(["next job"]);
+    expect(sent).toEqual([]);
+    await f.ui.mockInput.typeText("line one");
+    await f.ui.mockInput.pressKey("j", { ctrl: true });
+    await f.ui.mockInput.typeText("line two");
+    await f.ui.mockInput.pressKey("RETURN");
+    expect(sent).toEqual(["line one\nline two"]);
+  } finally {
+    await f.close();
+  }
+});
+test("replay keeps a whole contiguous suffix and latest oversized message", async () => {
+  const large = Array.from({ length: 1002 }, (_, i) => `row ${i}  `).join("\n");
+  const f = await fixture([message("Older omitted"), message(large)]);
+  try {
+    const output = f.ui.externalOutput.takeText();
+    expect(output).toContain("Earlier history omitted");
+    expect(output).not.toContain("Older omitted");
+    expect(output).toContain("row 0");
+    expect(output).toContain("row 1001");
+  } finally {
+    await f.close();
   }
 });
 
-test("rendered search rebuilds on reflow and transcript refresh without stale frame decoration", async () => {
-  const setup = await createTestRenderer({ width: 44, height: 14 });
-  let messages: TranscriptMessage[] = [
-    {
-      role: "assistant",
-      body: "宽世界 needle follows a long rendered line that will wrap",
-      timestampLabel: "2026-09-20 10:00",
+test("history arriving after the editable shell still uses the replay budget", async () => {
+  const f = await fixture([]);
+  try {
+    await f.ui.mockInput.typeText("Keep my draft");
+    const large = Array.from({ length: 1002 }, (_, i) => `loaded ${i}  `).join(
+      "\n",
+    );
+    await f.reader.loadHistory([message("Older omitted"), message(large)]);
+    await f.ui.flush();
+    const output = f.ui.externalOutput.takeText();
+    expect(output).toContain("Earlier history omitted");
+    expect(output).not.toContain("Older omitted");
+    expect(output).toContain("loaded 1001");
+    expect(f.ui.captureCharFrame()).toContain("Keep my draft");
+  } finally {
+    await f.close();
+  }
+});
+test("completion consumes Tab before queueing and restored input stays editable", async () => {
+  const queued: string[] = [];
+  let restored = "";
+  const f = await fixture([], {
+    onQueue: (v) => {
+      queued.push(v);
     },
-  ];
-  const reader = await createConversationReader({
-    session,
-    messages,
-    load: async () => messages,
-    renderer: setup.renderer,
-    ownsRenderer: false,
-    watchFactory: noWatch,
+    takeRestoredDraft: () => {
+      const text = restored;
+      restored = "";
+      return text;
+    },
   });
-  const searchColors = new Set([
-    "rgba(0.40, 0.33, 0.00, 1.00)",
-    "rgba(0.71, 0.33, 0.04, 1.00)",
+  try {
+    await f.ui.mockInput.typeText("/cmp");
+    await f.ui.flush();
+    await f.ui.mockInput.pressKey("TAB");
+    await f.ui.flush();
+    expect(queued).toEqual([]);
+    expect(f.ui.captureCharFrame()).toContain("/compact");
+    await f.ui.mockInput.pressKey("TAB");
+    expect(queued).toEqual(["/compact"]);
+    restored = "Recovered job";
+    f.reader.project([]);
+    await f.ui.flush();
+    expect(f.ui.captureCharFrame()).toContain("Recovered job");
+  } finally {
+    await f.close();
+  }
+});
+
+test("resize preserves host history and long cwd does not hide runtime identity", async () => {
+  const f = await fixture([message("Short complete answer")], {
+    statusLines: () => ({
+      cwd: "/" + "long-directory/".repeat(15),
+      runtime: "model-x · high",
+      telemetry: "context 20%",
+    }),
+  });
+  try {
+    expect(f.ui.renderer.useMouse).toBe(false);
+    expect(f.ui.captureCharFrame()).toContain("model-x · high");
+    f.ui.externalOutput.clear();
+    f.ui.resize(60, 20);
+    await f.reader.waitForIdle();
+    await f.ui.flush();
+    expect(f.ui.externalOutput.takeText()).toBe("");
+    expect(f.ui.captureCharFrame()).toContain("model-x · high");
+  } finally {
+    await f.close();
+  }
+});
+
+test("a prepared history page is submitted as one complete snapshot", async () => {
+  const f = await fixture([]);
+  try {
+    f.ui.externalOutput.clear();
+    const messages = Array.from({ length: 40 }, (_, i) =>
+      message(`Completed ${i}`),
+    );
+    await f.reader.loadHistory(messages);
+    await f.ui.flush();
+    const commits = f.ui.externalOutput.take();
+    expect(commits).toHaveLength(1);
+    expect(commits[0].text).toContain("Completed 0");
+    expect(commits[0].text).toContain("Completed 39");
+  } finally {
+    await f.close();
+  }
+});
+
+test("replay does not skip an oversized older message to include even older text", async () => {
+  const middle = Array.from({ length: 1001 }, (_, i) => `middle ${i}  `).join(
+    "\n",
+  );
+  const f = await fixture([
+    message("Oldest tiny"),
+    message(middle),
+    message("Latest complete"),
   ]);
   try {
-    reader.start();
-    await setup.flush();
-    await Bun.sleep(100);
-    await setup.flush();
-    setup.mockInput.pressTab();
-    setup.mockInput.pressKey("/");
-    await setup.mockInput.typeText("世界 needle");
-    setup.mockInput.pressEnter();
-    await setup.flush();
-    expect(reader.snapshot().searchMatches).toBe(1);
-    setup.resize(28, 14);
-    await setup.flush();
-    expect(reader.snapshot().searchMatches).toBe(1);
-    setup.mockInput.pressKey("n");
-    await setup.flush();
-    expect(reader.snapshot().searchMatch).toBe(1);
-    messages = [
-      {
-        role: "assistant",
-        body: "replacement contains no selected text",
-        timestampLabel: "2026-09-20 10:01",
-      },
-    ];
-    await reader.refresh();
-    await setup.flush();
-    expect(reader.snapshot()).toMatchObject({
-      searchMatches: 0,
-      searchMatch: 0,
-    });
-    expect(
-      setup
-        .captureSpans()
-        .lines.flatMap((line) => line.spans)
-        .filter((span) => searchColors.has(span.bg.toString())),
-    ).toEqual([]);
+    const output = f.ui.externalOutput.takeText();
+    expect(output).toContain("Latest complete");
+    expect(output).toContain("Earlier history omitted");
+    expect(output).not.toContain("Oldest tiny");
+    expect(output).not.toContain("middle 0");
   } finally {
-    reader.dispose();
-    const text = new TextRenderable(setup.renderer, { content: "世界 needle" });
-    setup.renderer.root.add(text);
-    await setup.renderOnce();
-    expect(
-      setup
-        .captureSpans()
-        .lines.flatMap((line) => line.spans)
-        .filter((span) => searchColors.has(span.bg.toString())),
-    ).toEqual([]);
-    setup.renderer.destroy();
+    await f.close();
   }
 });

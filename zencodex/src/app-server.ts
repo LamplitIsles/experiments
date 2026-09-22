@@ -2,6 +2,7 @@
 import { CodexAppServerClient } from "@jaminzhou/codex-app-server-client";
 import { isHerdrSessionHook } from "./herdr";
 import type { AppServer, Skill } from "./conversation";
+import { noTrace, type Trace } from "./tracing";
 
 export type ZencodexClient = AppServer & {
   startThread(): Promise<{
@@ -18,7 +19,12 @@ export type ZencodexClient = AppServer & {
 export async function connect(
   cwd: string,
   codexPath = "codex",
-  testOptions?: { env?: NodeJS.ProcessEnv; requestTimeoutMs?: number },
+  testOptions?: {
+    env?: NodeJS.ProcessEnv;
+    requestTimeoutMs?: number;
+    performance?: Trace;
+    signal?: AbortSignal;
+  },
 ): Promise<ZencodexClient> {
   const client = new CodexAppServerClient({
     codexPath,
@@ -29,11 +35,27 @@ export async function connect(
     requestTimeoutMs: testOptions?.requestTimeoutMs ?? 60_000,
     env: testOptions?.env,
   });
-  await client.connect();
+  const performance = testOptions?.performance ?? noTrace;
+  const signal = testOptions?.signal;
+  const abort = () => {
+    void client.close().catch(() => {});
+  };
+  signal?.throwIfAborted();
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    await performance.measure("app_server.initialize", () => client.connect());
+    signal?.throwIfAborted();
+  } catch (error) {
+    signal?.removeEventListener("abort", abort);
+    await client.close();
+    throw error;
+  }
   async function hookConfig() {
     const env = { ...process.env, ...testOptions?.env };
     if (env.HERDR_ENV !== "1" || !env.HERDR_PANE_ID) return undefined;
-    const { data } = await client.call("hooks/list", { cwds: [cwd] });
+    const { data } = await performance.measure("hooks.discover", () =>
+      client.call("hooks/list", { cwds: [cwd] }),
+    );
     const state: Record<string, { enabled: false }> = {};
     for (const entry of data) {
       if (entry.errors.length)
@@ -73,7 +95,10 @@ export async function connect(
       );
     },
     onNotification: client.onNotification.bind(client),
-    close: () => client.close(),
+    close: () => {
+      signal?.removeEventListener("abort", abort);
+      return client.close();
+    },
     async startThread() {
       const response = await client.threadStart({
         config: await hookConfig(),

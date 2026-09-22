@@ -4,8 +4,27 @@ Zencodex is a local terminal reader and editor for Codex conversations. Its read
 
 ## Language
 
+**Follow-up job**:
+A user instruction intended to begin after the current assistant turn finishes,
+not to redirect that turn while it is running.
+_Avoid_: Steering input, held input
+
+**Steering input**:
+A user instruction intended to influence the assistant's current ongoing turn.
+_Avoid_: Follow-up job
+
+**Terminal scrollback search**:
+Finding text in the output retained by the terminal host. Its scope is retained
+terminal output, not necessarily the complete conversation.
+_Avoid_: Conversation-history search
+
+**Conversation-history search**:
+Finding saved conversation content independently of what a terminal currently
+displays or retains. Its searchable content depends on the history collection.
+_Avoid_: Terminal scrollback search
+
 **Transcript**:
-The ordered, user-visible conversation of message headings and rendered message bodies in the reader scroll region.
+The ordered, user-visible conversation of user messages and completed assistant answers.
 _Avoid_: Session log, source Markdown
 
 **Held input**:
@@ -27,20 +46,8 @@ when the waiting period ends.
 The final visible rows of the transcript after Markdown rendering, layout, wrapping, and terminal styling; it excludes the composer, footer, and overlays.
 _Avoid_: Markdown source, message buffer
 
-**Search corpus**:
-The normalized visible text projection of the rendered transcript, with terminal control sequences removed and whitespace normalized.
-_Avoid_: Raw message body
-
-**Search match**:
-One literal occurrence in the search corpus, represented by one or more row-and-column ranges in the rendered transcript.
-_Avoid_: Source-text offset, text-buffer highlight
-
-**Current match**:
-The selected search match used as the navigation target and given stronger visual treatment than other matches.
-_Avoid_: Active message, selected message
-
-**Final-frame decoration**:
-The transient background and text attributes applied to match ranges only after
-the reader has rendered its frame. Normal matches are underlined; the current
-match is additionally bold and inverse.
-_Avoid_: Markdown-buffer styling, persisted highlights
+**History replay**:
+The redisplay of saved conversation messages when reopening a conversation or
+refreshing a changed source projection. Terminal resizing does not trigger replay.
+Omission from
+replay does not remove a message from saved history or model context.

@@ -9,6 +9,7 @@ import {
   type Renderable,
 } from "@opentui/core";
 import { messageTimestamp, type NamedSession } from "./types";
+import { noTrace, type Trace } from "./tracing";
 
 export type PickerState = {
   query: string;
@@ -22,7 +23,18 @@ export async function pickSession(
   cwd: string,
   state: PickerState,
   unnamedCount = 0,
+  onReady?: () => void,
+  performance: Trace = noTrace,
 ): Promise<NamedSession | undefined> {
+  const preparation = performance.begin("picker.prepare_first_frame", {
+    sessions: sessions.length,
+    width: renderer.width,
+    height: renderer.height,
+  });
+  const ready = () => {
+    preparation.end();
+    onReady?.();
+  };
   let identityLength = 8;
   while (
     new Set(sessions.map((session) => session.id.slice(0, identityLength)))
@@ -194,14 +206,18 @@ export async function pickSession(
       input.on(InputRenderableEvents.ENTER, apply);
       renderer.keyInput.on("keypress", onKey);
       renderer.once("destroy", onDestroy);
+      renderer.once("frame", ready);
+      renderer.requestRender();
       return await result;
     } finally {
       renderer.keyInput.off("keypress", onKey);
       renderer.off("destroy", onDestroy);
+      renderer.off("frame", ready);
       input.off(InputRenderableEvents.ENTER, apply);
       if (!input.isDestroyed) input.blur();
     }
   } finally {
+    preparation.end("cancel");
     if (!root.isDestroyed) root.destroyRecursively();
   }
 }
