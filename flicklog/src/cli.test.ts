@@ -35,7 +35,7 @@ test("CLI keeps search bounded and only get expands an own-device record", async
     content: "FOREIGN SECRET",
   };
   let configureRequests = 0;
-  const searchLimits: number[] = [];
+  const searches: any[] = [];
   server = Bun.serve({
     port: 0,
     fetch: async (request) => {
@@ -48,9 +48,7 @@ test("CLI keeps search bounded and only get expands an own-device record", async
       }
       if (path === "/tasks/1") return Response.json({ status: "succeeded" });
       if (path.endsWith("/search")) {
-        searchLimits.push(
-          Number(((await request.json()) as { limit: number }).limit),
-        );
+        searches.push(await request.json());
         return Response.json({
           estimatedTotalHits: 1,
           hits: [
@@ -81,7 +79,11 @@ test("CLI keeps search bounded and only get expands an own-device record", async
   const sink = { log: (value: string) => output.push(value) };
   const err = { error: (value: string) => errors.push(value) };
   expect(await run(["search", "matched"], env, "/project", sink, err)).toBe(0);
-  expect(searchLimits).toEqual([5]);
+  expect(searches[0]).toMatchObject({
+    limit: 5,
+    filter: [`deviceId = ${JSON.stringify(hostname())}`, 'cwd = "/project"'],
+    sort: ["createdAt:desc"],
+  });
   expect(output[0]).toContain("<mark>matched</mark>");
   expect(output[0]).not.toContain("FULL SECRET CONTENT");
   output.length = 0;
@@ -94,8 +96,65 @@ test("CLI keeps search bounded and only get expands an own-device record", async
       err,
     ),
   ).toBe(0);
-  expect(searchLimits).toEqual([5, 12]);
-  const beforeInvalid = { configureRequests, searches: searchLimits.length };
+  expect(searches.map((search) => search.limit)).toEqual([5, 12]);
+  const originalNow = Date.now;
+  Date.now = () => 1768046400000;
+  try {
+    expect(
+      await run(
+        ["search", "matched", "--since", "2d"],
+        env,
+        "/project",
+        sink,
+        err,
+      ),
+    ).toBe(0);
+    expect(searches[2].filter).toEqual([
+      `deviceId = ${JSON.stringify(hostname())}`,
+      'cwd = "/project"',
+      "createdAtEpoch >= 1767873600",
+      "createdAtEpoch < 1768046400",
+    ]);
+    expect(
+      await run(
+        ["search", "matched", "--from", "2026-01-05T00:00:00Z"],
+        env,
+        "/project",
+        sink,
+        err,
+      ),
+    ).toBe(0);
+    expect(searches[3].filter).toEqual([
+      `deviceId = ${JSON.stringify(hostname())}`,
+      'cwd = "/project"',
+      "createdAtEpoch >= 1767571200",
+    ]);
+    expect(
+      await run(
+        [
+          "search",
+          "matched",
+          "--from",
+          "2026-01-05T00:00:00Z",
+          "--until",
+          "2026-01-06T00:00:00Z",
+          "--all-projects",
+        ],
+        env,
+        "/project",
+        sink,
+        err,
+      ),
+    ).toBe(0);
+    expect(searches[4].filter).toEqual([
+      `deviceId = ${JSON.stringify(hostname())}`,
+      "createdAtEpoch >= 1767571200",
+      "createdAtEpoch < 1767657600",
+    ]);
+  } finally {
+    Date.now = originalNow;
+  }
+  const beforeInvalid = { configureRequests, searches: searches.length };
   for (const value of [undefined, "nope", "0", "-1", "21"]) {
     const args =
       value === undefined
@@ -103,8 +162,46 @@ test("CLI keeps search bounded and only get expands an own-device record", async
         : ["search", "matched", "--limit", value];
     expect(await run(args, env, "/project", sink, err)).toBe(1);
   }
+  for (const args of [
+    ["search", "matched", "--since", "2d", "--from", "2026-01-05T00:00:00Z"],
+    ["search", "matched", "--since", "2d", "--until", "2026-01-06T00:00:00Z"],
+    ["search", "matched", "--until", "2026-01-06T00:00:00Z"],
+    [
+      "search",
+      "matched",
+      "--from",
+      "2026-01-06T00:00:00Z",
+      "--until",
+      "2026-01-05T00:00:00Z",
+    ],
+    ["search", "matched", "--from", "not-a-timestamp"],
+    ["search", "matched", "--from", "2026-01-05T00:00:00"],
+    ["search", "matched", "--since", "0d"],
+    ["search", "matched", "--since", "-1d"],
+    ["search", "matched", "--since", "2x"],
+    ["search", "matched", "--since", "2d", "--since", "1d"],
+    [
+      "search",
+      "matched",
+      "--from",
+      "2026-01-05T00:00:00Z",
+      "--from",
+      "2026-01-06T00:00:00Z",
+    ],
+    [
+      "search",
+      "matched",
+      "--from",
+      "2026-01-05T00:00:00Z",
+      "--until",
+      "2026-01-06T00:00:00Z",
+      "--until",
+      "2026-01-07T00:00:00Z",
+    ],
+  ])
+    expect(await run(args, env, "/project", sink, err)).toBe(1);
   expect(configureRequests).toBe(beforeInvalid.configureRequests);
-  expect(searchLimits).toHaveLength(beforeInvalid.searches);
+  expect(searches).toHaveLength(beforeInvalid.searches);
   output.length = 0;
   expect(await run(["get", "own"], env, "/project", sink, err)).toBe(0);
   expect(output[0]).toContain("FULL SECRET CONTENT");

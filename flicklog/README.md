@@ -26,6 +26,9 @@ flicklog search "Chinese keyword 或 code identifier" # five cards by default
 flicklog ingest
 flicklog search "release decision" --all-projects
 flicklog search "release decision" --limit 12
+flicklog search "timeout" --since 2d
+flicklog search "timeout" --from "2026-01-05T00:00:00Z"
+flicklog search "timeout" --from "2026-01-05T00:00:00Z" --until "2026-01-06T00:00:00Z"
 flicklog get <record-id>
 flicklog context <record-id>
 flicklog context <record-id> --include-tools
@@ -35,7 +38,18 @@ Every successful command writes one JSON object to stdout. Warnings/errors go to
 
 FlickLog indexes two kinds of semantic history: Codex top-level user messages and assistant `commentary`/`final_answer` messages (`kind: "message"`), plus non-empty Codex `compacted.payload.message` checkpoints (`kind: "compaction"`). Commentary and final answers are separate documents. Compaction indexes only its plaintext message, never `replacement_history`, and has no fabricated user/assistant role. Tool activity, reasoning/thinking, developer/system text, injected provenance, and spawned sessions are never indexed.
 
-`search` returns five compact cards by default; `--limit <1-20>` deliberately requests a different bounded count. Results rank exact textual matches before recency; numeric query tokens require an exact match, and `createdAt:desc` breaks remaining ties. Each card has a stable record ID and a Meilisearch-highlighted, query-centred snippet; it never returns full record content or source provenance. Use `get <record-id>` to expand exactly one selected same-device record in full.
+`search` returns five compact cards by default; `--limit <1-20>` deliberately requests a different bounded count. Results rank exact textual matches before recency; numeric query tokens require an exact match, and recency breaks remaining ties. Each card has a stable record ID and a Meilisearch-highlighted, query-centred snippet; it never returns full record content or source provenance. Use `get <record-id>` to expand exactly one selected same-device record in full.
+
+An optional time window further narrows search scope before Meilisearch runs the textual query and ranking; it is never a post-search result filter. `--since <positive-integer><s|m|h|d|w>` uses `[now - duration, now)`, so `--since 2d` searches the preceding two days. Absolute timestamps must be RFC3339: `--from <timestamp>` uses `[from, +∞)`, and adding `--until <timestamp>` uses `[from, until)`. Bounds are evaluated at Unix-second precision. `--since` cannot be combined with `--from` or `--until`; `--until` requires `--from`; repeated time flags, non-positive or invalid durations, invalid timestamps, and a `from` that is not earlier than `until` fail before ingest begins. A time window combines with the current-device and current-working-directory scope. `--all-projects` removes only the working-directory portion of that scope.
+
+After upgrading an existing FlickLog installation for time-window search, run the one-off local projection backfill once before using time bounds:
+
+```sh
+cd /absolute/path/to/experiments/flicklog
+bun scripts/backfill-created-at-epoch.ts
+```
+
+It uses the same `FLICKLOG_MEILI_URL`, `FLICKLOG_MEILI_KEY`, `FLICKLOG_STATE_DIR`, and `FLICKLOG_MEILI_PORT` conventions as FlickLog itself. The script pages existing documents, partially updates valid historical `createdAt` values with `createdAtEpoch`, and reports `scanned`, `updated`, and `skipped` counts. It is safe to run again; it is not a normal `flicklog` command or a general migration system.
 
 `context <record-id>` resolves a selected same-device record to its original JSONL and returns its nearby source items in order. By default it includes only natural-language messages and plaintext compactions, never reasoning. `--include-tools` deliberately adds supported nearby tool calls/results. All returned item content shares one 12,000-character budget; clipped items keep balanced Unicode-safe head and tail text around an omission-count marker such as `…42 chars truncated…`, and the response reports `truncated: true`. Tools are context-only, not searchable.
 

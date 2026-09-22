@@ -28,6 +28,7 @@ export type Message = {
   phase?: "commentary" | "final_answer";
   content: string;
   createdAt?: string;
+  createdAtEpoch?: number;
   sourcePath: string;
   sourceRecordIndex: number;
 };
@@ -98,8 +99,20 @@ const object = (x: unknown): x is Json =>
 const string = (x: unknown): x is string =>
   typeof x === "string" && x.length > 0;
 const characterCount = (value: string) => Array.from(value).length;
-const validTime = (x: unknown): x is string =>
-  string(x) && Number.isFinite(Date.parse(x));
+export function unixSeconds(x: unknown): number | undefined {
+  if (!string(x)) return;
+  const milliseconds = Date.parse(x);
+  return Number.isFinite(milliseconds)
+    ? Math.floor(milliseconds / 1000)
+    : undefined;
+}
+const validTime = (x: unknown): x is string => unixSeconds(x) !== undefined;
+const sourceTimestamp = (x: unknown) => {
+  const epoch = unixSeconds(x);
+  return epoch === undefined || !string(x)
+    ? {}
+    : { createdAt: x, createdAtEpoch: epoch };
+};
 export const messageId = (
   sourceId: unknown,
   deviceId: string,
@@ -219,7 +232,7 @@ function message(
       ...(sessionName ? { sessionName } : {}),
       cwd: m.cwd,
       content,
-      ...(validTime(x.timestamp) ? { createdAt: x.timestamp } : {}),
+      ...sourceTimestamp(x.timestamp),
       sourcePath: path,
       sourceRecordIndex: record,
     };
@@ -285,7 +298,7 @@ function message(
     role,
     ...(phase ? { phase } : {}),
     content: parts.join(""),
-    ...(validTime(x.timestamp) ? { createdAt: x.timestamp } : {}),
+    ...sourceTimestamp(x.timestamp),
     sourcePath: path,
     sourceRecordIndex: record,
   };
@@ -508,14 +521,26 @@ export type Meili = {
     cwd: string,
     all: boolean,
     limit?: number,
+    timeWindow?: TimeWindow,
   ): Promise<SearchResult>;
   get(id: string): Promise<Message | undefined>;
 };
-export function searchFilters(cwd: string, all: boolean): string[] {
-  return [
+export type TimeWindow = { from: number; until?: number };
+export function searchFilters(
+  cwd: string,
+  all: boolean,
+  timeWindow?: TimeWindow,
+): string[] {
+  const filters = [
     `deviceId = ${JSON.stringify(hostname())}`,
     ...(all ? [] : [`cwd = ${JSON.stringify(cwd)}`]),
   ];
+  if (timeWindow) {
+    filters.push(`createdAtEpoch >= ${timeWindow.from}`);
+    if (timeWindow.until !== undefined)
+      filters.push(`createdAtEpoch < ${timeWindow.until}`);
+  }
+  return filters;
 }
 async function task(base: string, key: string, uid: number): Promise<void> {
   for (let n = 0; n < 100; n++) {
@@ -533,7 +558,13 @@ async function task(base: string, key: string, uid: number): Promise<void> {
   }
   throw new Error("timed out waiting for Meilisearch task");
 }
-export function meili(env: Env): Meili {
+export type MeiliConnection = {
+  base: string;
+  key: string;
+  request(path: string, init?: RequestInit): Promise<Response>;
+  waitForTask(uid: number): Promise<void>;
+};
+export function meiliConnection(env: Env): MeiliConnection {
   const base = (
       env.FLICKLOG_MEILI_URL ||
       "http://127.0.0.1:" + (env.FLICKLOG_MEILI_PORT || "7701")
@@ -555,13 +586,17 @@ export function meili(env: Env): Meili {
     if (!r.ok) throw new Error(`Meilisearch ${r.status}: ${await r.text()}`);
     return r;
   }
+  return { base, key, request, waitForTask: (uid) => task(base, key, uid) };
+}
+export function meili(env: Env): Meili {
+  const { base, key, request, waitForTask } = meiliConnection(env);
   async function write(path: string, body: unknown) {
     const r = await request(path, {
       method: "PATCH",
       body: JSON.stringify(body),
     });
     const v = (await r.json()) as { taskUid: number };
-    await task(base, key, v.taskUid);
+    await waitForTask(v.taskUid);
   }
   async function ensureIndex() {
     const existing = await fetch(`${base}/indexes/flicklog_messages`, {
@@ -582,14 +617,35 @@ export function meili(env: Env): Meili {
     });
     if (r.status === 409) return;
     if (!r.ok) throw new Error(`Meilisearch ${r.status}: ${await r.text()}`);
-    await task(base, key, ((await r.json()) as { taskUid: number }).taskUid);
+    await waitForTask(((await r.json()) as { taskUid: number }).taskUid);
   }
   return {
     async configure() {
       await ensureIndex();
       await write("/indexes/flicklog_messages/settings", {
         searchableAttributes: ["content"],
-        filterableAttributes: ["deviceId", "agent", "cwd", "sessionId", "role"],
+        filterableAttributes: [
+          {
+            attributePatterns: [
+              "deviceId",
+              "agent",
+              "cwd",
+              "sessionId",
+              "role",
+            ],
+            features: {
+              facetSearch: false,
+              filter: { equality: true, comparison: false },
+            },
+          },
+          {
+            attributePatterns: ["createdAtEpoch"],
+            features: {
+              facetSearch: false,
+              filter: { equality: false, comparison: true },
+            },
+          },
+        ],
         sortableAttributes: ["createdAt"],
         typoTolerance: { disableOnNumbers: true },
         rankingRules: [
@@ -612,14 +668,14 @@ export function meili(env: Env): Meili {
           body: JSON.stringify(items),
         },
       );
-      await task(base, key, ((await r.json()) as { taskUid: number }).taskUid);
+      await waitForTask(((await r.json()) as { taskUid: number }).taskUid);
     },
-    async search(query, cwd, all, limit = 5) {
+    async search(query, cwd, all, limit = 5, timeWindow) {
       const r = await request("/indexes/flicklog_messages/search", {
         method: "POST",
         body: JSON.stringify({
           q: query,
-          filter: searchFilters(cwd, all),
+          filter: searchFilters(cwd, all, timeWindow),
           sort: ["createdAt:desc"],
           limit,
           attributesToRetrieve: [

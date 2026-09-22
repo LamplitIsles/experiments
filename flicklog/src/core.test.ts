@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   configText,
@@ -170,6 +170,43 @@ describe("incremental Codex projection", () => {
         })
       ).indexed,
     ).toBe(1);
+  });
+  test("preserves source timestamps and adds Unix seconds only when valid", async () => {
+    const f = await fixture(),
+      batches: any[] = [];
+    const env = {
+      CODEX_HOME: f.home,
+      FLICKLOG_STATE_DIR: join(f.root, "state"),
+    };
+    await scan(env, async (items) => {
+      batches.push(items);
+    });
+    expect(batches[0][0]).toMatchObject({
+      createdAt: "2026-01-01T00:00:00Z",
+      createdAtEpoch: 1767225600,
+    });
+    expect(batches[0][1].createdAtEpoch).toBeUndefined();
+    await writeFile(
+      f.path,
+      f.record({
+        type: "response_item",
+        timestamp: "not a timestamp",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "bad timestamp" }],
+          internal_chat_message_metadata_passthrough: {
+            content_item_kinds: ["user.text"],
+          },
+        },
+      }),
+      { flag: "a" },
+    );
+    await scan(env, async (items) => {
+      batches.push(items);
+    });
+    expect(batches[1][0].createdAt).toBeUndefined();
+    expect(batches[1][0].createdAtEpoch).toBeUndefined();
   });
   test("does not commit an incomplete trailing record", async () => {
     const f = await fixture(),
@@ -470,10 +507,19 @@ describe("source context and setup contract", () => {
       ),
     ).toBeLessThanOrEqual(12000);
   });
-  test("keeps device filtering when all projects is selected", () => {
-    expect(searchFilters("/project", false)).toHaveLength(2);
-    expect(searchFilters("/project", true)).toHaveLength(1);
-    expect(searchFilters("/project", false)[1]).toContain("/project");
+  test("combines half-open time windows with device and working-directory scope", () => {
+    expect(searchFilters("/project", false, { from: 100, until: 200 })).toEqual(
+      [
+        `deviceId = ${JSON.stringify(hostname())}`,
+        'cwd = "/project"',
+        "createdAtEpoch >= 100",
+        "createdAtEpoch < 200",
+      ],
+    );
+    expect(searchFilters("/project", true, { from: 100 })).toEqual([
+      `deviceId = ${JSON.stringify(hostname())}`,
+      "createdAtEpoch >= 100",
+    ]);
   });
   test("renders a dedicated loopback LaunchAgent", async () => {
     const root = await mkdtemp(join(tmpdir(), "flicklog-setup-"));

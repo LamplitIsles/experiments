@@ -38,9 +38,13 @@ Normal messages retain Codex `payload.id` as `sourceId`, but use `sha256(deviceI
 
 Search defaults to the CLI process's exact normalized working directory on the current device. The caller does not normally provide cwd as an argument; cross-project search is explicitly requested with `--all-projects`.
 
+### Time window
+
+An optional chronological bound that further narrows search scope before textual matching and ranking. Time-window filtering applies to indexed record creation time; records outside the window are not search candidates. The canonical search model is an inclusive lower bound and exclusive upper bound.
+
 ### Search ranking
 
-FlickLog ranks exact textual matches before recency. Numeric query tokens match exact numbers only; `createdAt:desc` is the deterministic tie-breaker when textual relevance is otherwise equal.
+FlickLog ranks exact textual matches before recency. Numeric query tokens match exact numbers only; recency is the deterministic tie-breaker when textual relevance is otherwise equal.
 
 ### Context expansion
 
