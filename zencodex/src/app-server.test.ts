@@ -17,6 +17,49 @@ async function requests(cwd: string): Promise<Array<{ method: string }>> {
     .map((line) => JSON.parse(line) as { method: string });
 }
 
+test("native compact lifecycle delivers held and immediate later input exactly once", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "zencodex-compact-"));
+  const fake = fileURLToPath(
+    new URL("./fake-app-server-entry.mjs", import.meta.url),
+  );
+  const server = await connect(cwd, fake, {
+    env: { ...process.env, FAKE_COMPACT_DELAY_MS: "100" },
+  });
+  const conversation = new ReaderConversation(
+    server,
+    (await server.startThread()).id,
+  );
+  let finish!: () => void;
+  const completed = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  server.onNotification("turn/completed", () => finish());
+  try {
+    await conversation.submit("/compact");
+    await conversation.submit("during compact");
+    await completed;
+    await conversation.submit("after compact");
+    const native = JSON.parse(
+      await readFile(join(cwd, ".fake-app-server-state.json"), "utf8"),
+    );
+    const accepted = native.turns.flatMap((t: any) =>
+      t.items
+        .filter((i: any) => i.type === "userMessage")
+        .map((i: any) => i.content.map((p: any) => p.text).join("")),
+    );
+    expect(accepted).toEqual(["during compact", "after compact"]);
+    expect(
+      conversation.visible
+        .filter((message) => message.role === "user")
+        .map((message) => message.body),
+    ).toEqual(accepted);
+    expect(conversation.compacting).toBe(false);
+  } finally {
+    await conversation.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("published client initializes against the test-owned stdio fake", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "zencodex-client-"));
   const fake = fileURLToPath(
@@ -29,6 +72,67 @@ test("published client initializes against the test-owned stdio fake", async () 
       "initialize",
     );
   } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("published client exposes capacity failure and resumes native history without another user message", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "zencodex-capacity-"));
+  const control = join(cwd, ".fake-app-server-control.json");
+  await writeFile(control, JSON.stringify({ turnError: "serverOverloaded" }));
+  const server = await connect(
+    cwd,
+    fileURLToPath(new URL("./fake-app-server-entry.mjs", import.meta.url)),
+  );
+  let retry: (() => void) | undefined;
+  const conversation = new ReaderConversation(
+    server,
+    (await server.startThread()).id,
+    undefined,
+    {
+      now: () => 0,
+      setTimeout(callback, ms) {
+        expect(ms).toBe(15 * 60_000);
+        retry = callback;
+        return {} as ReturnType<typeof setTimeout>;
+      },
+      clearTimeout() {
+        retry = undefined;
+      },
+    },
+  );
+  const nextCompletion = () =>
+    new Promise<void>((resolve) => {
+      const off = server.onNotification("turn/completed", () => {
+        off();
+        resolve();
+      });
+    });
+  try {
+    const failed = nextCompletion();
+    await conversation.submit("original request");
+    await failed;
+    expect(conversation.status).toBe("capacity wait");
+    await writeFile(control, "{}");
+    const succeeded = nextCompletion();
+    retry!();
+    await succeeded;
+    const native = JSON.parse(
+      await readFile(join(cwd, ".fake-app-server-state.json"), "utf8"),
+    );
+    expect(native.turns.map((turn: any) => turn.status)).toEqual([
+      "failed",
+      "completed",
+    ]);
+    expect(
+      native.turns.flatMap((turn: any) =>
+        turn.items.filter((item: any) => item.type === "userMessage"),
+      ),
+    ).toHaveLength(1);
+    expect(conversation.recoveryLabel()).toBe("");
+    expect(conversation.notice).toBe("");
+  } finally {
+    await conversation.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });

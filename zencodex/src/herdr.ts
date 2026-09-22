@@ -5,25 +5,32 @@ import type { Reporter } from "./conversation";
 export function createHerdrReporter(
   env: NodeJS.ProcessEnv = process.env,
   run = spawn,
+  warn: (message: string) => void = () => {},
 ): Reporter {
   const pane = env.HERDR_ENV === "1" ? env.HERDR_PANE_ID : undefined;
-  let sequence = 0;
-  const report = (state: "working" | "idle" | "release") => {
+  let sequence = Date.now() * 1000;
+  const report = (
+    state: "working" | "idle" | "blocked" | "release",
+    message?: string,
+  ) => {
     if (!pane) return;
     const args =
       state === "release"
         ? [
             "pane",
             "release-agent",
+            pane,
             "--source",
             "zencodex",
             "--agent",
             "zencodex",
-            pane,
+            "--seq",
+            String(++sequence),
           ]
         : [
             "pane",
             "report-agent",
+            pane,
             "--source",
             "zencodex",
             "--agent",
@@ -32,18 +39,28 @@ export function createHerdrReporter(
             state,
             "--seq",
             String(++sequence),
-            pane,
+            ...(message ? ["--message", message] : []),
           ];
     try {
       const child = run("herdr", args, { stdio: "ignore", detached: true });
+      child.on("error", () =>
+        warn("Herdr reporting failed: unable to launch herdr"),
+      );
+      child.on("exit", (code, signal) => {
+        if (code !== 0)
+          warn(
+            `Herdr reporting failed (${signal ?? code}); check Herdr server and pane configuration`,
+          );
+      });
       child.unref();
     } catch {
-      /* never influence Codex */
+      warn("Herdr reporting failed: unable to launch herdr");
     }
   };
   return {
     working: () => report("working"),
     idle: () => report("idle"),
     release: () => report("release"),
+    blocked: (message) => report("blocked", message),
   };
 }

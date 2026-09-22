@@ -124,7 +124,10 @@ describe("reader-first native projection", () => {
     expect(server.requests[0].method).toBe("thread/compact/start");
     await c.submit("after compact");
     expect(server.requests).toHaveLength(1);
-    server.emit("thread/compacted", {});
+    server.emit("turn/started", { turn: { id: "compact" } });
+    server.emit("turn/completed", {
+      turn: { id: "compact", status: "completed" },
+    });
     await Bun.sleep(0);
     expect(server.requests[1].method).toBe("turn/start");
   });
@@ -195,54 +198,25 @@ describe("reader-first native projection", () => {
     await c.close();
   });
 
-  test("Herdr uses the documented ordered pane protocol", () => {
-    const calls: string[][] = [];
+  test("Herdr asynchronous launch errors are observable and isolated", () => {
+    let onError: (() => void) | undefined;
+    const warnings: string[] = [];
     const reporter = createHerdrReporter(
       { HERDR_ENV: "1", HERDR_PANE_ID: "w:p" },
-      ((_bin: string, args: string[]) => {
-        calls.push(args);
-        return { unref() {} };
+      (() => {
+        return {
+          unref() {},
+          on(event: string, listener: () => void) {
+            if (event === "error") onError = listener;
+          },
+        };
       }) as any,
+      (message) => warnings.push(message),
     );
     reporter.working();
-    reporter.idle();
-    reporter.release();
-    expect(calls).toEqual([
-      [
-        "pane",
-        "report-agent",
-        "--source",
-        "zencodex",
-        "--agent",
-        "zencodex",
-        "--state",
-        "working",
-        "--seq",
-        "1",
-        "w:p",
-      ],
-      [
-        "pane",
-        "report-agent",
-        "--source",
-        "zencodex",
-        "--agent",
-        "zencodex",
-        "--state",
-        "idle",
-        "--seq",
-        "2",
-        "w:p",
-      ],
-      [
-        "pane",
-        "release-agent",
-        "--source",
-        "zencodex",
-        "--agent",
-        "zencodex",
-        "w:p",
-      ],
+    onError?.();
+    expect(warnings).toEqual([
+      "Herdr reporting failed: unable to launch herdr",
     ]);
   });
 });

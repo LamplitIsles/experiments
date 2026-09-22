@@ -261,6 +261,22 @@ async function runTurn(turn) {
   };
   const completeTurn = async () => {
     if (state.active !== turn.id || turn.status !== "inProgress") return;
+    if (control().turnError) {
+      turn.status = "failed";
+      turn.error = {
+        message: "Selected model is at capacity",
+        codexErrorInfo: control().turnError,
+        additionalDetails: null,
+      };
+      turn.completedAt = nowSeconds();
+      state.active = null;
+      save();
+      send({
+        method: "turn/completed",
+        params: { threadId: state.threadId, turn },
+      });
+      return;
+    }
     const input = turn.items
       .filter((item) => item.type === "userMessage")
       .flatMap((item) => item.content ?? []);
@@ -431,7 +447,7 @@ async function runTurn(turn) {
 function startTurn(input, clientUserMessageId) {
   const turn = {
     id: `turn-${state.next++}`,
-    items: [userItem(input, clientUserMessageId)],
+    items: input.length ? [userItem(input, clientUserMessageId)] : [],
     itemsView: "full",
     status: "inProgress",
     error: null,

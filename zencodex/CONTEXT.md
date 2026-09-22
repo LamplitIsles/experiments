@@ -8,6 +8,21 @@ Zencodex is a local terminal reader and editor for Codex conversations. Its read
 The ordered, user-visible conversation of message headings and rendered message bodies in the reader scroll region.
 _Avoid_: Session log, source Markdown
 
+**Held input**:
+A user message accepted by the reader during conversation compaction and waiting
+to be submitted to Codex. Its presence in the transcript does not mean Codex has
+accepted it.
+_Avoid_: Sent message, delivered message
+
+**Compaction**:
+Codex's operation that condenses a conversation's context so work can continue.
+Completion of compaction is distinct from completion of an assistant answer.
+
+**Capacity wait**:
+A waiting period before resuming work after Codex reports that the
+selected model is overloaded. It does not promise that capacity will be available
+when the waiting period ends.
+
 **Rendered transcript**:
 The final visible rows of the transcript after Markdown rendering, layout, wrapping, and terminal styling; it excludes the composer, footer, and overlays.
 _Avoid_: Markdown source, message buffer

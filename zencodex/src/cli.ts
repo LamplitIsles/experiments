@@ -79,10 +79,13 @@ async function main(): Promise<void> {
             }
           : { ...choice, name: opened.name ?? choice.name };
       picker.notice = undefined;
+      let reportWarning = "";
       const conversation = new ReaderConversation(
         server,
         threadId,
-        createHerdrReporter(),
+        createHerdrReporter(process.env, undefined, (message) => {
+          reportWarning = message;
+        }),
       );
       conversation.setRuntime(opened);
       if (choice.id !== NEW)
@@ -119,7 +122,18 @@ async function main(): Promise<void> {
           ]
             .filter(Boolean)
             .join(" · "),
-          telemetry: `${bar(conversation.tokenUsage?.last?.totalTokens, conversation.tokenUsage?.modelContextWindow)}${clock(conversation.workingDurationMs()) ? ` · ${clock(conversation.workingDurationMs())}` : ""}`,
+          telemetry: [
+            bar(
+              conversation.tokenUsage?.last?.totalTokens,
+              conversation.tokenUsage?.modelContextWindow,
+            ),
+            conversation.recoveryLabel() ||
+              conversation.notice ||
+              clock(conversation.workingDurationMs()),
+            reportWarning,
+          ]
+            .filter(Boolean)
+            .join(" · "),
         }),
       });
       reader.start();
