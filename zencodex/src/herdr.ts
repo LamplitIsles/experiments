@@ -1,5 +1,28 @@
 import { spawn } from "node:child_process";
+import { basename, isAbsolute } from "node:path";
 import type { Reporter } from "./conversation";
+
+/** Match the installed shell hook, not arbitrary commands mentioning its name. */
+export function isHerdrSessionHook(hook: {
+  eventName: string;
+  handlerType: string;
+  command?: string;
+}): boolean {
+  if (
+    hook.eventName !== "sessionStart" ||
+    hook.handlerType !== "command" ||
+    !hook.command
+  )
+    return false;
+  const match =
+    /^(?:bash|sh|\/(?:usr\/)?bin\/(?:bash|sh))\s+(?:'([^']+)'|"([^"$`]+)"|([^\s'"\\;$`|&<>]+))\s+session\s*$/.exec(
+      hook.command.trim(),
+    );
+  const path = match?.[1] ?? match?.[2] ?? match?.[3];
+  return (
+    !!path && isAbsolute(path) && basename(path) === "herdr-agent-state.sh"
+  );
+}
 
 /** Best-effort, intentionally detached Herdr lifecycle projection. */
 export function createHerdrReporter(
@@ -42,7 +65,11 @@ export function createHerdrReporter(
             ...(message ? ["--message", message] : []),
           ];
     try {
-      const child = run("herdr", args, { stdio: "ignore", detached: true });
+      const child = run("herdr", args, {
+        env,
+        stdio: "ignore",
+        detached: true,
+      });
       child.on("error", () =>
         warn("Herdr reporting failed: unable to launch herdr"),
       );

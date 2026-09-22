@@ -133,6 +133,7 @@ export class ReaderConversation {
   private pendingOrigin: number | undefined;
   activeStartedAt: string | number | undefined;
   status = "idle";
+  private reportedStatus: string | undefined;
   notice = "";
   private manualCompact = false;
   private compactItem: string | undefined;
@@ -165,7 +166,7 @@ export class ReaderConversation {
           return;
         this.compacting = true;
         this.compactItem = p.item.id;
-        this.status = "compacting";
+        this.setStatus("compacting");
       }),
       server.onNotification("item/completed", (p) => this.item(p)),
       server.onNotification("turn/completed", (p) => void this.completed(p)),
@@ -193,7 +194,23 @@ export class ReaderConversation {
         this.skillVersion += 1;
       }),
     ];
-    this.reporter.idle();
+    this.setStatus("idle");
+  }
+
+  private setStatus(status: string): void {
+    this.status = status;
+    if (this.closed) return;
+    const projected = status === "compacting" ? "working" : status;
+    const message =
+      projected === "capacity wait" && this.retryAt !== undefined
+        ? `Capacity; retry at ${new Date(this.retryAt).toISOString()}`
+        : undefined;
+    const key = `${projected}:${message ?? ""}`;
+    if (key === this.reportedStatus) return;
+    this.reportedStatus = key;
+    if (projected === "working") this.reporter.working();
+    else if (projected === "capacity wait") this.reporter.blocked?.(message!);
+    else this.reporter.idle();
   }
 
   private owns(params: any): boolean {
@@ -210,8 +227,7 @@ export class ReaderConversation {
     this.admission = task.catch((error) => {
       this.notice = error instanceof Error ? error.message : String(error);
       if (!this.activeTurnId && !this.closed) {
-        this.status = "idle";
-        this.reporter.idle();
+        this.setStatus("idle");
       }
     });
     return task;
@@ -224,8 +240,7 @@ export class ReaderConversation {
     this.retryAttempts = 0;
     this.retryGeneration++;
     if (this.status === "capacity wait") {
-      this.status = "idle";
-      this.reporter.idle();
+      this.setStatus("idle");
     }
   }
 
@@ -243,10 +258,7 @@ export class ReaderConversation {
     const delay = (this.retryAttempts++ === 0 ? 15 : 30) * 60_000;
     const generation = this.retryGeneration;
     this.retryAt = this.clock.now() + delay;
-    this.status = "capacity wait";
-    this.reporter.blocked?.(
-      `Capacity; retry at ${new Date(this.retryAt).toISOString()}`,
-    );
+    this.setStatus("capacity wait");
     this.retryTimer = this.clock.setTimeout(() => {
       this.retryTimer = undefined;
       this.retryAt = undefined;
@@ -257,8 +269,7 @@ export class ReaderConversation {
           this.compacting
         )
           return;
-        this.reporter.working();
-        this.status = "working";
+        this.setStatus("working");
         this.notice = "";
         try {
           if (compact) await this.startCompact();
@@ -352,8 +363,7 @@ export class ReaderConversation {
     this.pendingOrigin = this.visible.length - 1;
     const id = crypto.randomUUID();
     this.unacknowledged.set(id, message);
-    this.reporter.working();
-    this.status = "working";
+    this.setStatus("working");
     this.held.push({ id, input });
     await this.enqueue(() => this.flushHeld());
   }
@@ -440,8 +450,7 @@ export class ReaderConversation {
       throw new Error("Cannot compact while a turn is active");
     this.compacting = true;
     this.manualCompact = true;
-    this.status = "compacting";
-    this.reporter.working();
+    this.setStatus("compacting");
     try {
       await this.server.call("thread/compact/start", {
         threadId: this.threadId,
@@ -459,8 +468,7 @@ export class ReaderConversation {
     if (!turn?.id || this.finishedTurns.has(turn.id)) return;
     this.activeTurnId = turn.id;
     this.activeStartedAt = turn.startedAt;
-    this.status = "working";
-    this.reporter.working();
+    this.setStatus("working");
   }
   private item(params: any): void {
     if (!this.owns(params)) return;
@@ -475,7 +483,7 @@ export class ReaderConversation {
       this.compactItem = undefined;
       if (!this.manualCompact) {
         this.compacting = false;
-        this.status = "working";
+        this.setStatus("working");
         void this.enqueue(() => this.flushHeld()).catch(() => {});
       }
       return;
@@ -529,8 +537,6 @@ export class ReaderConversation {
     }
     this.activeTurnId = undefined;
     this.activeStartedAt = undefined;
-    this.status = "idle";
-    this.reporter.idle();
     if (
       turn.status === "failed" &&
       turn.error?.codexErrorInfo === "serverOverloaded"
@@ -540,6 +546,7 @@ export class ReaderConversation {
       return;
     }
     this.cancelRecovery();
+    this.setStatus(this.held.length ? "working" : "idle");
     if (turn.status === "completed") this.notice = "";
     if (turn.status === "failed" || turn.status === "interrupted")
       this.notice = turn.error?.message ?? `Turn ${turn.status}`;
@@ -554,12 +561,20 @@ export class ReaderConversation {
     ) {
       const value = this.held[0];
       if (this.status !== "working") {
-        this.status = "working";
-        this.reporter.working();
+        this.setStatus("working");
       }
       await this.send(value.input, value.id);
       this.held.shift();
     }
+    // Completion can precede a delayed/lost start response. Only settle once
+    // the admitted input has also left the queue.
+    if (
+      !this.activeTurnId &&
+      !this.compacting &&
+      this.retryAt === undefined &&
+      !this.held.length
+    )
+      this.setStatus("idle");
   }
   contextLabel(): string {
     const total = this.tokenUsage?.last?.totalTokens,
@@ -573,6 +588,7 @@ export class ReaderConversation {
     return start === undefined ? undefined : Math.max(0, now - start);
   }
   close(): Promise<void> {
+    if (this.closed) return Promise.resolve();
     this.closed = true;
     this.cancelRecovery();
     for (const unsub of this.unsubscribers.splice(0)) unsub();

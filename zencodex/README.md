@@ -17,6 +17,17 @@ bun run --cwd zencodex start
 ```
 
 Run it from the project directory whose Codex sessions you intend to use.
+To resume a specific native thread directly, bypassing the picker and local
+history discovery:
+
+```sh
+zencodex --resume <thread-id>
+```
+
+The explicit ID is sent to Codex in the current working directory. A missing,
+busy, or otherwise rejected session exits with an error and nonzero status;
+it never silently starts a new conversation. `zencodex --help` shows usage.
+
 Before launch, zencodex reads only bounded `session_meta` prefixes plus the
 small native `session_index.jsonl` metadata index to populate the exact-cwd
 picker; it never scans message content or writes a cache. After selection it
@@ -81,10 +92,19 @@ When `HERDR_ENV=1` and `HERDR_PANE_ID` are present, lifecycle reporting is an
 optional best-effort `working`/`idle`/`blocked`/release signal. Capacity waiting
 reports `blocked` with the next retry time. Reporting failures appear in the
 status area and cannot delay or change the conversation.
-The reader owns that pane's lifecycle: its embedded Codex app-server receives
-an empty `HERDR_PANE_ID` so native session hooks cannot claim the same pane and
-block reader state updates. Other hooks still run. Tools inside Codex must use
-explicit Herdr pane IDs instead of inheriting the reader's `--current` target.
+The reader owns that pane's lifecycle. Before both thread start and resume it
+discovers Codex hooks and disables only the installed shell-based Herdr
+`SessionStart` command (`bash`/`sh` running `herdr-agent-state.sh session`) through
+per-session `hooks.state` overrides. It does not edit global hook configuration,
+disable unrelated hooks, or clear `HERDR_PANE_ID`; embedded tools retain the
+current pane environment. An applicable managed hook cannot be overridden and
+produces an explicit error instead of starting with conflicting ownership.
+Working, compaction, capacity wait, idle and release share one lifecycle
+projection; queued input keeps the pane working across compaction completion.
+
+This integration does not register native Herdr session restore: after a full
+Herdr server restart, use the picker or `--resume` to reopen zencodex. Ordinary
+Herdr detach/reattach leaves the existing reader process running.
 
 ## Source-first implementation
 

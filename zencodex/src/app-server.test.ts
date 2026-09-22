@@ -8,13 +8,15 @@ import { connect } from "./app-server";
 import { ReaderConversation } from "./conversation";
 import { resumeAdmission } from "./admission";
 
-async function requests(cwd: string): Promise<Array<{ method: string }>> {
+async function requests(
+  cwd: string,
+): Promise<Array<{ method: string; params: any }>> {
   const path = join(cwd, ".fake-app-server-requests.jsonl");
   return (await readFile(path, "utf8"))
     .trim()
     .split("\n")
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as { method: string });
+    .map((line) => JSON.parse(line));
 }
 
 test("native compact lifecycle delivers held and immediate later input exactly once", async () => {
@@ -76,10 +78,32 @@ test("published client initializes against the test-owned stdio fake", async () 
   }
 });
 
-test("embedded Codex does not inherit Herdr pane ownership from its reader", async () => {
+test("start and resume preserve pane environment and disable only the discovered Herdr session hook", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "zencodex-herdr-owner-"));
   let server: Awaited<ReturnType<typeof connect>> | undefined;
   try {
+    await writeFile(
+      join(cwd, ".fake-app-server-control.json"),
+      JSON.stringify({
+        hooks: [
+          {
+            key: "native-herdr",
+            command: `bash '${cwd}/herdr-agent-state.sh' session`,
+          },
+          { key: "other", command: "echo other-session-hook" },
+          { key: "mention", command: "echo herdr-agent-state.sh session" },
+          {
+            key: "different-event",
+            eventName: "stop",
+            command: `bash '${cwd}/herdr-agent-state.sh' session`,
+          },
+          {
+            key: "different-action",
+            command: `bash '${cwd}/herdr-agent-state.sh' working`,
+          },
+        ],
+      }),
+    );
     server = await connect(
       cwd,
       fileURLToPath(new URL("./fake-app-server-entry.mjs", import.meta.url)),
@@ -87,11 +111,52 @@ test("embedded Codex does not inherit Herdr pane ownership from its reader", asy
         env: {
           HERDR_ENV: "1",
           HERDR_PANE_ID: "test:p1",
-          FAKE_REQUIRE_NO_HERDR_PANE: "1",
+          FAKE_EXPECT_HERDR_PANE: "test:p1",
         },
       },
     );
     expect((await server.startThread()).id).toBeTruthy();
+    await server.resumeThread("thread-fake");
+    const calls = await requests(cwd);
+    for (const method of ["thread/start", "thread/resume"]) {
+      expect(calls.find((r) => r.method === method)?.params.config).toEqual({
+        "hooks.state": { "native-herdr": { enabled: false } },
+      });
+    }
+    expect(calls.filter((r) => r.method === "hooks/list")).toHaveLength(2);
+    expect(calls.some((r) => r.method.startsWith("config/"))).toBe(false);
+  } finally {
+    await server?.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("managed conflicting hooks are rejected before starting or resuming a thread", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "zencodex-managed-hook-"));
+  let server: Awaited<ReturnType<typeof connect>> | undefined;
+  try {
+    await writeFile(
+      join(cwd, ".fake-app-server-control.json"),
+      JSON.stringify({
+        hooks: [
+          {
+            key: "managed-herdr",
+            isManaged: true,
+            command: `sh '${cwd}/herdr-agent-state.sh' session`,
+          },
+        ],
+      }),
+    );
+    server = await connect(
+      cwd,
+      fileURLToPath(new URL("./fake-app-server-entry.mjs", import.meta.url)),
+      { env: { HERDR_ENV: "1", HERDR_PANE_ID: "fixture:p1" } },
+    );
+    await expect(server.startThread()).rejects.toThrow("managed");
+    await expect(server.resumeThread("thread-fake")).rejects.toThrow("managed");
+    expect(
+      (await requests(cwd)).some((r) => r.method.startsWith("thread/")),
+    ).toBe(false);
   } finally {
     await server?.close();
     await rm(cwd, { recursive: true, force: true });

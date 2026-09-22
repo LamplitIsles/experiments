@@ -261,17 +261,6 @@ async function runTurn(turn) {
   };
   const completeTurn = async () => {
     if (state.active !== turn.id || turn.status !== "inProgress") return;
-    if (process.env.FAKE_HERDR_SESSION_HOOK) {
-      spawnSync("/bin/sh", [process.env.FAKE_HERDR_SESSION_HOOK, "session"], {
-        input: JSON.stringify({
-          session_id: state.threadId,
-          transcript_path: join(root, "rollout.jsonl"),
-          hook_event_name: "SessionStart",
-          source: "startup",
-        }),
-        encoding: "utf8",
-      });
-    }
     if (control().turnError) {
       turn.status = "failed";
       turn.error = {
@@ -642,12 +631,12 @@ async function handle(request) {
   switch (request.method) {
     case "initialize": {
       if (
-        process.env.FAKE_REQUIRE_NO_HERDR_PANE === "1" &&
-        process.env.HERDR_PANE_ID
+        process.env.FAKE_EXPECT_HERDR_PANE &&
+        process.env.HERDR_PANE_ID !== process.env.FAKE_EXPECT_HERDR_PANE
       ) {
         rpcError(
           -32603,
-          "embedded app-server inherited the reader pane identity",
+          "embedded app-server lost the reader pane environment",
         );
       }
       const response = {
@@ -709,27 +698,29 @@ async function handle(request) {
         data: [
           {
             cwd: p.cwds?.[0] ?? process.cwd(),
-            hooks: [
-              {
-                eventName: "sessionStart",
-                handlerType: "command",
-                command: process.env.FAKE_HOOK_COMMAND,
-                async: false,
-                matcher: "startup|compact",
-                additionalContextLimit: 0,
-                sourcePath: process.env.FAKE_CONFIG_PATH,
-                source: "project",
-                key: "fixture-hook",
-                currentHash: "sha256:fixture",
-                trustStatus: state.trusted ? "trusted" : "untrusted",
-                displayOrder: 0,
-                enabled: true,
-                isManaged: false,
-                timeoutSec: 10,
-                statusMessage: null,
-                pluginId: null,
-              },
-            ],
+            hooks: (
+              control().hooks ?? (process.env.FAKE_HOOK_COMMAND ? [{}] : [])
+            ).map((hook) => ({
+              eventName: "sessionStart",
+              handlerType: "command",
+              command: process.env.FAKE_HOOK_COMMAND ?? "echo fixture",
+              async: false,
+              matcher: "startup|compact",
+              additionalContextLimit: 0,
+              sourcePath:
+                process.env.FAKE_CONFIG_PATH ?? join(root, "hooks.json"),
+              source: "project",
+              key: "fixture-hook",
+              currentHash: "sha256:fixture",
+              trustStatus: state.trusted ? "trusted" : "untrusted",
+              displayOrder: 0,
+              enabled: true,
+              isManaged: false,
+              timeoutSec: 10,
+              statusMessage: null,
+              pluginId: null,
+              ...hook,
+            })),
             errors: [],
             warnings: [],
           },

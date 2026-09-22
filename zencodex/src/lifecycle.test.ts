@@ -34,7 +34,18 @@ function fixture() {
       timers.delete(handle);
     },
   };
-  const c = new ReaderConversation(server, "thread", undefined, clock);
+  const states: string[] = [];
+  const c = new ReaderConversation(
+    server,
+    "thread",
+    {
+      working: () => states.push("working"),
+      idle: () => states.push("idle"),
+      blocked: () => states.push("blocked"),
+      release: () => states.push("release"),
+    },
+    clock,
+  );
   const emit = (method: string, params: any) =>
     listeners.get(method)?.({ threadId: "thread", ...params });
   const settle = async () => {
@@ -51,8 +62,49 @@ function fixture() {
   };
   const complete = (id: string, status = "completed", error?: any) =>
     emit("turn/completed", { turn: { id, status, error } });
-  return { c, server, requests, timers, emit, settle, advance, complete };
+  return {
+    c,
+    server,
+    requests,
+    timers,
+    emit,
+    settle,
+    advance,
+    complete,
+    states,
+  };
 }
+
+test("one lifecycle projection avoids transient idle during held-input handoff and capacity wait", async () => {
+  const f = fixture();
+  await f.c.compact();
+  f.emit("turn/started", { turn: { id: "compact" } });
+  await f.c.submit("held");
+  f.complete("compact");
+  await f.settle();
+  expect(f.states).toEqual(["idle", "working"]);
+  f.complete("t1", "failed", { codexErrorInfo: "serverOverloaded" });
+  expect(f.states).toEqual(["idle", "working", "blocked"]);
+  await f.c.close();
+  expect(f.states).toEqual(["idle", "working", "blocked", "release"]);
+});
+
+test("completion before the start response still settles to idle after admission drains", async () => {
+  const f = fixture();
+  const call = f.server.call;
+  f.server.call = async (method, params) => {
+    const response = await call(method, params);
+    if (method === "turn/start") {
+      f.emit("turn/started", { turn: { id: response.turn.id } });
+      f.complete(response.turn.id);
+    }
+    return response;
+  };
+  await f.c.submit("quick reply");
+  await f.settle();
+  expect(f.c.status).toBe("idle");
+  expect(f.states).toEqual(["idle", "working", "idle"]);
+});
 
 test("native compact completion serializes held and immediately arriving input", async () => {
   const f = fixture();
