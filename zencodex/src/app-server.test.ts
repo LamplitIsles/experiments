@@ -8,14 +8,65 @@ import { connect } from "./app-server";
 import { ReaderConversation } from "./conversation";
 import { resumeAdmission } from "./admission";
 
-async function requests(cwd: string): Promise<Array<{ method: string }>> {
+async function requests(
+  cwd: string,
+): Promise<Array<{ method: string; params: any }>> {
   const path = join(cwd, ".fake-app-server-requests.jsonl");
   return (await readFile(path, "utf8"))
     .trim()
     .split("\n")
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as { method: string });
+    .map((line) => JSON.parse(line));
 }
+
+test("native compact lifecycle delivers held and immediate later input exactly once", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "zencodex-compact-"));
+  let server: Awaited<ReturnType<typeof connect>> | undefined;
+  let conversation: ReaderConversation | undefined;
+  try {
+    const fake = fileURLToPath(
+      new URL("./fake-app-server-entry.mjs", import.meta.url),
+    );
+    server = await connect(cwd, fake, {
+      env: { ...process.env, FAKE_COMPACT_DELAY_MS: "100" },
+    });
+    conversation = new ReaderConversation(
+      server,
+      (await server.startThread()).id,
+    );
+    let finish!: () => void;
+    const completed = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    server.onNotification("turn/completed", () => finish());
+    await conversation.submit("/compact");
+    await conversation.submit("during compact");
+    await completed;
+    await conversation.submit("after compact");
+    const native = JSON.parse(
+      await readFile(join(cwd, ".fake-app-server-state.json"), "utf8"),
+    );
+    const accepted = native.turns.flatMap((t: any) =>
+      t.items
+        .filter((i: any) => i.type === "userMessage")
+        .map((i: any) => i.content.map((p: any) => p.text).join("")),
+    );
+    expect(accepted).toEqual(["during compact", "after compact"]);
+    expect(
+      conversation.visible
+        .filter((message) => message.role === "user")
+        .map((message) => message.body),
+    ).toEqual(accepted);
+    expect(conversation.compacting).toBe(false);
+  } finally {
+    try {
+      if (conversation) await conversation.close();
+      else await server?.close();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }
+});
 
 test("published client initializes against the test-owned stdio fake", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "zencodex-client-"));
@@ -30,6 +81,158 @@ test("published client initializes against the test-owned stdio fake", async () 
     );
   } finally {
     await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("start and resume preserve pane environment and disable only the discovered Herdr session hook", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "zencodex-herdr-owner-"));
+  let server: Awaited<ReturnType<typeof connect>> | undefined;
+  try {
+    await writeFile(
+      join(cwd, ".fake-app-server-control.json"),
+      JSON.stringify({
+        hooks: [
+          {
+            key: "native-herdr",
+            command: `bash '${cwd}/herdr-agent-state.sh' session`,
+          },
+          { key: "other", command: "echo other-session-hook" },
+          { key: "mention", command: "echo herdr-agent-state.sh session" },
+          {
+            key: "different-event",
+            eventName: "stop",
+            command: `bash '${cwd}/herdr-agent-state.sh' session`,
+          },
+          {
+            key: "different-action",
+            command: `bash '${cwd}/herdr-agent-state.sh' working`,
+          },
+        ],
+      }),
+    );
+    server = await connect(
+      cwd,
+      fileURLToPath(new URL("./fake-app-server-entry.mjs", import.meta.url)),
+      {
+        env: {
+          HERDR_ENV: "1",
+          HERDR_PANE_ID: "test:p1",
+          FAKE_EXPECT_HERDR_PANE: "test:p1",
+        },
+      },
+    );
+    expect((await server.startThread()).id).toBeTruthy();
+    await server.resumeThread("thread-fake");
+    const calls = await requests(cwd);
+    for (const method of ["thread/start", "thread/resume"]) {
+      expect(calls.find((r) => r.method === method)?.params.config).toEqual({
+        "hooks.state": { "native-herdr": { enabled: false } },
+      });
+    }
+    expect(calls.filter((r) => r.method === "hooks/list")).toHaveLength(2);
+    expect(calls.some((r) => r.method.startsWith("config/"))).toBe(false);
+  } finally {
+    await server?.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("managed conflicting hooks are rejected before starting or resuming a thread", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "zencodex-managed-hook-"));
+  let server: Awaited<ReturnType<typeof connect>> | undefined;
+  try {
+    await writeFile(
+      join(cwd, ".fake-app-server-control.json"),
+      JSON.stringify({
+        hooks: [
+          {
+            key: "managed-herdr",
+            isManaged: true,
+            command: `sh '${cwd}/herdr-agent-state.sh' session`,
+          },
+        ],
+      }),
+    );
+    server = await connect(
+      cwd,
+      fileURLToPath(new URL("./fake-app-server-entry.mjs", import.meta.url)),
+      { env: { HERDR_ENV: "1", HERDR_PANE_ID: "fixture:p1" } },
+    );
+    await expect(server.startThread()).rejects.toThrow("managed");
+    await expect(server.resumeThread("thread-fake")).rejects.toThrow("managed");
+    expect(
+      (await requests(cwd)).some((r) => r.method.startsWith("thread/")),
+    ).toBe(false);
+  } finally {
+    await server?.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("published client exposes capacity failure and resumes native history without another user message", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "zencodex-capacity-"));
+  let server: Awaited<ReturnType<typeof connect>> | undefined;
+  let conversation: ReaderConversation | undefined;
+  try {
+    const control = join(cwd, ".fake-app-server-control.json");
+    await writeFile(control, JSON.stringify({ turnError: "serverOverloaded" }));
+    server = await connect(
+      cwd,
+      fileURLToPath(new URL("./fake-app-server-entry.mjs", import.meta.url)),
+    );
+    let retry: (() => void) | undefined;
+    conversation = new ReaderConversation(
+      server,
+      (await server.startThread()).id,
+      undefined,
+      {
+        now: () => 0,
+        setTimeout(callback, ms) {
+          expect(ms).toBe(15 * 60_000);
+          retry = callback;
+          return {} as ReturnType<typeof setTimeout>;
+        },
+        clearTimeout() {
+          retry = undefined;
+        },
+      },
+    );
+    const nextCompletion = () =>
+      new Promise<void>((resolve) => {
+        const off = server!.onNotification("turn/completed", () => {
+          off();
+          resolve();
+        });
+      });
+    const failed = nextCompletion();
+    await conversation.submit("original request");
+    await failed;
+    expect(conversation.status).toBe("capacity wait");
+    await writeFile(control, "{}");
+    const succeeded = nextCompletion();
+    retry!();
+    await succeeded;
+    const native = JSON.parse(
+      await readFile(join(cwd, ".fake-app-server-state.json"), "utf8"),
+    );
+    expect(native.turns.map((turn: any) => turn.status)).toEqual([
+      "failed",
+      "completed",
+    ]);
+    expect(
+      native.turns.flatMap((turn: any) =>
+        turn.items.filter((item: any) => item.type === "userMessage"),
+      ),
+    ).toHaveLength(1);
+    expect(conversation.recoveryLabel()).toBe("");
+    expect(conversation.notice).toBe("");
+  } finally {
+    try {
+      if (conversation) await conversation.close();
+      else await server?.close();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   }
 });
 

@@ -17,6 +17,17 @@ bun run --cwd zencodex start
 ```
 
 Run it from the project directory whose Codex sessions you intend to use.
+To resume a specific native thread directly, bypassing the picker and local
+history discovery:
+
+```sh
+zencodex --resume <thread-id>
+```
+
+The explicit ID is sent to Codex in the current working directory. A missing,
+busy, or otherwise rejected session exits with an error and nonzero status;
+it never silently starts a new conversation. `zencodex --help` shows usage.
+
 Before launch, zencodex reads only bounded `session_meta` prefixes plus the
 small native `session_index.jsonl` metadata index to populate the exact-cwd
 picker; it never scans message content or writes a cache. After selection it
@@ -40,8 +51,11 @@ Ctrl-C clears only the unsent draft and completion popup, while Ctrl-D quits.
 In READING, Ctrl-D pages down and Ctrl-C is a no-op; zencodex has no keyboard
 turn-interrupt or exit command on Ctrl-C.
 
-Typing `/` offers only supported `/compact`, inserted before submission and
-then run as native compaction without chat text. Typing `$` offers enabled
+Typing `/` offers `/compact` and `/cancel-retry`. Commands are inserted before
+submission and run without adding chat text. `/compact` requests native
+compaction; input entered during compression waits in order and is released
+after completion. A failed or interrupted compaction clears the wait and
+surfaces its error without discarding queued input. Typing `$` offers enabled
 skills from the selected cwd's official `skills/list` result. Arrows select;
 Enter or Tab inserts; Esc dismisses. A skill selection inserts literal `$name`
 and never invokes a zencodex skill runtime. `skills/changed` only invalidates
@@ -59,14 +73,38 @@ or creates a replacement session.
 The reader retains OpenTUI Markdown, scroll, and OSC 52 copy behavior adapted
 directly from `utterlog`.
 
+When Codex finishes a turn with `ServerOverloaded`, zencodex waits 15 minutes
+before attempting to continue the existing native conversation. Repeated capacity
+failures wait 30 minutes each, until success or cancellation. The status area
+shows a countdown; `/cancel-retry`, a new manual submission, or closing the
+conversation cancels the pending retry. Recovery does not replay accepted user
+messages or switch models. If manual compaction failed due to capacity, recovery
+retries that compaction before releasing waiting input. Other errors are shown
+without scheduling capacity retries. Waiting is local to the open reader and
+does not survive exit; the timer does not guarantee backend availability.
+
 There is no streaming prose, reasoning/tools/diffs/images/plans, execution
 inspector, durable zencodex transcript or queue, remote-session browser,
 automatic compaction, model selector, or compatibility layer. Do not edit
 Codex logs to use zencodex.
 
 When `HERDR_ENV=1` and `HERDR_PANE_ID` are present, lifecycle reporting is an
-optional best-effort `working`/`idle`/release signal. It cannot delay or change
-the conversation.
+optional best-effort `working`/`idle`/`blocked`/release signal. Capacity waiting
+reports `blocked` with the next retry time. Reporting failures appear in the
+status area and cannot delay or change the conversation.
+The reader owns that pane's lifecycle. Before both thread start and resume it
+discovers Codex hooks and disables only the installed shell-based Herdr
+`SessionStart` command (`bash`/`sh` running `herdr-agent-state.sh session`) through
+per-session `hooks.state` overrides. It does not edit global hook configuration,
+disable unrelated hooks, or clear `HERDR_PANE_ID`; embedded tools retain the
+current pane environment. An applicable managed hook cannot be overridden and
+produces an explicit error instead of starting with conflicting ownership.
+Working, compaction, capacity wait, idle and release share one lifecycle
+projection; queued input keeps the pane working across compaction completion.
+
+This integration does not register native Herdr session restore: after a full
+Herdr server restart, use the picker or `--resume` to reopen zencodex. Ordinary
+Herdr detach/reattach leaves the existing reader process running.
 
 ## Source-first implementation
 

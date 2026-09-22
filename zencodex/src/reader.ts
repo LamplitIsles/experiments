@@ -1069,6 +1069,11 @@ export class ConversationReader {
           description: "Compact this thread",
           insert: "/compact",
         },
+        {
+          name: "/cancel-retry",
+          description: "Cancel automatic capacity retry",
+          insert: "/cancel-retry",
+        },
       ].filter((command) => fuzzyMatches(command.name.slice(1), query));
       this.showCompletion("command", commands);
       return;

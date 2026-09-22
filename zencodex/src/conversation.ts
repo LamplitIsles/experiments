@@ -10,6 +10,7 @@ export type VisibleMessage = {
   workedMs?: number;
 };
 export type NativeItem = {
+  id?: string;
   type?: string;
   clientId?: string;
   text?: string;
@@ -23,6 +24,7 @@ export type NativeTurn = {
   startedAt?: string | number;
   completedAt?: string | number;
   items?: NativeItem[];
+  error?: { message?: string; codexErrorInfo?: unknown };
 };
 export type TokenUsage = {
   last?: { totalTokens?: number };
@@ -42,8 +44,20 @@ export interface Reporter {
   working(): void;
   idle(): void;
   release(): void;
+  blocked?(message: string): void;
 }
 export const noReporter: Reporter = { working() {}, idle() {}, release() {} };
+
+export interface ConversationClock {
+  now(): number;
+  setTimeout(callback: () => void, ms: number): ReturnType<typeof setTimeout>;
+  clearTimeout(handle: ReturnType<typeof setTimeout>): void;
+}
+const realClock: ConversationClock = {
+  now: Date.now,
+  setTimeout: (callback, ms) => setTimeout(callback, ms),
+  clearTimeout: (handle) => clearTimeout(handle),
+};
 
 function text(item: NativeItem): string {
   if (typeof item.text === "string") return item.text;
@@ -119,9 +133,19 @@ export class ReaderConversation {
   private pendingOrigin: number | undefined;
   activeStartedAt: string | number | undefined;
   status = "idle";
+  private reportedStatus: string | undefined;
+  notice = "";
+  private manualCompact = false;
+  private compactItem: string | undefined;
+  private closed = false;
+  private finishedTurns = new Set<string>();
+  private retryTimer: ReturnType<typeof setTimeout> | undefined;
+  private retryAt: number | undefined;
+  private retryAttempts = 0;
+  private retryGeneration = 0;
   private stagedFinal = new Map<string, NativeItem[]>();
   private held: Array<{ id: string; input: string }> = [];
-  private unacknowledged = new Map<string, string>();
+  private unacknowledged = new Map<string, VisibleMessage>();
   private admission: Promise<void> = Promise.resolve();
   private unsubscribers: Array<() => void> = [];
 
@@ -129,9 +153,21 @@ export class ReaderConversation {
     readonly server: AppServer,
     readonly threadId: string,
     readonly reporter: Reporter = noReporter,
+    private readonly clock: ConversationClock = realClock,
   ) {
     this.unsubscribers = [
       server.onNotification("turn/started", (p) => this.started(p)),
+      server.onNotification("item/started", (p) => {
+        if (
+          !this.owns(p) ||
+          p.turnId !== this.activeTurnId ||
+          p.item?.type !== "contextCompaction"
+        )
+          return;
+        this.compacting = true;
+        this.compactItem = p.item.id;
+        this.setStatus("compacting");
+      }),
       server.onNotification("item/completed", (p) => this.item(p)),
       server.onNotification("turn/completed", (p) => void this.completed(p)),
       server.onNotification("thread/tokenUsage/updated", (p) => {
@@ -157,11 +193,101 @@ export class ReaderConversation {
         this.skillsInvalid = true;
         this.skillVersion += 1;
       }),
-      server.onNotification("thread/compacted", () => {
-        this.compacting = false;
-        void this.flushHeld();
-      }),
     ];
+    this.setStatus("idle");
+  }
+
+  private setStatus(status: string): void {
+    this.status = status;
+    if (this.closed) return;
+    const projected = status === "compacting" ? "working" : status;
+    const message =
+      projected === "capacity wait" && this.retryAt !== undefined
+        ? `Capacity; retry at ${new Date(this.retryAt).toISOString()}`
+        : undefined;
+    const key = `${projected}:${message ?? ""}`;
+    if (key === this.reportedStatus) return;
+    this.reportedStatus = key;
+    if (projected === "working") this.reporter.working();
+    else if (projected === "capacity wait") this.reporter.blocked?.(message!);
+    else this.reporter.idle();
+  }
+
+  private owns(params: any): boolean {
+    return (
+      !this.closed &&
+      (params.threadId === undefined || params.threadId === this.threadId)
+    );
+  }
+
+  private enqueue(action: () => Promise<void>): Promise<void> {
+    const task = this.admission.then(async () => {
+      if (!this.closed) await action();
+    });
+    this.admission = task.catch((error) => {
+      this.notice = error instanceof Error ? error.message : String(error);
+      if (!this.activeTurnId && !this.closed) {
+        this.setStatus("idle");
+      }
+    });
+    return task;
+  }
+
+  cancelRecovery(nextStatus: "idle" | "working" = "idle"): void {
+    if (this.retryTimer !== undefined) this.clock.clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    this.retryAt = undefined;
+    this.retryAttempts = 0;
+    this.retryGeneration++;
+    if (this.status === "capacity wait") {
+      this.setStatus(nextStatus);
+    }
+  }
+
+  recoveryLabel(): string {
+    if (this.retryAt === undefined) return "";
+    const seconds = Math.max(
+      0,
+      Math.ceil((this.retryAt - this.clock.now()) / 1000),
+    );
+    return `capacity retry ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")} · /cancel-retry`;
+  }
+
+  private scheduleRecovery(compact: boolean): void {
+    if (this.retryTimer !== undefined || this.closed) return;
+    const delay = (this.retryAttempts++ === 0 ? 15 : 30) * 60_000;
+    const generation = this.retryGeneration;
+    this.retryAt = this.clock.now() + delay;
+    this.setStatus("capacity wait");
+    this.retryTimer = this.clock.setTimeout(() => {
+      this.retryTimer = undefined;
+      this.retryAt = undefined;
+      void this.enqueue(async () => {
+        if (
+          generation !== this.retryGeneration ||
+          this.activeTurnId ||
+          this.compacting
+        )
+          return;
+        this.setStatus("working");
+        this.notice = "";
+        try {
+          if (compact) await this.startCompact();
+          else {
+            // A new native turn continues existing history without replaying accepted input.
+            const response = await this.server.call("turn/start", {
+              threadId: this.threadId,
+              input: [],
+            });
+            if (response.turn?.id && !this.finishedTurns.has(response.turn.id))
+              this.activeTurnId = response.turn.id;
+          }
+        } catch (error) {
+          this.cancelRecovery();
+          throw error;
+        }
+      }).catch(() => {});
+    }, delay);
   }
 
   async loadHistory(): Promise<void> {
@@ -179,7 +305,12 @@ export class ReaderConversation {
       cursor = response.nextCursor;
     } while (cursor);
     this.acknowledge(turns);
-    this.visible.splice(0, this.visible.length, ...messages(turns));
+    this.visible.splice(
+      0,
+      this.visible.length,
+      ...messages(turns),
+      ...this.unacknowledged.values(),
+    );
   }
 
   seedTokenUsage(
@@ -212,28 +343,30 @@ export class ReaderConversation {
   }
 
   async submit(input: string): Promise<void> {
-    if (!input.trim()) return;
+    if (!input.trim() || this.closed) return;
+    if (input.trim() === "/cancel-retry") {
+      this.cancelRecovery();
+      this.notice = "Automatic capacity retry cancelled";
+      return;
+    }
+    this.notice = "";
     if (input.trim() === "/compact") {
       await this.compact();
       return;
     }
-    this.visible.push({
+    this.cancelRecovery("working");
+    const message: VisibleMessage = {
       role: "user",
       body: input,
       timestamp: timestamp(new Date().toISOString()),
-    });
+    };
+    this.visible.push(message);
     this.pendingOrigin = this.visible.length - 1;
     const id = crypto.randomUUID();
-    this.unacknowledged.set(id, input);
-    this.reporter.working();
-    this.status = "working";
-    if (this.compacting) {
-      this.held.push({ id, input });
-      return;
-    }
-    const task = this.admission.then(() => this.send(input, id));
-    this.admission = task.catch(() => {});
-    await task;
+    this.unacknowledged.set(id, message);
+    this.setStatus("working");
+    this.held.push({ id, input });
+    await this.enqueue(() => this.flushHeld());
   }
 
   consumeReadingOrigin(): number | undefined {
@@ -252,7 +385,10 @@ export class ReaderConversation {
     } else {
       try {
         const response = await this.server.call("turn/start", params);
-        if (typeof response.turn?.id === "string")
+        if (
+          typeof response.turn?.id === "string" &&
+          !this.finishedTurns.has(response.turn.id)
+        )
           this.activeTurnId = response.turn.id;
       } catch (error) {
         // A lost response is not evidence of rejection: consult authority once.
@@ -279,7 +415,10 @@ export class ReaderConversation {
           expectedTurnId: expected,
         });
         // TurnSteerResponse is { turnId }, unlike TurnStartResponse.
-        if (typeof response.turnId === "string")
+        if (
+          typeof response.turnId === "string" &&
+          !this.finishedTurns.has(response.turnId)
+        )
           this.activeTurnId = response.turnId;
         return;
       } catch (error) {
@@ -304,26 +443,52 @@ export class ReaderConversation {
   }
 
   async compact(): Promise<void> {
+    this.cancelRecovery("working");
+    await this.enqueue(() => this.startCompact());
+  }
+  private async startCompact(): Promise<void> {
     if (this.activeTurnId || this.compacting)
       throw new Error("Cannot compact while a turn is active");
     this.compacting = true;
-    this.status = "compacting";
-    this.reporter.working();
-    await this.server.call("thread/compact/start", { threadId: this.threadId });
+    this.manualCompact = true;
+    this.setStatus("compacting");
+    try {
+      await this.server.call("thread/compact/start", {
+        threadId: this.threadId,
+      });
+    } catch (error) {
+      this.compacting = false;
+      this.manualCompact = false;
+      throw error;
+    }
   }
 
   private started(params: any): void {
+    if (!this.owns(params)) return;
     const turn = params.turn as NativeTurn | undefined;
-    if (!turn?.id) return;
+    if (!turn?.id || this.finishedTurns.has(turn.id)) return;
     this.activeTurnId = turn.id;
     this.activeStartedAt = turn.startedAt;
-    this.status = "working";
-    this.reporter.working();
+    this.setStatus("working");
   }
   private item(params: any): void {
+    if (!this.owns(params)) return;
     const turnId =
       typeof params.turnId === "string" ? params.turnId : undefined;
     const item = params.item as NativeItem | undefined;
+    if (
+      item?.type === "contextCompaction" &&
+      turnId === this.activeTurnId &&
+      item.id === this.compactItem
+    ) {
+      this.compactItem = undefined;
+      if (!this.manualCompact) {
+        this.compacting = false;
+        this.setStatus("working");
+        void this.enqueue(() => this.flushHeld()).catch(() => {});
+      }
+      return;
+    }
     if (item?.type === "userMessage" && typeof item.clientId === "string") {
       this.unacknowledged.delete(item.clientId);
       return;
@@ -341,8 +506,19 @@ export class ReaderConversation {
     ]);
   }
   private async completed(params: any): Promise<void> {
+    if (!this.owns(params)) return;
     const turn = params.turn as NativeTurn | undefined;
-    if (!turn?.id) return;
+    if (
+      !turn?.id ||
+      turn.id !== this.activeTurnId ||
+      this.finishedTurns.has(turn.id)
+    )
+      return;
+    this.finishedTurns.add(turn.id);
+    const wasManualCompact = this.manualCompact;
+    this.manualCompact = false;
+    this.compacting = false;
+    this.compactItem = undefined;
     this.acknowledge([turn]);
     const pieces =
       this.stagedFinal.get(turn.id) ??
@@ -362,20 +538,44 @@ export class ReaderConversation {
     }
     this.activeTurnId = undefined;
     this.activeStartedAt = undefined;
-    this.status = "idle";
-    this.reporter.idle();
-    await this.flushHeld();
+    if (
+      turn.status === "failed" &&
+      turn.error?.codexErrorInfo === "serverOverloaded"
+    ) {
+      this.notice = turn.error.message ?? "Selected model is at capacity";
+      this.scheduleRecovery(wasManualCompact);
+      return;
+    }
+    this.cancelRecovery();
+    this.setStatus(this.held.length ? "working" : "idle");
+    if (turn.status === "completed") this.notice = "";
+    if (turn.status === "failed" || turn.status === "interrupted")
+      this.notice = turn.error?.message ?? `Turn ${turn.status}`;
+    await this.enqueue(() => this.flushHeld()).catch(() => {});
   }
   private async flushHeld(): Promise<void> {
-    const values = this.held;
-    this.held = [];
-    for (const value of values) {
-      if (this.activeTurnId || this.compacting) {
-        this.held.push(value);
-        continue;
+    while (
+      !this.closed &&
+      !this.compacting &&
+      this.retryAt === undefined &&
+      this.held.length
+    ) {
+      const value = this.held[0];
+      if (this.status !== "working") {
+        this.setStatus("working");
       }
       await this.send(value.input, value.id);
+      this.held.shift();
     }
+    // Completion can precede a delayed/lost start response. Only settle once
+    // the admitted input has also left the queue.
+    if (
+      !this.activeTurnId &&
+      !this.compacting &&
+      this.retryAt === undefined &&
+      !this.held.length
+    )
+      this.setStatus("idle");
   }
   contextLabel(): string {
     const total = this.tokenUsage?.last?.totalTokens,
@@ -389,6 +589,9 @@ export class ReaderConversation {
     return start === undefined ? undefined : Math.max(0, now - start);
   }
   close(): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    this.closed = true;
+    this.cancelRecovery();
     for (const unsub of this.unsubscribers.splice(0)) unsub();
     this.reporter.release();
     return this.server.close();
