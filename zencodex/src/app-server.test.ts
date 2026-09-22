@@ -21,22 +21,24 @@ async function requests(
 
 test("native compact lifecycle delivers held and immediate later input exactly once", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "zencodex-compact-"));
-  const fake = fileURLToPath(
-    new URL("./fake-app-server-entry.mjs", import.meta.url),
-  );
-  const server = await connect(cwd, fake, {
-    env: { ...process.env, FAKE_COMPACT_DELAY_MS: "100" },
-  });
-  const conversation = new ReaderConversation(
-    server,
-    (await server.startThread()).id,
-  );
-  let finish!: () => void;
-  const completed = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  server.onNotification("turn/completed", () => finish());
+  let server: Awaited<ReturnType<typeof connect>> | undefined;
+  let conversation: ReaderConversation | undefined;
   try {
+    const fake = fileURLToPath(
+      new URL("./fake-app-server-entry.mjs", import.meta.url),
+    );
+    server = await connect(cwd, fake, {
+      env: { ...process.env, FAKE_COMPACT_DELAY_MS: "100" },
+    });
+    conversation = new ReaderConversation(
+      server,
+      (await server.startThread()).id,
+    );
+    let finish!: () => void;
+    const completed = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    server.onNotification("turn/completed", () => finish());
     await conversation.submit("/compact");
     await conversation.submit("during compact");
     await completed;
@@ -57,8 +59,12 @@ test("native compact lifecycle delivers held and immediate later input exactly o
     ).toEqual(accepted);
     expect(conversation.compacting).toBe(false);
   } finally {
-    await conversation.close();
-    await rm(cwd, { recursive: true, force: true });
+    try {
+      if (conversation) await conversation.close();
+      else await server?.close();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   }
 });
 
@@ -165,37 +171,39 @@ test("managed conflicting hooks are rejected before starting or resuming a threa
 
 test("published client exposes capacity failure and resumes native history without another user message", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "zencodex-capacity-"));
-  const control = join(cwd, ".fake-app-server-control.json");
-  await writeFile(control, JSON.stringify({ turnError: "serverOverloaded" }));
-  const server = await connect(
-    cwd,
-    fileURLToPath(new URL("./fake-app-server-entry.mjs", import.meta.url)),
-  );
-  let retry: (() => void) | undefined;
-  const conversation = new ReaderConversation(
-    server,
-    (await server.startThread()).id,
-    undefined,
-    {
-      now: () => 0,
-      setTimeout(callback, ms) {
-        expect(ms).toBe(15 * 60_000);
-        retry = callback;
-        return {} as ReturnType<typeof setTimeout>;
-      },
-      clearTimeout() {
-        retry = undefined;
-      },
-    },
-  );
-  const nextCompletion = () =>
-    new Promise<void>((resolve) => {
-      const off = server.onNotification("turn/completed", () => {
-        off();
-        resolve();
-      });
-    });
+  let server: Awaited<ReturnType<typeof connect>> | undefined;
+  let conversation: ReaderConversation | undefined;
   try {
+    const control = join(cwd, ".fake-app-server-control.json");
+    await writeFile(control, JSON.stringify({ turnError: "serverOverloaded" }));
+    server = await connect(
+      cwd,
+      fileURLToPath(new URL("./fake-app-server-entry.mjs", import.meta.url)),
+    );
+    let retry: (() => void) | undefined;
+    conversation = new ReaderConversation(
+      server,
+      (await server.startThread()).id,
+      undefined,
+      {
+        now: () => 0,
+        setTimeout(callback, ms) {
+          expect(ms).toBe(15 * 60_000);
+          retry = callback;
+          return {} as ReturnType<typeof setTimeout>;
+        },
+        clearTimeout() {
+          retry = undefined;
+        },
+      },
+    );
+    const nextCompletion = () =>
+      new Promise<void>((resolve) => {
+        const off = server!.onNotification("turn/completed", () => {
+          off();
+          resolve();
+        });
+      });
     const failed = nextCompletion();
     await conversation.submit("original request");
     await failed;
@@ -219,8 +227,12 @@ test("published client exposes capacity failure and resumes native history witho
     expect(conversation.recoveryLabel()).toBe("");
     expect(conversation.notice).toBe("");
   } finally {
-    await conversation.close();
-    await rm(cwd, { recursive: true, force: true });
+    try {
+      if (conversation) await conversation.close();
+      else await server?.close();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   }
 });
 

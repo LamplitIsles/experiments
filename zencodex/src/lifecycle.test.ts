@@ -200,19 +200,33 @@ test("capacity resumes without replay at 15 then 30 minutes and ignores duplicat
   expect(f.c.recoveryLabel()).toBe("");
 });
 
-for (const action of ["message", "cancel", "close"])
+for (const action of [
+  "message",
+  "compact",
+  "direct compact",
+  "cancel",
+  "close",
+])
   test(`capacity recovery is cancelled by ${action}`, async () => {
     const f = fixture();
     await f.c.submit("original");
     f.complete("t1", "failed", { codexErrorInfo: "serverOverloaded" });
     expect(f.timers.size).toBe(1);
     if (action === "message") await f.c.submit("new input");
+    if (action === "compact") await f.c.submit("/compact");
+    if (action === "direct compact") await f.c.compact();
     if (action === "cancel") await f.c.submit("/cancel-retry");
     if (action === "close") await f.c.close();
     const count = f.requests.length;
     await f.advance(60 * 60_000);
     expect(f.requests).toHaveLength(count);
     expect(f.timers.size).toBe(0);
+    expect(f.states).toEqual([
+      "idle",
+      "working",
+      "blocked",
+      action === "cancel" ? "idle" : action === "close" ? "release" : "working",
+    ]);
   });
 
 test("non-capacity failure is surfaced without scheduled retry", async () => {

@@ -233,14 +233,14 @@ export class ReaderConversation {
     return task;
   }
 
-  cancelRecovery(): void {
+  cancelRecovery(nextStatus: "idle" | "working" = "idle"): void {
     if (this.retryTimer !== undefined) this.clock.clearTimeout(this.retryTimer);
     this.retryTimer = undefined;
     this.retryAt = undefined;
     this.retryAttempts = 0;
     this.retryGeneration++;
     if (this.status === "capacity wait") {
-      this.setStatus("idle");
+      this.setStatus(nextStatus);
     }
   }
 
@@ -344,8 +344,8 @@ export class ReaderConversation {
 
   async submit(input: string): Promise<void> {
     if (!input.trim() || this.closed) return;
-    this.cancelRecovery();
     if (input.trim() === "/cancel-retry") {
+      this.cancelRecovery();
       this.notice = "Automatic capacity retry cancelled";
       return;
     }
@@ -354,6 +354,7 @@ export class ReaderConversation {
       await this.compact();
       return;
     }
+    this.cancelRecovery("working");
     const message: VisibleMessage = {
       role: "user",
       body: input,
@@ -442,7 +443,7 @@ export class ReaderConversation {
   }
 
   async compact(): Promise<void> {
-    this.cancelRecovery();
+    this.cancelRecovery("working");
     await this.enqueue(() => this.startCompact());
   }
   private async startCompact(): Promise<void> {
