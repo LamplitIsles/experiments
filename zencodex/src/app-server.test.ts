@@ -76,6 +76,28 @@ test("published client initializes against the test-owned stdio fake", async () 
   }
 });
 
+test("embedded Codex does not inherit Herdr pane ownership from its reader", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "zencodex-herdr-owner-"));
+  let server: Awaited<ReturnType<typeof connect>> | undefined;
+  try {
+    server = await connect(
+      cwd,
+      fileURLToPath(new URL("./fake-app-server-entry.mjs", import.meta.url)),
+      {
+        env: {
+          HERDR_ENV: "1",
+          HERDR_PANE_ID: "test:p1",
+          FAKE_REQUIRE_NO_HERDR_PANE: "1",
+        },
+      },
+    );
+    expect((await server.startThread()).id).toBeTruthy();
+  } finally {
+    await server?.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("published client exposes capacity failure and resumes native history without another user message", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "zencodex-capacity-"));
   const control = join(cwd, ".fake-app-server-control.json");

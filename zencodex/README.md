@@ -81,6 +81,10 @@ When `HERDR_ENV=1` and `HERDR_PANE_ID` are present, lifecycle reporting is an
 optional best-effort `working`/`idle`/`blocked`/release signal. Capacity waiting
 reports `blocked` with the next retry time. Reporting failures appear in the
 status area and cannot delay or change the conversation.
+The reader owns that pane's lifecycle: its embedded Codex app-server receives
+an empty `HERDR_PANE_ID` so native session hooks cannot claim the same pane and
+block reader state updates. Other hooks still run. Tools inside Codex must use
+explicit Herdr pane IDs instead of inheriting the reader's `--current` target.
 
 ## Source-first implementation
 

@@ -26,7 +26,10 @@ export async function connect(
     clientInfo: { name: "zencodex", title: "zencodex", version: "0.1.0" },
     protocolValidation: "strict",
     requestTimeoutMs: testOptions?.requestTimeoutMs ?? 60_000,
-    ...(testOptions?.env ? { env: testOptions.env } : {}),
+    // The reader owns this pane. Native Codex session hooks must not claim it
+    // and cause Herdr to ignore subsequent zencodex lifecycle reports.
+    // The client merges this over process.env, so deletion is not sufficient.
+    env: { ...testOptions?.env, HERDR_PANE_ID: "" },
   });
   await client.connect();
   return {

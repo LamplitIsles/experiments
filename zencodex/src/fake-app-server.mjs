@@ -261,6 +261,17 @@ async function runTurn(turn) {
   };
   const completeTurn = async () => {
     if (state.active !== turn.id || turn.status !== "inProgress") return;
+    if (process.env.FAKE_HERDR_SESSION_HOOK) {
+      spawnSync("/bin/sh", [process.env.FAKE_HERDR_SESSION_HOOK, "session"], {
+        input: JSON.stringify({
+          session_id: state.threadId,
+          transcript_path: join(root, "rollout.jsonl"),
+          hook_event_name: "SessionStart",
+          source: "startup",
+        }),
+        encoding: "utf8",
+      });
+    }
     if (control().turnError) {
       turn.status = "failed";
       turn.error = {
@@ -630,6 +641,15 @@ async function handle(request) {
   const p = request.params ?? {};
   switch (request.method) {
     case "initialize": {
+      if (
+        process.env.FAKE_REQUIRE_NO_HERDR_PANE === "1" &&
+        process.env.HERDR_PANE_ID
+      ) {
+        rpcError(
+          -32603,
+          "embedded app-server inherited the reader pane identity",
+        );
+      }
       const response = {
         userAgent: `fixture/${process.env.FAKE_SERVER_VERSION ?? "0.154.0"}`,
         codexHome: root,
