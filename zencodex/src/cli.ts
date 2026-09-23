@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 /** Direct utterlog picker/reader transplants wired only to official app-server. */
 import { createConversationReader, createTerminalRenderer } from "./reader";
+import type { CliRenderer } from "@opentui/core";
 import { pickSession, type PickerState } from "./picker";
 import { connect } from "./app-server";
 import { ReaderConversation } from "./conversation";
@@ -17,6 +18,37 @@ import {
 } from "./tracing";
 
 const NEW = "zencodex:new";
+const resumeHint = (id: string) =>
+  `To continue this session, run:\n  zencodex resume ${id}`;
+
+async function enterPickerMode(
+  renderer: CliRenderer,
+  waitFrame: (renderer: CliRenderer) => Promise<void>,
+) {
+  renderer.externalOutputMode = "passthrough";
+  try {
+    renderer.screenMode = "alternate-screen";
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      error.message !==
+        "Cannot leave split-footer while captured output is pending"
+    )
+      throw error;
+    // OpenTUI can defer passthrough while captured output awaits a split commit.
+    // Its published frame drains that pending transition before we retry exit.
+    await waitFrame(renderer);
+    renderer.screenMode = "alternate-screen";
+  }
+  renderer.useMouse = true;
+}
+
+function enterReaderMode(renderer: CliRenderer) {
+  renderer.footerHeight = 7;
+  renderer.screenMode = "split-footer";
+  renderer.useMouse = false;
+  renderer.externalOutputMode = "capture-stdout";
+}
 
 function bar(total?: number, max?: number): string {
   if (typeof total !== "number" || typeof max !== "number" || max <= 0)
@@ -46,6 +78,7 @@ const defaults = {
   discoverSessions,
   createConversationReader,
   createHerdrReporter,
+  writeOutput: (text: string) => console.log(text),
   waitFrame: (renderer: Awaited<ReturnType<typeof createTerminalRenderer>>) =>
     new Promise<void>((resolve, reject) => {
       const cleanup = () => {
@@ -69,7 +102,7 @@ const defaults = {
       renderer.requestRender();
     }),
 };
-const usage = "Usage: zencodex [--resume <thread-id>]";
+const usage = "Usage: zencodex [resume [thread-id]]";
 
 export async function main(
   argv = process.argv.slice(2),
@@ -80,11 +113,13 @@ export async function main(
     console.log(usage);
     return;
   }
+  const pickerMode = argv.length === 1 && argv[0] === "resume";
+  const newMode = argv.length === 0;
   let resumeId: string | undefined;
-  if (argv.length) {
+  if (!pickerMode && !newMode) {
     if (
       argv.length !== 2 ||
-      argv[0] !== "--resume" ||
+      argv[0] !== "resume" ||
       !argv[1]?.trim() ||
       argv[1].startsWith("-") ||
       /[\s\p{Cc}]/u.test(argv[1])
@@ -99,13 +134,18 @@ export async function main(
     discoverSessions,
     createConversationReader,
     createHerdrReporter,
+    writeOutput,
     waitFrame,
   } = { ...defaults, ...overrides };
   const cwd = process.cwd();
   const startup = performance.begin(
-    resumeId ? "startup.direct_resume" : "startup.session_list",
+    pickerMode
+      ? "startup.session_list"
+      : newMode
+        ? "startup.new"
+        : "startup.direct_resume",
     {
-      mode: resumeId ? "resume" : "picker",
+      mode: pickerMode ? "picker" : newMode ? "new" : "resume",
       "schema.version": 1,
       "startup.pre_instrumentation_ms": process.uptime() * 1000,
     },
@@ -125,41 +165,34 @@ export async function main(
     height: renderer.height,
   });
   let firstList = true;
+  let lastSessionId: string | undefined;
+  let exitedReader = false;
   try {
     while (!renderer.isDestroyed) {
       const listing = firstList
         ? startup
         : performance.begin("session_list.load");
       firstList = false;
-      renderer.screenMode = "alternate-screen";
-      const sessions = resumeId
-        ? []
-        : await listing.run(() =>
+      if (pickerMode) await enterPickerMode(renderer, waitFrame);
+      const sessions = pickerMode
+        ? await listing.run(() =>
             performance.measure("sessions.discover", () =>
               discoverSessions(cwd, undefined, performance),
             ),
-          );
-      const choice: NamedSession | undefined = resumeId
+          )
+        : [];
+      const choice: NamedSession | undefined = !pickerMode
         ? {
-            id: resumeId,
-            name: resumeId,
+            id: resumeId ?? NEW,
+            name: resumeId ?? "+ New session",
             cwd,
-            path: "",
+            path: newMode ? NEW : "",
             activityMs: 0,
           }
         : await listing.run(() =>
             pickSession(
               renderer,
-              [
-                ...sessions,
-                {
-                  id: NEW,
-                  name: "+ New session",
-                  cwd,
-                  path: NEW,
-                  activityMs: Number.MAX_SAFE_INTEGER,
-                },
-              ],
+              sessions,
               cwd,
               picker,
               0,
@@ -173,19 +206,15 @@ export async function main(
         listing.end("cancel");
         break;
       }
-      if (!resumeId) listing.end();
+      if (pickerMode) listing.end();
       const beginLoading = () =>
         performance.begin("session.load", {
-          mode: resumeId
-            ? "direct_resume"
-            : choice.id === NEW
-              ? "new"
-              : "selected",
+          mode: pickerMode ? "selected" : newMode ? "new" : "direct_resume",
         });
-      const loading = resumeId ? startup.run(beginLoading) : beginLoading();
+      const loading = pickerMode ? beginLoading() : startup.run(beginLoading);
       const measure = <T>(name: string, fn: () => Promise<T> | T) =>
         loading.run(() => performance.measure(name, fn));
-      const isNew = !resumeId && choice.id === NEW;
+      const isNew = newMode;
       const cancellation = new AbortController();
       let server: Awaited<ReturnType<typeof connect>> | undefined;
       let conversation: ReaderConversation | undefined;
@@ -207,6 +236,7 @@ export async function main(
       });
       void connection.catch(() => {});
       try {
+        enterReaderMode(renderer);
         reader = await measure("reader.construct", () =>
           createConversationReader({
             session: choice,
@@ -238,6 +268,8 @@ export async function main(
               conversation?.listSkills(cwd) ?? Promise.resolve([]),
             skillsVersion: () =>
               conversation ? conversation.skillVersion + 1 : 0,
+            loadModels: () => conversation?.listModels() ?? Promise.resolve([]),
+            modelsVersion: () => (conversation ? 1 : 0),
             title: () => conversation?.runtime.name,
             statusLines: () => ({
               cwd,
@@ -279,6 +311,7 @@ export async function main(
                 ? connected.startThread()
                 : connected.resumeThread(choice.id),
           );
+          lastSessionId = opened.id;
           cancellation.signal.throwIfAborted();
           conversation = new ReaderConversation(
             connected,
@@ -298,9 +331,10 @@ export async function main(
               ),
             );
           cancellation.signal.throwIfAborted();
-          await measure("history.load", () =>
-            conversation!.loadRecentHistory(),
-          );
+          if (!isNew)
+            await measure("history.load", () =>
+              conversation!.loadRecentHistory(),
+            );
           cancellation.signal.throwIfAborted();
           await measure("reader.prepare", () =>
             reader!.loadHistory(toTranscript(conversation!)),
@@ -310,30 +344,33 @@ export async function main(
           project();
           await measure("reader.first_frame", () => waitFrame(renderer));
           loading.end();
-          if (resumeId) startup.end();
+          if (!pickerMode) startup.end();
         })();
         const result = await Promise.race([
           preparing.then(() => ({ kind: "ready" as const })),
-          exiting.then((exit) => ({ kind: "exit" as const, exit })),
+          exiting.then(() => ({ kind: "exit" as const })),
         ]);
         if (result.kind === "exit") {
           loading.end("cancel");
-          if (result.exit === "quit" || resumeId) break;
-          continue;
+          exitedReader = true;
+          break;
         }
         picker.notice = undefined;
         const ticker = setInterval(project, 200);
         try {
-          const exit = await exiting;
-          if (exit === "quit" || resumeId) break;
+          await exiting;
+          exitedReader = true;
+          break;
         } finally {
           clearInterval(ticker);
         }
       } catch (error) {
         loading.end("error");
-        if (resumeId)
+        if (!pickerMode)
           throw new Error(
-            `Cannot resume ${resumeId}: ${resumeAdmission(error)}`,
+            isNew
+              ? `Cannot start a new session: ${error instanceof Error ? error.message : String(error)}`
+              : `Cannot resume ${resumeId}: ${resumeAdmission(error)}`,
           );
         picker.notice = resumeAdmission(error);
       } finally {
@@ -353,6 +390,7 @@ export async function main(
   } finally {
     startup.end("cancel");
     if (!renderer.isDestroyed) renderer.destroy();
+    if (exitedReader && lastSessionId) writeOutput(resumeHint(lastSessionId));
   }
 }
 if (import.meta.main) {

@@ -657,6 +657,33 @@ async function handle(request) {
         imageGeneration: process.env.FAKE_IMAGE_CAPABILITY !== "false",
         webSearch: true,
       };
+    case "model/list":
+      return {
+        data: [
+          {
+            id: "fixture-model",
+            model: "fixture-model",
+            upgrade: null,
+            upgradeInfo: null,
+            availabilityNux: null,
+            displayName: "Fixture model",
+            description: "A test-owned model catalogue entry",
+            hidden: false,
+            supportedReasoningEfforts: [
+              { reasoningEffort: "medium", description: "Balanced" },
+            ],
+            defaultReasoningEffort: "medium",
+            inputModalities: ["text"],
+            supportsPersonality: false,
+            multiAgentVersion: null,
+            additionalSpeedTiers: [],
+            serviceTiers: [],
+            defaultServiceTier: null,
+            isDefault: true,
+          },
+        ],
+        nextCursor: null,
+      };
     case "config/mcpServer/reload":
       return {};
     case "mcpServerStatus/list": {

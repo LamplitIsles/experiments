@@ -1,7 +1,7 @@
 /** Narrow direct CFL client setup transplant; runtime remains PATH `codex`. */
 import { CodexAppServerClient } from "@jaminzhou/codex-app-server-client";
 import { isHerdrSessionHook } from "./herdr";
-import type { AppServer, Skill } from "./conversation";
+import type { AppServer, Model, Skill } from "./conversation";
 import { noTrace, type Trace } from "./tracing";
 
 export type ZencodexClient = AppServer & {
@@ -93,6 +93,34 @@ export async function connect(
             : [],
         ),
       );
+    },
+    async listModels(): Promise<Model[]> {
+      const models: Model[] = [];
+      const cursors = new Set<string>();
+      let cursor: string | null = null;
+      do {
+        const response = await client.modelList({ limit: 100, cursor });
+        for (const model of response.data)
+          models.push({
+            name: model.model,
+            description: [model.displayName, model.description]
+              .filter(
+                (value, index, values) =>
+                  value && values.indexOf(value) === index,
+              )
+              .join(" · "),
+            efforts: model.supportedReasoningEfforts.map((effort) => ({
+              name: effort.reasoningEffort,
+              description: effort.description,
+            })),
+            defaultEffort: model.defaultReasoningEffort,
+          });
+        cursor = response.nextCursor;
+        if (cursor && cursors.has(cursor))
+          throw new Error("Model list returned a repeated cursor");
+        if (cursor) cursors.add(cursor);
+      } while (cursor);
+      return models;
     },
     onNotification: client.onNotification.bind(client),
     close: () => {

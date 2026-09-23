@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
+import type { KeyEvent } from "@opentui/core";
 import {
   createConversationReader,
   type ConversationReaderOptions,
@@ -20,8 +21,9 @@ async function fixture(
     width: 80,
     height: 24,
     screenMode: "split-footer",
-    footerHeight: 9,
+    footerHeight: 7,
     externalOutputMode: "capture-stdout",
+    useMouse: false,
   });
   const reader = await createConversationReader({
     renderer: ui.renderer,
@@ -47,6 +49,67 @@ async function fixture(
     },
   };
 }
+
+test("reader leaves renderer surface modes owned by its caller", async () => {
+  const ui = await createTestRenderer({
+    width: 80,
+    height: 24,
+    screenMode: "alternate-screen",
+    externalOutputMode: "passthrough",
+    useMouse: true,
+  });
+  const reader = await createConversationReader({
+    renderer: ui.renderer,
+    session: {
+      id: "test",
+      name: "Thread",
+      cwd: "/fixture",
+      path: "",
+      activityMs: 0,
+    },
+    messages: [],
+  });
+  try {
+    expect(ui.renderer.screenMode).toBe("alternate-screen");
+    expect(ui.renderer.externalOutputMode).toBe("passthrough");
+    expect(ui.renderer.useMouse).toBe(true);
+    reader.dispose();
+    expect(ui.renderer.screenMode).toBe("alternate-screen");
+    expect(ui.renderer.externalOutputMode).toBe("passthrough");
+  } finally {
+    reader.dispose();
+    ui.renderer.destroy();
+  }
+});
+
+test("Escape interrupts without exiting the reader", async () => {
+  let interrupts = 0;
+  const f = await fixture([], {
+    onInterrupt: () => {
+      interrupts++;
+    },
+  });
+  try {
+    let exited = false;
+    void f.reader.waitForExit().then(() => {
+      exited = true;
+    });
+    f.ui.renderer.keyInput.emit("keypress", {
+      name: "escape",
+      ctrl: false,
+      preventDefault() {},
+      stopPropagation() {},
+    } as KeyEvent);
+    await Promise.resolve();
+    expect(interrupts).toBe(1);
+    expect(exited).toBe(false);
+    f.ui.mockInput.pressKey("d", { ctrl: true });
+    expect(await f.reader.waitForExit()).toBe("quit");
+  } finally {
+    await f.close();
+  }
+});
+
 test("replay and append export submission spans under their rendering operation", async () => {
   const exported: any[] = [];
   const trace = new PerformanceTrace({
@@ -231,6 +294,129 @@ test("completion consumes Tab before queueing and restored input stays editable"
     f.reader.project([]);
     await f.ui.flush();
     expect(f.ui.captureCharFrame()).toContain("Recovered job");
+  } finally {
+    await f.close();
+  }
+});
+
+test("skill completion leaves a space and the cursor after the selected skill", async () => {
+  const sent: string[] = [];
+  const f = await fixture([], {
+    loadSkills: async () => [
+      { name: "review-code", description: "Review code" },
+    ],
+    onSubmit: (value) => {
+      sent.push(value);
+    },
+  });
+  try {
+    await f.ui.mockInput.typeText("$review");
+    await Bun.sleep(0);
+    await f.ui.flush();
+    expect(f.ui.captureCharFrame()).toContain("$review-code");
+    await f.ui.mockInput.pressKey("TAB");
+    await f.ui.mockInput.typeText("check this");
+    await f.ui.mockInput.pressKey("RETURN");
+    expect(sent).toEqual(["$review-code check this"]);
+  } finally {
+    await f.close();
+  }
+});
+
+test("model command completion leaves a space before model-pair matching", async () => {
+  const sent: string[] = [];
+  const f = await fixture([], {
+    loadModels: async () => [
+      {
+        name: "gpt-test-luna",
+        efforts: [{ name: "max", description: "Maximum" }],
+        defaultEffort: "max",
+      },
+    ],
+    onSubmit: (value) => {
+      sent.push(value);
+    },
+  });
+  try {
+    await f.ui.mockInput.typeText("/mod");
+    await f.ui.flush();
+    await f.ui.mockInput.pressKey("TAB");
+    const composer = (
+      f.reader as unknown as {
+        composer: { plainText: string; cursorOffset: number };
+      }
+    ).composer;
+    expect(composer.plainText).toBe("/model ");
+    expect(composer.cursorOffset).toBe("/model ".length);
+    await f.ui.mockInput.typeText("luna ma");
+    await Bun.sleep(0);
+    await f.ui.flush();
+    expect(f.ui.captureCharFrame()).toContain("gpt-test-luna · max");
+    await f.ui.mockInput.pressKey("TAB");
+    await f.ui.mockInput.pressKey("RETURN");
+    expect(sent).toEqual(["/model gpt-test-luna max"]);
+  } finally {
+    await f.close();
+  }
+});
+
+test("model completion inserts a runnable default model/effort pair", async () => {
+  const sent: string[] = [];
+  const f = await fixture([], {
+    loadModels: async () => [
+      {
+        name: "gpt-test",
+        description: "Test model",
+        efforts: [
+          { name: "low", description: "Low" },
+          { name: "high", description: "High" },
+        ],
+        defaultEffort: "high",
+      },
+    ],
+    onSubmit: (value) => {
+      sent.push(value);
+    },
+  });
+  try {
+    await f.ui.mockInput.typeText("/model ");
+    await Bun.sleep(0);
+    await f.ui.flush();
+    expect(f.ui.captureCharFrame()).toContain("gpt-test");
+    await f.ui.mockInput.pressKey("TAB");
+    await f.ui.mockInput.pressKey("RETURN");
+    expect(sent).toEqual(["/model gpt-test high"]);
+  } finally {
+    await f.close();
+  }
+});
+
+test("model completion fuzzy-matches a non-default model/effort pair", async () => {
+  const sent: string[] = [];
+  const f = await fixture([], {
+    loadModels: async () => [
+      {
+        name: "gpt-test-luna",
+        efforts: [
+          { name: "low", description: "Low" },
+          { name: "max", description: "Maximum" },
+          { name: "high", description: "High" },
+        ],
+        defaultEffort: "high",
+      },
+    ],
+    onSubmit: (value) => {
+      sent.push(value);
+    },
+  });
+  try {
+    await f.ui.mockInput.typeText("/model luna ma");
+    await Bun.sleep(0);
+    await f.ui.flush();
+    expect(f.ui.captureCharFrame()).toContain("gpt-test-luna · max");
+    await f.ui.mockInput.pressKey("TAB");
+    await f.ui.mockInput.pressKey("RETURN");
+    expect(sent).toEqual(["/model gpt-test-luna max"]);
   } finally {
     await f.close();
   }

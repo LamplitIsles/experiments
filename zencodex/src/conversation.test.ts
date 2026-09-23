@@ -20,6 +20,10 @@ function fake(): AppServer & {
       requests.push({ method: "skills/list", params: { cwds: [cwd] } });
       return [];
     },
+    async listModels() {
+      requests.push({ method: "model/list", params: {} });
+      return [];
+    },
     onNotification(method, listener) {
       listeners.set(method, [...(listeners.get(method) ?? []), listener]);
       return () =>
@@ -152,6 +156,50 @@ describe("reader-first native projection", () => {
     expect(
       server.requests.some((request) => request.method === "turn/start"),
     ).toBe(false);
+  });
+
+  test("lists official models and switches the native thread without chat text", async () => {
+    const server = fake();
+    server.listModels = async () => {
+      server.requests.push({ method: "model/list", params: {} });
+      return [
+        {
+          name: "gpt-test",
+          description: "Test model",
+          efforts: [
+            { name: "low", description: "Low" },
+            { name: "high", description: "High" },
+          ],
+          defaultEffort: "high",
+        },
+      ];
+    };
+    const c = new ReaderConversation(server, "thread-1");
+    expect(await c.listModels()).toEqual([
+      {
+        name: "gpt-test",
+        description: "Test model",
+        efforts: [
+          { name: "low", description: "Low" },
+          { name: "high", description: "High" },
+        ],
+        defaultEffort: "high",
+      },
+    ]);
+    await c.submit("/model gpt-test low");
+    expect(c.visible).toEqual([]);
+    expect(server.requests).toEqual([
+      { method: "model/list", params: {} },
+      {
+        method: "thread/settings/update",
+        params: { threadId: "thread-1", model: "gpt-test", effort: "low" },
+      },
+    ]);
+    server.emit("thread/settings/updated", {
+      threadId: "thread-1",
+      threadSettings: { model: "gpt-test", effort: "low" },
+    });
+    expect(c.runtime).toEqual({ model: "gpt-test", effort: "low" });
   });
 
   test("tracks authoritative title/settings and lets live token usage replace a rollout seed", () => {

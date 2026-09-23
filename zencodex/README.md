@@ -18,28 +18,35 @@ bun run --cwd zencodex start
 ```
 
 Run it from the project directory whose Codex sessions you intend to use.
-To resume a specific native thread directly, bypassing the picker and local
-history discovery:
+`zencodex` starts a new conversation directly. To choose an existing session,
+open the resume list:
 
 ```sh
-zencodex --resume <thread-id>
+zencodex resume
+```
+
+The resume list contains existing sessions only. To resume a specific native
+thread directly, bypassing the list and local history discovery:
+
+```sh
+zencodex resume <thread-id>
 ```
 
 The explicit ID is sent to Codex in the current working directory. A missing,
 busy, or otherwise rejected session exits with an error and nonzero status;
 it never silently starts a new conversation. `zencodex --help` shows usage.
 
-The picker queries Codex's `state_5.sqlite` read-only, using its cwd/time index;
+The resume list queries Codex's `state_5.sqlite` read-only, using its cwd/time index;
 it does not walk rollout directories or maintain a second cache. The default is
 `$CODEX_HOME/state_5.sqlite` (`~/.codex` when unset). User `config.toml`'s
 `sqlite_home` takes precedence over `CODEX_SQLITE_HOME`. This local reader targets
 the current Codex schema; incompatible/corrupt databases fail explicitly rather
 than silently falling back to a history scan. A missing database gives an empty
-picker with the new-session entry. Project/managed overrides of `sqlite_home`
+resume list. Project/managed overrides of `sqlite_home`
 are not resolved by this local index reader.
 
-After selection, the composer appears while the unmodified `codex app-server`
-from `PATH` connects and resumes the thread. You may edit a draft immediately;
+The composer appears while the unmodified `codex app-server`
+from `PATH` connects and starts or resumes the thread. You may edit a draft immediately;
 Enter/Tab leave it unsent until backend and history preparation finish. Loading
 status makes this boundary explicit; exiting cancels preparation. The official
 app-server remains authoritative for history, admission, turns and compaction.
@@ -54,8 +61,9 @@ Enter submits immediately (steering a running turn); Tab queues a follow-up
 while working and submits normally while idle. Follow-ups run FIFO, one per
 turn. Esc interrupts the active turn; remaining follow-ups return to the input
 draft rather than automatically running. The status shows the queued count.
-Ctrl-J inserts a newline, Ctrl-C clears the unsent draft/completion, Ctrl-D quits,
-and Ctrl-B returns to the session picker. Completion popups consume Enter/Tab
+Ctrl-J inserts a newline, Ctrl-C clears the unsent draft/completion, and Ctrl-D quits.
+Exiting the reader prints a command to resume that session. Esc dismisses an
+open completion popup. Completion popups consume Enter/Tab
 before submission. The queue is local to the running process.
 Completion suggestions temporarily use two of the composer's three rows;
 opening and dismissing them does not resize or move the terminal footer.
@@ -80,15 +88,21 @@ than clearing/replaying history and disturbing a reading position. Previously
 rendered Markdown is not semantically re-laid out on resize. A source correction
 appends a labeled refreshed view while retaining the earlier terminal output.
 
-Typing `/` offers `/compact` and `/cancel-retry`. Commands are inserted before
-submission and run without adding chat text. `/compact` requests native
-compaction; input entered during compression waits in order and is released
-after completion. A failed or interrupted compaction clears the wait and
-surfaces its error without discarding queued input. Typing `$` offers enabled
-skills from the selected cwd's official `skills/list` result. Arrows select;
-Enter or Tab inserts; Esc dismisses. A skill selection inserts literal `$name`
-and never invokes a zencodex skill runtime. `skills/changed` only invalidates
-the next official list request.
+Typing `/` offers `/compact`, `/cancel-retry`, and `/model`. Commands are
+inserted before submission and run without adding chat text. `/compact`
+requests native compaction; input entered during compression waits in order and
+is released after completion. A failed or interrupted compaction clears the
+wait and surfaces its error without discarding queued input. `/model <model>
+<effort>` atomically updates the native thread's model and reasoning effort.
+After typing `/model `, the picker offers only model/effort pairs supported by
+the official `model/list` catalogue; it never uses a local model list.
+Each model's advertised default effort appears first, and the combined label is
+fuzzy-matchable, so `/model luna ma` can select a Luna/max pair. Typing `$`
+offers enabled skills from the selected cwd's official `skills/list` result.
+Arrows select; Enter or Tab inserts; Esc
+dismisses. A skill selection inserts literal `$name `, leaving the caret after
+the space, and never invokes a zencodex skill runtime. `skills/changed` only
+invalidates the next official list request.
 
 The fixed two-line status area shows cwd plus authoritative model/reasoning
 effort, then native context telemetry and working duration. On resume it may
@@ -96,8 +110,8 @@ seed context only from the newest valid `token_count` in a bounded suffix of
 the selected rollout; the first native token update wins. Missing evidence is
 unavailable, never estimated. The title, model, and effort follow authoritative
 thread updates. If another Codex client holds the thread writer, zencodex
-closes its client and returns safely to the picker; it never takes over, forks,
-or creates a replacement session.
+closes its client and shows the error in the resume list; it never takes over,
+forks, or creates a replacement session.
 
 Markdown rendering stays in OpenTUI; terminal scrollback and copying belong to
 the terminal host. Mouse reporting is disabled in conversation mode so the host
@@ -115,7 +129,7 @@ does not survive exit; the timer does not guarantee backend availability.
 
 There is no streaming prose, reasoning/tools/diffs/images/plans, execution
 inspector, durable zencodex transcript or queue, remote-session browser,
-automatic compaction, model selector, or compatibility layer. Do not edit
+automatic compaction or compatibility layer. Do not edit
 Codex logs to use zencodex.
 
 When `HERDR_ENV=1` and `HERDR_PANE_ID` are present, lifecycle reporting is an
@@ -133,15 +147,16 @@ Working, compaction, capacity wait, idle and release share one lifecycle
 projection; queued input keeps the pane working across compaction completion.
 
 This integration does not register native Herdr session restore: after a full
-Herdr server restart, use the picker or `--resume` to reopen zencodex. Ordinary
+Herdr server restart, use `zencodex resume` or `zencodex resume <thread-id>`
+to reopen zencodex. Ordinary
 Herdr detach/reattach leaves the existing reader process running.
 
 ## Local performance traces
 
 OpenTelemetry tracing is enabled by default. Set `ZENCODEX_TRACE=0` to disable it.
-It records startup-to-picker and selection-to-conversation readiness, including
+It records startup-to-resume-list and selection-to-conversation readiness, including
 discovery, app-server, history-page, Markdown-layout and replay spans. Direct
-resume records launch-to-conversation readiness. Readiness means a frame has
+new and ID-resume modes record launch-to-conversation readiness. Readiness means a frame has
 been submitted with input handlers active, not physical terminal paint. User
 time choosing a session is excluded from loading latency.
 `reader.shell_first_frame` marks the early, draft-only UI; `reader.first_frame`
@@ -167,7 +182,8 @@ bun /path/to/experiments/zencodex/src/tracing.ts \
 
 The focused view names the operation and its stage tracks. Concurrent spans use
 separate lanes rather than overlapping on one thread. Use `startup.session_list`
-as the operation name to inspect the latest picker startup instead.
+to inspect the latest resume-list startup, or `startup.new` for a direct new
+conversation.
 
 Original files remain standard OTLP JSON. The converter only prepares a viewer
 artifact; OpenTelemetry owns span creation, parent context and timing. Records
