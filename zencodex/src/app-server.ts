@@ -2,6 +2,7 @@
 import { CodexAppServerClient } from "@jaminzhou/codex-app-server-client";
 import { isHerdrSessionHook } from "./herdr";
 import type { AppServer, Model, Skill } from "./conversation";
+import { nameThreadFromPrompt } from "./thread-title";
 import { noTrace, type Trace } from "./tracing";
 
 export type ZencodexClient = AppServer & {
@@ -123,6 +124,8 @@ export async function connect(
       return models;
     },
     onNotification: client.onNotification.bind(client),
+    nameThreadFromPrompt: (threadId, input, model, effort, signal) =>
+      nameThreadFromPrompt(client, threadId, cwd, input, model, effort, signal),
     close: () => {
       signal?.removeEventListener("abort", abort);
       return client.close();
@@ -139,7 +142,7 @@ export async function connect(
       return {
         id: response.thread.id,
         name: response.thread.name ?? undefined,
-        model: response.thread.model ?? undefined,
+        model: response.model,
         effort:
           response.reasoningEffort ??
           response.thread.reasoningEffort ??

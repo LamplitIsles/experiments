@@ -45,6 +45,13 @@ export interface AppServer {
   call(method: string, params?: Record<string, unknown>): Promise<any>;
   listSkills(cwd: string): Promise<Skill[]>;
   listModels(): Promise<Model[]>;
+  nameThreadFromPrompt(
+    threadId: string,
+    input: string,
+    model: string,
+    effort?: string,
+    signal?: AbortSignal,
+  ): Promise<void>;
   onNotification(method: string, listener: (params: any) => void): () => void;
   close(): Promise<void>;
 }
@@ -162,6 +169,8 @@ export class ReaderConversation {
   private unacknowledged = new Map<string, VisibleMessage>();
   private admission: Promise<void> = Promise.resolve();
   private unsubscribers: Array<() => void> = [];
+  private automaticNaming = false;
+  private readonly namingAbort = new AbortController();
 
   constructor(
     readonly server: AppServer,
@@ -394,6 +403,10 @@ export class ReaderConversation {
     Object.assign(this.runtime, value);
   }
 
+  enableAutomaticNaming(): void {
+    this.automaticNaming = true;
+  }
+
   async listSkills(cwd: string): Promise<Skill[]> {
     if (!this.skillsInvalid) return this.cachedSkills;
     this.cachedSkills = await this.server.listSkills(cwd);
@@ -608,8 +621,14 @@ export class ReaderConversation {
       }
       return;
     }
-    if (item?.type === "userMessage" && typeof item.clientId === "string") {
-      this.unacknowledged.delete(item.clientId);
+    if (item?.type === "userMessage") {
+      if (typeof item.clientId === "string")
+        this.unacknowledged.delete(item.clientId);
+      const input = text(item).trim();
+      if (this.automaticNaming && !this.runtime.name && input) {
+        this.automaticNaming = false;
+        void this.generateAutomaticName(input).catch(() => {});
+      }
       return;
     }
     if (
@@ -623,6 +642,20 @@ export class ReaderConversation {
       ...(this.stagedFinal.get(turnId) ?? []),
       item,
     ]);
+  }
+  private async generateAutomaticName(input: string): Promise<void> {
+    const models = await this.listModels().catch(() => []);
+    if (this.closed) return;
+    const luna = models.some((model) => model.name === "gpt-6-luna");
+    const model = luna ? "gpt-6-luna" : this.runtime.model;
+    if (!model) return;
+    await this.server.nameThreadFromPrompt(
+      this.threadId,
+      input,
+      model,
+      luna ? "low" : undefined,
+      this.namingAbort.signal,
+    );
   }
   private async completed(params: any): Promise<void> {
     if (!this.owns(params)) return;
@@ -739,6 +772,7 @@ export class ReaderConversation {
   close(): Promise<void> {
     if (this.closed) return Promise.resolve();
     this.closed = true;
+    this.namingAbort.abort();
     this.cancelRecovery();
     for (const unsub of this.unsubscribers.splice(0)) unsub();
     this.reporter.release();

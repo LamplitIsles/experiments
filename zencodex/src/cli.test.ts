@@ -88,6 +88,62 @@ test("a new thread opens without querying history that does not exist yet", asyn
   }
 });
 
+test("a new reader replaces New session with the officially saved generated name", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "zencodex-new-title-"));
+  const ui = await createTestRenderer({ width: 80, height: 24 });
+  const ready = Promise.withResolvers<void>();
+  const named = Promise.withResolvers<void>();
+  let reader: Awaited<ReturnType<typeof makeReader>> | undefined;
+  let options: ConversationReaderOptions | undefined;
+  let server: Awaited<ReturnType<typeof connect>> | undefined;
+  let run: Promise<void> | undefined;
+  try {
+    run = main([], {
+      createTerminalRenderer: async () => ui.renderer,
+      connect: async (_cwd, _path, config) => {
+        server = await connect(
+          cwd,
+          fileURLToPath(
+            new URL("./fake-app-server-entry.mjs", import.meta.url),
+          ),
+          {
+            env: { FAKE_COMPLETE_START_USER_ITEM: "true" },
+            signal: config?.signal,
+          },
+        );
+        return server;
+      },
+      createHerdrReporter: () => ({ idle() {}, working() {}, release() {} }),
+      createConversationReader: async (value) => {
+        options = value;
+        reader = await makeReader(value);
+        return reader;
+      },
+      waitFrame: async () => {
+        await ui.flush();
+        if (options?.canSubmit?.()) ready.resolve();
+      },
+      writeOutput: () => {},
+    });
+    await ready.promise;
+    server!.onNotification("thread/name/updated", () => named.resolve());
+    expect(ui.captureCharFrame()).toContain("New session");
+    await ui.mockInput.typeText("Fix the login timeout");
+    await ui.mockInput.pressKey("RETURN");
+    await named.promise;
+    reader!.project([]);
+    await ui.flush();
+    expect(ui.captureCharFrame()).toContain("Fix login timeout");
+    expect(ui.captureCharFrame()).not.toContain("New session");
+    await ui.mockInput.pressKey("d", { ctrl: true });
+    await run;
+  } finally {
+    if (!ui.renderer.isDestroyed) ui.renderer.destroy();
+    await run?.catch(() => {});
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("exiting a reader selected from the resume list ends without reopening the list", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "zencodex-resume-list-"));
   const ui = await createTestRenderer({ width: 80, height: 24 });

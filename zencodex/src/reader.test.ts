@@ -82,6 +82,30 @@ test("reader leaves renderer surface modes owned by its caller", async () => {
   }
 });
 
+test("reader header changes from New session to the persisted name without a naming status", async () => {
+  let name: string | undefined;
+  const f = await fixture([], {
+    session: {
+      id: "new",
+      name: "New session",
+      cwd: "/fixture",
+      path: "",
+      activityMs: 0,
+    },
+    title: () => name,
+  });
+  try {
+    expect(f.ui.captureCharFrame()).toContain("New session");
+    name = "Fix login timeout";
+    f.reader.project([]);
+    await f.ui.flush();
+    expect(f.ui.captureCharFrame()).toContain("Fix login timeout");
+    expect(f.ui.captureCharFrame()).not.toContain("命名中");
+  } finally {
+    await f.close();
+  }
+});
+
 test("Escape interrupts without exiting the reader", async () => {
   let interrupts = 0;
   const f = await fixture([], {

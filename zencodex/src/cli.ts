@@ -184,7 +184,7 @@ export async function main(
       const choice: NamedSession | undefined = !pickerMode
         ? {
             id: resumeId ?? NEW,
-            name: resumeId ?? "+ New session",
+            name: resumeId ?? "New session",
             cwd,
             path: newMode ? NEW : "",
             activityMs: 0,
@@ -322,6 +322,7 @@ export async function main(
           );
           conversation.performance = performance;
           conversation.setRuntime(opened);
+          if (isNew) conversation.enableAutomaticNaming();
           phase = "Loading history · draft only";
           project();
           if (!isNew && choice.path)

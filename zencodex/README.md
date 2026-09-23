@@ -51,6 +51,14 @@ Enter/Tab leave it unsent until backend and history preparation finish. Loading
 status makes this boundary explicit; exiting cancels preparation. The official
 app-server remains authoritative for history, admission, turns and compaction.
 
+New conversations initially display `New session`. After Codex confirms the
+first user message, ZenCodex asks `gpt-6-luna` to generate a short name in an
+isolated ephemeral thread; if that model is unavailable, it uses the current
+conversation model. The name is saved through the official `thread/name/set`
+API and replaces the header when Codex reports it. A manual name always wins.
+Naming is best-effort and never delays exit; the first-message preview remains
+the resume-list fallback when no name was saved.
+
 New and resumed threads use Codex's native `approvalPolicy: never` and
 `sandbox: danger-full-access` configuration. This intentionally autonomous v0
 has no approval surface.
