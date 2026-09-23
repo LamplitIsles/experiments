@@ -4,6 +4,10 @@ import { createConversationReader, createTerminalRenderer } from "./reader";
 import type { TranscriptMessage } from "./types";
 
 const renderer = await createTerminalRenderer();
+renderer.footerHeight = 7;
+renderer.screenMode = "split-footer";
+renderer.useMouse = false;
+renderer.externalOutputMode = "capture-stdout";
 const reader = await createConversationReader({
   renderer,
   session: {

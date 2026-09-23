@@ -255,6 +255,30 @@ test("published client narrows enabled skills through its typed adapter", async 
   }
 });
 
+test("published client lists models through the official catalogue", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "zencodex-models-"));
+  const fake = fileURLToPath(
+    new URL("./fake-app-server-entry.mjs", import.meta.url),
+  );
+  const client = await connect(cwd, fake);
+  try {
+    expect(await client.listModels()).toEqual([
+      {
+        name: "fixture-model",
+        description: "Fixture model · A test-owned model catalogue entry",
+        efforts: [{ name: "medium", description: "Balanced" }],
+        defaultEffort: "medium",
+      },
+    ]);
+    expect((await requests(cwd)).map((request) => request.method)).toContain(
+      "model/list",
+    );
+  } finally {
+    await client.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("published-client active-writer admission is narrowly classified", async () => {
   const fake = fileURLToPath(
     new URL("./fake-app-server-entry.mjs", import.meta.url),

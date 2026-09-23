@@ -15,6 +15,9 @@ function fixture() {
     async listSkills() {
       return [];
     },
+    async listModels() {
+      return [];
+    },
     onNotification(method, listener) {
       listeners.set(method, listener);
       return () => listeners.delete(method);

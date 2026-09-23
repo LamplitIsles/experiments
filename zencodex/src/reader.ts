@@ -11,9 +11,16 @@ import {
   type ScrollbackSurface,
 } from "@opentui/core";
 import type { NamedSession, TranscriptMessage } from "./types";
+import type { Model } from "./conversation";
 import { noTrace, type Trace } from "./tracing";
 
-export type ReaderExit = "back" | "quit";
+export type ReaderExit = "quit";
+type CompletionOption = {
+  value: string;
+  label: string;
+  description?: string;
+  appendSpace?: boolean;
+};
 export interface ConversationReaderOptions {
   session: NamedSession;
   messages: TranscriptMessage[];
@@ -26,6 +33,8 @@ export interface ConversationReaderOptions {
   takeRestoredDraft?: () => string;
   loadSkills?: () => Promise<Array<{ name: string; description?: string }>>;
   skillsVersion?: () => number;
+  loadModels?: () => Promise<Model[]>;
+  modelsVersion?: () => number;
   statusLines?: () => { cwd: string; runtime: string; telemetry: string };
   title?: () => string | undefined;
   trace?: Trace;
@@ -67,10 +76,14 @@ export class ConversationReader {
   private disposed = false;
   private terminalHeight: number;
   private notice = "";
-  private completionValues: string[] = [];
+  private completionValues: CompletionOption[] = [];
+  private completionKind: "command" | "skill" | "model" | undefined;
   private skills: Array<{ name: string; description?: string }> = [];
   private skillsVersion = -1;
   private skillsLoading = false;
+  private models: Model[] = [];
+  private modelsVersion = -1;
+  private modelsLoading = false;
   private resolveExit!: (exit: ReaderExit) => void;
   private readonly exit = new Promise<ReaderExit>((resolve) => {
     this.resolveExit = resolve;
@@ -80,10 +93,6 @@ export class ConversationReader {
     this.renderer = options.renderer;
     this.trace = options.trace ?? noTrace;
     this.wanted = options.messages.slice();
-    this.renderer.footerHeight = 7;
-    this.renderer.screenMode = "split-footer";
-    this.renderer.useMouse = false;
-    this.renderer.externalOutputMode = "capture-stdout";
     this.terminalHeight = this.renderer.terminalHeight;
     // A split footer otherwise follows the current output cursor until enough
     // history arrives. Reserve its viewport before the first reader frame.
@@ -413,11 +422,6 @@ export class ConversationReader {
       this.resolveExit("quit");
       return;
     }
-    if (key.ctrl && key.name === "b") {
-      consume();
-      this.resolveExit("back");
-      return;
-    }
     if (key.ctrl && key.name === "c") {
       consume();
       this.composer.setText("");
@@ -427,11 +431,9 @@ export class ConversationReader {
     if (this.completionValues.length) {
       if (key.name === "tab" || key.name === "return") {
         consume();
-        const value = this.completionValues[this.completion.getSelectedIndex()];
-        if (value)
-          this.composer.setText(
-            this.composer.plainText.replace(/([/$])[^\s]*$/, value),
-          );
+        const option =
+          this.completionValues[this.completion.getSelectedIndex()];
+        if (option) this.applyCompletion(option);
         this.closeCompletion();
         return;
       }
@@ -468,19 +470,32 @@ export class ConversationReader {
   };
   private closeCompletion() {
     this.completionValues = [];
+    this.completionKind = undefined;
     this.completion.visible = false;
     this.composer.height = 3;
     this.composer.focus();
   }
+  private applyCompletion(option: CompletionOption) {
+    const input = this.composer.plainText;
+    const value = `${option.value}${option.appendSpace ? " " : ""}`;
+    const result =
+      this.completionKind === "model"
+        ? input.replace(/(^|\s)\/model\s+.*$/, `$1/model ${value}`)
+        : input.replace(/([/$])[^\s]*$/, value);
+    this.composer.setText(result);
+    this.composer.cursorOffset = result.length;
+  }
   private updateCompletion() {
     if (this.disposed) return;
-    const match = /(^|\s)([/$][^\s]*)$/.exec(this.composer.plainText);
+    const input = this.composer.plainText;
+    const modelMatch = /(^|\s)\/model\s+(.*)$/.exec(input);
+    const match = modelMatch ?? /(^|\s)([/$][^\s]*)$/.exec(input);
     if (!match) {
       this.closeCompletion();
       return;
     }
-    const prefix = match[2],
-      query = prefix.slice(1).toLowerCase();
+    const prefix = modelMatch ? "/model" : match[2],
+      query = (modelMatch ? modelMatch[2] : prefix.slice(1)).toLowerCase();
     if (
       prefix[0] === "$" &&
       this.options.loadSkills &&
@@ -504,17 +519,85 @@ export class ConversationReader {
           this.updateCompletion();
         });
     }
-    const values =
-      prefix[0] === "/"
+    if (
+      modelMatch &&
+      this.options.loadModels &&
+      this.modelsVersion !== (this.options.modelsVersion?.() ?? 0) &&
+      !this.modelsLoading
+    ) {
+      this.modelsLoading = true;
+      const version = this.options.modelsVersion?.() ?? 0;
+      void this.options
+        .loadModels()
+        .then((models) => {
+          this.models = models;
+          this.modelsVersion = version;
+        })
+        .catch((error) => {
+          this.modelsVersion = version;
+          this.showError(error);
+        })
+        .finally(() => {
+          this.modelsLoading = false;
+          this.updateCompletion();
+        });
+    }
+    const modelPairs = this.models.flatMap((model) => {
+      const efforts = model.efforts ?? [];
+      const ordered = model.defaultEffort
         ? [
-            { name: "compact", description: "Compact this thread" },
-            { name: "cancel-retry", description: "Cancel capacity retry" },
+            ...efforts.filter((effort) => effort.name === model.defaultEffort),
+            ...efforts.filter((effort) => effort.name !== model.defaultEffort),
           ]
-        : this.skills;
-    const selected = values.filter((value) => fuzzy(value.name, query));
-    this.completionValues = selected.map((value) => prefix[0] + value.name);
+        : efforts;
+      return ordered.map((effort) => ({
+        value: `${model.name} ${effort.name}`,
+        label: `${model.name} · ${effort.name}`,
+        description: [
+          model.description,
+          effort.description,
+          effort.name === model.defaultEffort ? "Default" : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      }));
+    });
+    const values: CompletionOption[] = modelMatch
+      ? modelPairs
+      : prefix[0] === "/"
+        ? [
+            {
+              value: "/compact",
+              label: "/compact",
+              description: "Compact this thread",
+            },
+            {
+              value: "/cancel-retry",
+              label: "/cancel-retry",
+              description: "Cancel capacity retry",
+            },
+            {
+              value: "/model",
+              label: "/model",
+              description: "Choose a model and reasoning-effort pair",
+              appendSpace: true,
+            },
+          ]
+        : this.skills.map((skill) => ({
+            value: `$${skill.name}`,
+            label: `$${skill.name}`,
+            description: skill.description,
+            appendSpace: true,
+          }));
+    const selected = values.filter((value) => fuzzy(value.label, query));
+    this.completionKind = modelMatch
+      ? "model"
+      : prefix[0] === "$"
+        ? "skill"
+        : "command";
+    this.completionValues = selected;
     this.completion.options = selected.map((value) => ({
-      name: prefix[0] + value.name,
+      name: value.label,
       description: value.description ?? "",
     }));
     this.completion.setSelectedIndex(0);

@@ -33,10 +33,18 @@ export type TokenUsage = {
 };
 export type ThreadRuntime = { name?: string; model?: string; effort?: string };
 export type Skill = { name: string; description?: string };
+export type ModelEffort = { name: string; description?: string };
+export type Model = {
+  name: string;
+  description?: string;
+  efforts?: ModelEffort[];
+  defaultEffort?: string;
+};
 
 export interface AppServer {
   call(method: string, params?: Record<string, unknown>): Promise<any>;
   listSkills(cwd: string): Promise<Skill[]>;
+  listModels(): Promise<Model[]>;
   onNotification(method: string, listener: (params: any) => void): () => void;
   close(): Promise<void>;
 }
@@ -134,6 +142,7 @@ export class ReaderConversation {
   private skillsInvalid = true;
   skillVersion = 0;
   private cachedSkills: Skill[] = [];
+  private cachedModels: Model[] | undefined;
   activeStartedAt: string | number | undefined;
   status = "idle";
   private reportedStatus: string | undefined;
@@ -392,6 +401,10 @@ export class ReaderConversation {
     return this.cachedSkills;
   }
 
+  async listModels(): Promise<Model[]> {
+    return (this.cachedModels ??= await this.server.listModels());
+  }
+
   /** Only an official userMessage client ID confirms a locally admitted input. */
   private acknowledge(turns: readonly NativeTurn[]): void {
     for (const turn of turns)
@@ -413,6 +426,24 @@ export class ReaderConversation {
     this.notice = "";
     if (input.trim() === "/compact") {
       await this.compact();
+      return;
+    }
+    const command = input.trim();
+    const modelMatch = /^\/model\s+(\S+)\s+(\S+)$/.exec(command);
+    if (/^\/model(?:\s|$)/.test(command)) {
+      if (!modelMatch) throw new Error("Use /model <model> <effort>");
+      const [, model, effort] = modelMatch;
+      const selection = (await this.listModels()).find(
+        (candidate) => candidate.name === model,
+      );
+      if (!selection?.efforts?.some((candidate) => candidate.name === effort))
+        throw new Error(`${model} does not support ${effort} effort`);
+      this.notice = "";
+      await this.server.call("thread/settings/update", {
+        threadId: this.threadId,
+        model,
+        effort,
+      });
       return;
     }
     this.cancelRecovery("working");
