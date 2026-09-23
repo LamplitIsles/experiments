@@ -277,6 +277,7 @@ export async function run(
       stdout.log(
         JSON.stringify({
           messageId: hit.id,
+          targetSourceRecordIndex: hit.sourceRecordIndex,
           includeTools: include,
           truncated: context.truncated,
           items: context.items,

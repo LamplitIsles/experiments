@@ -403,9 +403,8 @@ export function extractContext(
       }
     })
     .filter((v): v is { x: unknown; index: number } => Boolean(v));
-  const selected = parsed.filter((v) => Math.abs(v.index - target) <= radius);
   const eligible: ContextItem[] = [];
-  for (const { x, index } of selected) {
+  for (const { x, index } of parsed) {
     if (object(x) && x.type === "compacted") {
       const m = message(x, "context", index, {
         id: "context",
@@ -465,11 +464,18 @@ export function extractContext(
       content: JSON.stringify(p),
     });
   }
-  const targetItem = eligible.find((item) => item.sourceRecordIndex === target);
-  if (!targetItem) return { items: [], truncated: true };
+  const targetPosition = eligible.findIndex(
+    (item) => item.sourceRecordIndex === target,
+  );
+  if (targetPosition < 0) return { items: [], truncated: true };
+  const targetItem = eligible[targetPosition];
+  const selected = eligible.slice(
+    Math.max(0, targetPosition - radius),
+    targetPosition + radius + 1,
+  );
   const candidates = [
     targetItem,
-    ...eligible
+    ...selected
       .filter((item) => item !== targetItem)
       .sort(
         (a, b) =>

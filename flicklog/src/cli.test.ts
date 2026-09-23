@@ -16,6 +16,22 @@ afterEach(async () => {
 
 test("CLI keeps search bounded and only get expands an own-device record", async () => {
   root = await mkdtemp(join(tmpdir(), "flicklog-cli-"));
+  const sourcePath = join(root, "session.jsonl");
+  const sourceMessage = {
+    type: "response_item",
+    payload: {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "FULL SECRET CONTENT" }],
+      internal_chat_message_metadata_passthrough: {
+        content_item_kinds: ["user.text"],
+      },
+    },
+  };
+  await writeFile(
+    sourcePath,
+    `${JSON.stringify(sourceMessage)}\n${JSON.stringify(sourceMessage)}\n`,
+  );
   const own = {
     id: "own",
     kind: "message",
@@ -25,7 +41,7 @@ test("CLI keeps search bounded and only get expands an own-device record", async
     cwd: "/project",
     role: "user",
     content: "FULL SECRET CONTENT",
-    sourcePath: "/not-read",
+    sourcePath,
     sourceRecordIndex: 1,
   };
   const foreign = {
@@ -209,6 +225,15 @@ test("CLI keeps search bounded and only get expands an own-device record", async
   output.length = 0;
   expect(await run(["get", "foreign"], env, "/project", sink, err)).toBe(1);
   expect(errors.at(-1)).not.toContain("FOREIGN SECRET");
+  output.length = 0;
+  expect(await run(["context", "own"], env, "/project", sink, err)).toBe(0);
+  const context = JSON.parse(output[0]);
+  expect(context.targetSourceRecordIndex).toBe(1);
+  expect(
+    context.items.map(
+      (item: { sourceRecordIndex: number }) => item.sourceRecordIndex,
+    ),
+  ).toEqual([0, 1]);
 });
 
 test("ingest shares search sync and confines TTY progress to stderr", async () => {

@@ -30,6 +30,10 @@ The scope used to isolate one device's indexed data inside the shared Meilisearc
 
 The original record in a Codex JSONL session log from which a FlickLog record was derived. FlickLog records the source JSONL path and original JSONL record index as provenance so a result can be traced back to its source.
 
+### Context item
+
+An eligible item returned from a source log by context expansion. User-facing messages and non-empty plaintext compactions are context items by default; supported tool calls and results become context items only with `--include-tools`. Context items are counted separately from raw source records and need not be searchable FlickLog records.
+
 ### Storage identity
 
 Normal messages retain Codex `payload.id` as `sourceId`, but use `sha256(deviceId + sourceId)` as their FlickLog storage ID. A normal message with no usable source ID and every compaction use `sha256(deviceId + sourcePath + sourceRecordIndex)` instead. Compactions have no `sourceId`.
@@ -48,7 +52,7 @@ FlickLog ranks exact textual matches before recency. Numeric query tokens match 
 
 ### Context expansion
 
-Context expansion starts from one indexed record and reads its surrounding records from the original Codex JSONL. `flicklog context <record-id>` returns eligible natural-language messages and plaintext compactions only; `--include-tools` explicitly adds supported nearby tool calls/results. The selected record and nearest eligible source-record neighbourhood share one 12,000-character budget. Clipped content keeps balanced Unicode-safe head and tail text around an `…<N> chars truncated…` marker, and the response reports truncation. Tool activity remains source data, not indexed FlickLog messages.
+Context expansion starts from one indexed record and reads its surrounding records from the original Codex JSONL. `flicklog context <record-id>` returns eligible natural-language messages and plaintext compactions only; `--include-tools` explicitly adds supported nearby tool calls/results. The neighbourhood radius counts eligible context items on each side of the selected record, not raw source records. The selected record and its nearby context items share one 12,000-character budget. Clipped content keeps balanced Unicode-safe head and tail text around an `…<N> chars truncated…` marker, and the response reports truncation. Tool activity remains source data, not indexed FlickLog messages.
 
 ## v0 boundaries
 

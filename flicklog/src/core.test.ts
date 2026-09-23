@@ -333,6 +333,84 @@ test("compaction fallback IDs remain device-safe", () => {
   );
 });
 describe("source context and setup contract", () => {
+  test("counts eligible items, not source records, on both sides of the match", () => {
+    const message = (content: string) => ({
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: content }],
+        internal_chat_message_metadata_passthrough: {
+          content_item_kinds: ["user.text"],
+        },
+      },
+    });
+    const tool = {
+      type: "response_item",
+      payload: { type: "function_call_output", output: "ok" },
+    };
+    const records: unknown[] = [];
+    for (let i = 0; i < 10; i++) records.push(message(`before ${i}`), tool);
+    const target = records.length;
+    records.push(message("match"));
+    for (let i = 0; i < 10; i++) records.push(tool, message(`after ${i}`));
+    const text =
+      records.map((record) => JSON.stringify(record)).join("\n") + "\n";
+
+    const defaultContext = extractContext(text, target, false);
+    expect(defaultContext.items.map((item) => item.sourceRecordIndex)).toEqual([
+      4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36,
+    ]);
+    expect(defaultContext.items.every((item) => item.kind === "message")).toBe(
+      true,
+    );
+    expect(defaultContext.truncated).toBe(false);
+
+    const withTools = extractContext(text, target, true);
+    expect(withTools.items.map((item) => item.sourceRecordIndex)).toEqual(
+      Array.from({ length: 17 }, (_, index) => target - 8 + index),
+    );
+    expect(withTools.items.filter((item) => item.kind === "tool")).toHaveLength(
+      8,
+    );
+  });
+  test("counts plaintext compactions as neighbours", () => {
+    const message = (content: string) => ({
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: content }],
+        internal_chat_message_metadata_passthrough: {
+          content_item_kinds: ["user.text"],
+        },
+      },
+    });
+    const tool = {
+      type: "response_item",
+      payload: { type: "function_call_output", output: "ok" },
+    };
+    const records = [
+      message("before"),
+      { type: "compacted", payload: { message: "summary" } },
+      tool,
+      message("match"),
+      tool,
+      message("after"),
+    ];
+    const text =
+      records.map((record) => JSON.stringify(record)).join("\n") + "\n";
+    expect(
+      extractContext(text, 3, false, 1).items.map(
+        (item) => item.sourceRecordIndex,
+      ),
+    ).toEqual([1, 3, 5]);
+    expect(
+      extractContext(text, 3, true, 1).items.map(
+        (item) => item.sourceRecordIndex,
+      ),
+    ).toEqual([2, 3, 4]);
+  });
   test("excludes reasoning, controls tools, and marks truncation", () => {
     const text =
       [
