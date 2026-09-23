@@ -125,6 +125,25 @@ test("automatic name is persisted through the official app-server protocol", asy
   }
 });
 
+test("new-thread model uses the authoritative start response when thread metadata is null", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "zencodex-start-model-"));
+  let server: Awaited<ReturnType<typeof connect>> | undefined;
+  try {
+    await writeFile(
+      join(cwd, ".fake-app-server-control.json"),
+      JSON.stringify({ nullStartedThreadModel: true }),
+    );
+    server = await connect(
+      cwd,
+      fileURLToPath(new URL("./fake-app-server-entry.mjs", import.meta.url)),
+    );
+    expect((await server.startThread()).model).toBe("fixture-model");
+  } finally {
+    await server?.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("start and resume preserve pane environment and disable only the discovered Herdr session hook", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "zencodex-herdr-owner-"));
   let server: Awaited<ReturnType<typeof connect>> | undefined;

@@ -142,7 +142,7 @@ export async function connect(
       return {
         id: response.thread.id,
         name: response.thread.name ?? undefined,
-        model: response.thread.model ?? undefined,
+        model: response.model,
         effort:
           response.reasoningEffort ??
           response.thread.reasoningEffort ??

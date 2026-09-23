@@ -70,6 +70,8 @@ test("generates a structured title in an isolated ephemeral thread and persists 
     config: {
       "features.unified_exec": false,
       "features.shell_tool": false,
+      "cloud.skills.enabled": false,
+      default_permissions: ":read-only",
       mcp_servers: { companion: { enabled: false } },
     },
   });

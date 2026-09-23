@@ -840,7 +840,12 @@ async function handle(request) {
       state.threadName = null;
       save();
       return {
-        thread: threadRecord(p.cwd, p.model ?? "fixture-model"),
+        thread: threadRecord(
+          p.cwd,
+          control().nullStartedThreadModel
+            ? null
+            : (p.model ?? "fixture-model"),
+        ),
         model: p.model ?? "fixture-model",
         modelProvider: "fixture",
         serviceTier: null,

@@ -101,11 +101,12 @@ export async function nameThreadFromPrompt(
     ...Object.fromEntries(
       disabled.map((feature) => [`features.${feature}`, false]),
     ),
-    "orchestrator.skills.enabled": false,
+    "cloud.skills.enabled": false,
     "skills.include_instructions": false,
     "token_budget.use_history_notes_extension": false,
     "tools.experimental_request_user_input.enabled": false,
     "tools.update_plan.enabled": false,
+    default_permissions: ":read-only",
     web_search: "disabled",
     mcp_servers: Object.fromEntries(
       mcpNames.map((name) => [name, { enabled: false }]),
