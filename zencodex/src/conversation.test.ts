@@ -24,6 +24,12 @@ function fake(): AppServer & {
       requests.push({ method: "model/list", params: {} });
       return [];
     },
+    async nameThreadFromPrompt(threadId, input, model, effort) {
+      requests.push({
+        method: "auto-name",
+        params: { threadId, input, model, effort },
+      });
+    },
     onNotification(method, listener) {
       listeners.set(method, [...(listeners.get(method) ?? []), listener]);
       return () =>
@@ -228,6 +234,93 @@ describe("reader-first native projection", () => {
       model: "gpt-5",
       effort: "high",
     });
+  });
+
+  test("names only the first server-confirmed user message, preferring Luna with fallback", async () => {
+    for (const available of [true, false]) {
+      const server = fake();
+      server.listModels = async () =>
+        available ? [{ name: "gpt-6-luna" }] : [{ name: "other" }];
+      const named = Promise.withResolvers<void>();
+      const originalName = server.nameThreadFromPrompt;
+      server.nameThreadFromPrompt = async (...args) => {
+        await originalName(...args);
+        named.resolve();
+      };
+      const c = new ReaderConversation(server, "thread-1");
+      c.setRuntime({ model: "current-model" });
+      c.enableAutomaticNaming();
+      await c.submit("locally visible");
+      expect(
+        server.requests.some((request) => request.method === "auto-name"),
+      ).toBe(false);
+      server.emit("item/completed", {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "userMessage",
+          clientId: "accepted",
+          content: [{ text: "confirmed request" }],
+        },
+      });
+      await named.promise;
+      server.emit("item/completed", {
+        threadId: "thread-1",
+        turnId: "turn-2",
+        item: { type: "userMessage", content: [{ text: "another request" }] },
+      });
+      expect(
+        server.requests.filter((request) => request.method === "auto-name"),
+      ).toEqual([
+        {
+          method: "auto-name",
+          params: {
+            threadId: "thread-1",
+            input: "confirmed request",
+            model: available ? "gpt-6-luna" : "current-model",
+            effort: available ? "low" : undefined,
+          },
+        },
+      ]);
+      await c.close();
+    }
+  });
+
+  test("closing a reader cancels naming without waiting for its model turn", async () => {
+    const server = fake();
+    server.listModels = async () => [{ name: "gpt-6-luna" }];
+    const started = Promise.withResolvers<void>();
+    let cancelled = false;
+    server.nameThreadFromPrompt = async (
+      _threadId,
+      _input,
+      _model,
+      _effort,
+      signal,
+    ) => {
+      started.resolve();
+      await new Promise<void>((resolve) =>
+        signal?.addEventListener(
+          "abort",
+          () => {
+            cancelled = true;
+            resolve();
+          },
+          { once: true },
+        ),
+      );
+    };
+    const c = new ReaderConversation(server, "thread-1");
+    c.setRuntime({ model: "current-model" });
+    c.enableAutomaticNaming();
+    server.emit("item/completed", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      item: { type: "userMessage", content: [{ text: "Fix login" }] },
+    });
+    await started.promise;
+    await c.close();
+    expect(cancelled).toBe(true);
   });
 
   test("Herdr reporting failures are isolated from native conversation work", async () => {

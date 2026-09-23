@@ -4,6 +4,14 @@ Zencodex is a local terminal reader and editor for Codex conversations. Its read
 
 ## Language
 
+**Session name**:
+A short, optional label assigned to a Codex conversation, distinct from its first user message. A manually chosen name takes precedence over an automatically generated one.
+_Avoid_: Session title, message preview
+
+**Session preview**:
+The first user message used as a fallback label when a conversation has no session name.
+_Avoid_: Session name, generated title
+
 **Follow-up job**:
 A user instruction intended to begin after the current assistant turn finishes,
 not to redirect that turn while it is running.

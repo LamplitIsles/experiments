@@ -18,6 +18,7 @@ function fixture() {
     async listModels() {
       return [];
     },
+    async nameThreadFromPrompt() {},
     onNotification(method, listener) {
       listeners.set(method, listener);
       return () => listeners.delete(method);

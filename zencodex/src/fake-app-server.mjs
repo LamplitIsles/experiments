@@ -96,7 +96,7 @@ function threadRecord(cwd, model) {
     agentNickname: null,
     agentRole: null,
     gitInfo: null,
-    name: null,
+    name: state.threadName ?? null,
     threadSource: null,
     turns: [],
   };
@@ -458,6 +458,16 @@ function startTurn(input, clientUserMessageId) {
   state.active = turn.id;
   save();
   send({ method: "turn/started", params: { threadId: state.threadId, turn } });
+  if (process.env.FAKE_COMPLETE_START_USER_ITEM === "true" && turn.items[0])
+    send({
+      method: "item/completed",
+      params: {
+        threadId: state.threadId,
+        turnId: turn.id,
+        completedAtMs: Date.now(),
+        item: turn.items[0],
+      },
+    });
   void runTurn(turn);
   return turn;
 }
@@ -686,6 +696,12 @@ async function handle(request) {
       };
     case "config/mcpServer/reload":
       return {};
+    case "config/read":
+      return {
+        config: { additional: { mcp_servers: { companion: {} } } },
+        origins: {},
+        layers: null,
+      };
     case "mcpServerStatus/list": {
       if (p.threadId !== state.threadId)
         rpcError(-32602, "MCP status requires the current thread");
@@ -796,7 +812,32 @@ async function handle(request) {
         overriddenMetadata: null,
       };
     case "thread/start": {
+      if (p.ephemeral) {
+        state.titleThreadId = "title-thread-fake";
+        save();
+        return {
+          thread: {
+            ...threadRecord(p.cwd, p.model),
+            id: state.titleThreadId,
+            ephemeral: true,
+            threadSource: "system",
+          },
+          model: p.model,
+          modelProvider: "fixture",
+          serviceTier: null,
+          cwd: p.cwd,
+          runtimeWorkspaceRoots: [],
+          instructionSources: [],
+          approvalPolicy: "never",
+          approvalsReviewer: "user",
+          sandbox: { type: "readOnly" },
+          activePermissionProfile: null,
+          reasoningEffort: null,
+          multiAgentMode: "explicitRequestOnly",
+        };
+      }
       state.threadId = "thread-fake";
+      state.threadName = null;
       save();
       return {
         thread: threadRecord(p.cwd, p.model ?? "fixture-model"),
@@ -853,6 +894,18 @@ async function handle(request) {
     }
     case "thread/list":
       return page([], p);
+    case "thread/read":
+      return { thread: threadRecord(root, "fixture-model") };
+    case "thread/name/set":
+      state.threadName = p.name;
+      save();
+      send({
+        method: "thread/name/updated",
+        params: { threadId: p.threadId, threadName: p.name },
+      });
+      return {};
+    case "thread/unsubscribe":
+      return {};
     case "thread/turns/list": {
       if (process.env.FAKE_HISTORY_ERROR) {
         const error = new Error(process.env.FAKE_HISTORY_ERROR);
@@ -874,6 +927,40 @@ async function handle(request) {
       return page(items, p);
     }
     case "turn/start": {
+      if (p.threadId === state.titleThreadId) {
+        const turn = {
+          id: `title-turn-${state.next++}`,
+          status: "completed",
+          items: [],
+          itemsView: "full",
+          error: null,
+          startedAt: nowSeconds(),
+          completedAt: nowSeconds(),
+        };
+        const item = {
+          type: "agentMessage",
+          id: `title-answer-${state.next++}`,
+          text: control().titleResponse ?? '{"title":"Fix login timeout"}',
+          phase: "final_answer",
+          memoryCitation: null,
+          delivery: null,
+          questions: null,
+        };
+        send({
+          method: "item/completed",
+          params: {
+            threadId: state.titleThreadId,
+            turnId: turn.id,
+            completedAtMs: Date.now(),
+            item,
+          },
+        });
+        send({
+          method: "turn/completed",
+          params: { threadId: state.titleThreadId, turn },
+        });
+        return { turn };
+      }
       if (state.active)
         rpcError(-32600, "cannot start a turn while another turn is active");
       const turn = startTurn(p.input, p.clientUserMessageId);
