@@ -18,7 +18,8 @@ export type RuntimeEvent =
   | { type: "working"; turnId: string }
   | { type: "item"; turnId: string; item: RuntimeItem }
   | { type: "completed"; turnId: string; status: string; error?: string }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string }
+  | { type: "disconnected"; error: string };
 export interface RuntimeAgent extends Detail {
   token: string;
 }
@@ -37,5 +38,12 @@ export interface Runtime {
   ): Promise<RuntimeHandle>;
   close(): Promise<void>;
 }
-export class StaleTurn extends Error {}
+export class StaleTurn extends Error {
+  constructor(
+    message: string,
+    readonly activeTurnId?: string,
+  ) {
+    super(message);
+  }
+}
 export class DeliveryRejected extends Error {}

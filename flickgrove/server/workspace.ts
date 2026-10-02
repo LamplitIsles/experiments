@@ -63,7 +63,7 @@ export class Workspace {
         a.workingSince = undefined;
       }
       for (const d of a.deliveries)
-        if (d.status === "sending") {
+        if (d.status === "sending" || d.status === "queued") {
           d.status = "uncertain";
           d.error =
             "Backend restarted before delivery was confirmed. Check the conversation before sending again.";
@@ -86,7 +86,7 @@ export class Workspace {
     return () => this.subscribers.delete(listener);
   }
   private event(a: RuntimeAgent, event: RuntimeEvent) {
-    if (a.closed) return;
+    if (a.closed || this.disposed) return;
     if (event.type === "working") {
       a.state = "working";
       a.turnId = event.turnId;
@@ -127,26 +127,22 @@ export class Workspace {
           );
           const text =
             `Worker “${a.title}” needs a decision. Worker ID: ${a.id}\n\n` +
+            (item.text ? `${item.text}\n\n` : "") +
             questions
               .map(
                 (q) =>
                   `Question ID: ${q.id}\n${q.text}\n${q.options.map((o) => o.label).join("; ")}`,
               )
               .join("\n\n");
-          void this.serialize(a.ownerId!, () =>
-            this.deliver(
-              this.agent(a.ownerId!),
-              text,
-              `report:${a.id}:${item.id}`,
-              "worker",
-            ),
-          ).catch((error) => {
-            a.error =
-              error instanceof Error
-                ? error.message
-                : "Could not forward the question to Orc";
-            this.save();
-          });
+          void this.report(a, text, `report:${a.id}:${item.id}`).catch(
+            (error) => {
+              a.error =
+                error instanceof Error
+                  ? error.message
+                  : "Could not forward the question to Orc";
+              this.save();
+            },
+          );
         }
       } else if (item.phase === "final_answer" && item.text) {
         const key = `${a.id}/${event.turnId}`;
@@ -178,6 +174,7 @@ export class Workspace {
         a.workingSince = undefined;
       }
     } else {
+      if (event.type === "disconnected") this.handles.delete(a.id);
       a.state = "error";
       a.error = event.error;
       a.turnId = undefined;
@@ -291,7 +288,22 @@ export class Workspace {
     if (!handle) {
       let opening = this.opening.get(a.id);
       if (!opening) {
-        opening = this.options.runtime.open(a, (event) => this.event(a, event));
+        let disconnected = false;
+        opening = this.options.runtime
+          .open(a, (event) => {
+            if (disconnected) return;
+            this.event(a, event);
+            if (event.type === "disconnected") disconnected = true;
+          })
+          .then(async (handle) => {
+            if (disconnected) {
+              await handle.close();
+              throw new Error(
+                "App-server disconnected while opening the thread",
+              );
+            }
+            return handle;
+          });
         this.opening.set(a.id, opening);
       }
       try {
@@ -323,10 +335,12 @@ export class Workspace {
     source: Delivery["source"],
     questionIds: string[] = [],
   ) {
+    if (this.disposed) throw new Error("Workspace is stopped");
     if (!text.trim()) throw new Error("Write a message first");
     if (text.length > 100_000) throw new Error("Message is too long");
     let d = a.deliveries.find((d) => d.id === requestId);
-    if (d && d.status !== "failed") return this.detail(a.id);
+    if (d && d.status !== "failed" && d.status !== "queued")
+      return this.detail(a.id);
     if (!d) {
       d = {
         id: requestId,
@@ -341,6 +355,10 @@ export class Workspace {
       d.status = "sending";
       d.error = undefined;
     }
+    // Retries use the persisted envelope, including its delegated question IDs.
+    text = d.text;
+    questionIds = d.questionIds;
+    const previousState = a.state;
     this.save();
     const messagePosition = a.messages.length;
     try {
@@ -355,8 +373,11 @@ export class Workspace {
         turnId = await handle.send(text, activeTurn);
       } catch (error) {
         if (!(error instanceof StaleTurn)) throw error;
-        a.turnId = undefined;
-        turnId = await handle.send(text);
+        const currentTurn =
+          error.activeTurnId ??
+          (a.turnId !== activeTurn ? a.turnId : undefined);
+        a.turnId = currentTurn;
+        turnId = await handle.send(text, currentTurn);
       }
       if (!this.completedTurns.has(`${a.id}/${turnId}`)) a.turnId = turnId;
       if (!a.messages.some((m) => m.id === requestId))
@@ -373,7 +394,7 @@ export class Workspace {
       this.save();
       if (
         a.role === "orc" &&
-        source === "user" &&
+        d.source === "user" &&
         a.title === "New session" &&
         a.messages.filter((m) => m.role === "user").length === 1
       ) {
@@ -390,10 +411,16 @@ export class Workspace {
     } catch (error) {
       d.status = error instanceof DeliveryRejected ? "failed" : "uncertain";
       d.error = error instanceof Error ? error.message : "Delivery failed";
-      a.state = "error";
-      a.error = d.error;
-      a.turnId = undefined;
-      a.workingSince = undefined;
+      // A rejected steer does not stop the turn already running. Runtime
+      // completion/disconnection events remain authoritative for its lifecycle.
+      if (
+        (a.state === "working" && !a.turnId) ||
+        (previousState !== "working" && a.state === "idle")
+      ) {
+        a.state = "error";
+        a.error = d.error;
+        a.workingSince = undefined;
+      }
       this.save();
     }
     return this.detail(a.id);
@@ -593,17 +620,29 @@ export class Workspace {
       }
       case "worker_report": {
         const input = z.object(toolDefinitions.worker_report.shape).parse(args);
-        const owner = this.agent(a.ownerId!);
-        return this.serialize(owner.id, () =>
-          this.deliver(
-            this.agent(owner.id),
-            `Worker “${a.title}” reports:\n\n${input.message}`,
-            crypto.randomUUID(),
-            "worker",
-          ),
+        return this.report(
+          a,
+          `Worker “${a.title}” reports:\n\n${input.message}`,
+          crypto.randomUUID(),
         );
       }
     }
+  }
+  private report(worker: RuntimeAgent, text: string, requestId: string) {
+    const owner = this.agent(worker.ownerId!);
+    owner.deliveries.push({
+      id: requestId,
+      text,
+      source: "worker",
+      reportingWorkerId: worker.id,
+      status: "queued",
+      questionIds: [],
+      at: Date.now(),
+    });
+    this.save();
+    return this.serialize(owner.id, () =>
+      this.deliver(this.agent(owner.id), text, requestId, "worker"),
+    );
   }
   private assertIdle(a: RuntimeAgent) {
     if (
@@ -611,12 +650,22 @@ export class Workspace {
       this.queues.has(a.id) ||
       this.opening.has(a.id) ||
       a.deliveries.some(
-        (d) => d.status === "sending" || d.status === "uncertain",
+        (d) =>
+          d.status === "queued" ||
+          d.status === "sending" ||
+          d.status === "uncertain",
       )
     )
       throw new Error(
         `${a.title} is still working or has an unconfirmed delivery`,
       );
+    if (
+      a.role === "worker" &&
+      this.agent(a.ownerId!).deliveries.some(
+        (d) => d.reportingWorkerId === a.id && d.status !== "sent",
+      )
+    )
+      throw new Error(`${a.title} has an undelivered report to Orc`);
     if (a.questions.some((q) => q.state !== "answered"))
       throw new Error(`${a.title} has unanswered questions`);
   }

@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CodexRuntime } from "./codex";
+import { Workspace } from "./workspace";
 import type { RuntimeAgent, RuntimeEvent } from "./runtime";
 
 test("the SDK adapter initializes isolated role configuration, discovers enabled skills and resumes threads", async () => {
@@ -142,6 +143,115 @@ test("the SDK adapter initializes isolated role configuration, discovers enabled
         .params.developerInstructions,
     ).toContain("worker_send");
   } finally {
+    await runtime.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 10000);
+
+async function wireWorkspace(directory: string, env: NodeJS.ProcessEnv = {}) {
+  const runtime = new CodexRuntime({
+    cwd: directory,
+    origin: () => "http://127.0.0.1:14318",
+    codexPath: fileURLToPath(
+      new URL("../tests/fake-codex.mjs", import.meta.url),
+    ),
+    env: {
+      ...process.env,
+      CODEX_HOME: join(directory, "codex-home"),
+      FAKE_SERVER_ROOT: directory,
+      ...env,
+    },
+  });
+  const app = new Workspace({
+    directory: join(directory, "state"),
+    runtime,
+    projects: async () => [
+      { alias: "fixture", name: "Fixture", path: directory },
+    ],
+  });
+  return { app, runtime };
+}
+
+async function requests(directory: string) {
+  return (
+    await readFile(join(directory, ".fake-app-server-requests.jsonl"), "utf8")
+  )
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+}
+
+test("real expected-turn mismatch wording retries steer on the current turn", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "flickgrove-stale-wire-"));
+  await writeFile(
+    join(directory, ".fake-app-server-control.json"),
+    JSON.stringify({ hold: true }),
+  );
+  const { app, runtime } = await wireWorkspace(directory, {
+    FAKE_STEER_MISMATCH_COUNT: "1",
+  });
+  try {
+    const a = await app.createOrc("fixture");
+    await app.send(a.id, "Begin", "first");
+    const turnId = app.detail(a.id).turnId;
+    await app.send(a.id, "Follow up", "second");
+    expect(app.detail(a.id).deliveries.at(-1)?.status).toBe("sent");
+    const log = (await requests(directory)).filter(
+      (r) => r.params?.threadId === app.detail(a.id).threadId,
+    );
+    expect(log.filter((r) => r.method === "turn/start")).toHaveLength(1);
+    expect(
+      log
+        .filter((r) => r.method === "turn/steer")
+        .map((r) => r.params.expectedTurnId),
+    ).toEqual([turnId, turnId]);
+  } finally {
+    app.dispose();
+    await runtime.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 10000);
+
+test("app-server exit stops Working and an explicit message resumes the same thread without replay", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "flickgrove-crash-wire-"));
+  const { app, runtime } = await wireWorkspace(directory, {
+    FAKE_EXIT_AFTER_ACCEPT: "true",
+  });
+  try {
+    const a = await app.createOrc("fixture");
+    const disconnected = Promise.withResolvers<void>();
+    const unsubscribe = app.subscribe(() => {
+      if (app.detail(a.id).state === "error") disconnected.resolve();
+    });
+    await app.send(a.id, "Begin", "first");
+    const threadId = app.detail(a.id).threadId;
+    await Promise.race([
+      disconnected.promise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Exit was not surfaced")), 3000),
+      ),
+    ]);
+    unsubscribe();
+    expect(app.detail(a.id)).toMatchObject({ state: "error", threadId });
+    expect(app.detail(a.id).turnId).toBeUndefined();
+    expect(app.detail(a.id).error).toContain("disconnected");
+    await app.send(a.id, "Resume explicitly", "second");
+    expect(app.detail(a.id).deliveries.at(-1)?.status).toBe("sent");
+    const log = await requests(directory);
+    expect(
+      log.some(
+        (r) => r.method === "thread/resume" && r.params.threadId === threadId,
+      ),
+    ).toBe(true);
+    expect(
+      log
+        .filter(
+          (r) => r.method === "turn/start" && r.params.threadId === threadId,
+        )
+        .map((r) => r.params.input[0].text),
+    ).toEqual(["Begin", "Resume explicitly"]);
+  } finally {
+    app.dispose();
     await runtime.close();
     await rm(directory, { recursive: true, force: true });
   }

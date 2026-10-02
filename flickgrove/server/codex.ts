@@ -1,6 +1,7 @@
 import {
   CodexAppServerClient,
   AppServerRpcError,
+  AppServerConnectionClosedError,
 } from "@jaminzhou/codex-app-server-client";
 import type { ReasoningEffort } from "@jaminzhou/codex-app-server-client/protocol";
 import { fileURLToPath } from "node:url";
@@ -113,6 +114,16 @@ export class CodexRuntime implements Runtime {
     const client = await this.client(agent.project.path, agent);
     let threadId = agent.threadId;
     const off = [
+      client.onError((error) => {
+        if (error instanceof AppServerConnectionClosedError) {
+          this.clients.delete(client);
+          notify({
+            type: "disconnected",
+            error:
+              "App-server disconnected. Send a message to resume the thread.",
+          });
+        }
+      }),
       client.onNotification("turn/started", (p) => {
         if (p.threadId === threadId)
           notify({ type: "working", turnId: p.turn.id });
@@ -202,14 +213,15 @@ export class CodexRuntime implements Runtime {
           ).turn.id;
         } catch (error) {
           if (error instanceof AppServerRpcError) {
-            // Only a proven inactive turn permits converting steer to a new turn.
-            if (
-              activeTurn &&
-              /no active turn|expected.*turn.*(?:mismatch|does not match)|turn.*not active/i.test(
-                error.message,
-              )
-            )
-              throw new StaleTurn(error.message);
+            if (activeTurn) {
+              const mismatch =
+                /expected active turn id [`']([^`']+)[`'] but found [`']([^`']+)[`']/i.exec(
+                  error.message,
+                );
+              if (mismatch) throw new StaleTurn(error.message, mismatch[2]);
+              if (/no active turn|turn.*not active/i.test(error.message))
+                throw new StaleTurn(error.message);
+            }
             throw new DeliveryRejected(error.message);
           }
           throw error;

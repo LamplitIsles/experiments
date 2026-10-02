@@ -356,6 +356,7 @@ test("Worker async questions are delegated once and only explicit contextual rep
       type: "agentMessage",
       id: "ask",
       delivery: "async",
+      text: "Important context: preserve stored data.",
       questions: [{ question: "Keep old data?" }],
     },
   };
@@ -365,6 +366,9 @@ test("Worker async questions are delegated once and only explicit contextual rep
   expect(app.detail(w.id).questions[0].state).toBe("delegated");
   expect(app.detail(a.id).messages).toHaveLength(1);
   expect(app.detail(a.id).messages[0].text).toContain("Keep old data?");
+  expect(app.detail(a.id).messages[0].text).toContain(
+    "Important context: preserve stored data.",
+  );
   await app.tool(token, "worker_send", {
     workerId: w.id,
     message: "Check the spec",
@@ -407,7 +411,11 @@ test("explicit reconciliation resolves an uncertain answer without replaying the
     answer: "Blue",
   });
   expect(runtime.inputs).toHaveLength(count);
-  await app.send(a.id, "/close", "close-2");
+  await expect(app.send(a.id, "/close", "close-2")).rejects.toThrow(
+    "still working",
+  );
+  runtime.emit(a.id, { type: "completed", turnId, status: "completed" });
+  await app.send(a.id, "/close", "close-3");
   expect(app.snapshot().agents).toEqual([]);
 });
 
@@ -442,4 +450,189 @@ test("one global Fast setting applies to new Orcs and Workers while existing ses
       orc: { model: "luna", effort: "low" },
     }),
   ).rejects.toThrow("Fast is not available");
+});
+
+test("a rejected steer preserves the active turn and prevents premature closing", async () => {
+  const { app, runtime } = fixture();
+  const a = await app.createOrc("alpha");
+  await app.send(a.id, "Begin", "first");
+  const { turnId, workingSince } = app.detail(a.id);
+  runtime.sendOverride = async () => {
+    throw new DeliveryRejected("Rejected steer");
+  };
+  await app.send(a.id, "Follow up", "second");
+  expect(app.detail(a.id)).toMatchObject({
+    state: "working",
+    turnId,
+    workingSince,
+  });
+  expect(app.detail(a.id).deliveries.at(-1)?.status).toBe("failed");
+  await expect(app.send(a.id, "/close", "close")).rejects.toThrow(
+    "still working",
+  );
+  runtime.emit(a.id, {
+    type: "completed",
+    turnId: turnId!,
+    status: "completed",
+  });
+  await app.send(a.id, "/close", "close-after-completion");
+  expect(app.snapshot().agents).toHaveLength(0);
+});
+
+test("a stale steer retries against the current active turn instead of starting another", async () => {
+  const { app, runtime } = fixture();
+  const a = await app.createOrc("alpha");
+  await app.send(a.id, "Begin", "first");
+  runtime.sendOverride = async (_id, _text, turnId) => {
+    if (turnId !== "current-turn")
+      throw new StaleTurn("Expected old but found current", "current-turn");
+    return turnId;
+  };
+  await app.send(a.id, "Follow up", "second");
+  expect(runtime.inputs.at(-1)?.turnId).toBe("current-turn");
+  expect(app.detail(a.id).deliveries.at(-1)?.status).toBe("sent");
+  expect(app.detail(a.id).turnId).toBe("current-turn");
+});
+
+test("queued Worker reports survive restart and block closure until explicitly reconciled", async () => {
+  const { app, runtime, directory } = fixture();
+  const a = await app.createOrc("alpha");
+  const token = runtime.agents.get(a.id)!.token;
+  const w = (await app.tool(token, "worker_start", {
+    project: "alpha",
+    title: "Reader",
+    spec: "fixture",
+    message: "Implement",
+  })) as { id: string };
+  const workerToken = runtime.agents.get(w.id)!.token;
+  runtime.emit(w.id, {
+    type: "completed",
+    turnId: app.detail(w.id).turnId!,
+    status: "completed",
+  });
+  const held = Promise.withResolvers<string>();
+  const started = Promise.withResolvers<void>();
+  runtime.sendOverride = async () => {
+    started.resolve();
+    return held.promise;
+  };
+  const blocker = app.send(a.id, "Hold owner queue", "hold");
+  await started.promise;
+  const report = app.tool(workerToken, "worker_report", {
+    message: "Durable completion report",
+  });
+  expect(app.detail(a.id).deliveries.at(-1)).toMatchObject({
+    status: "queued",
+    reportingWorkerId: w.id,
+  });
+  await expect(
+    app.tool(token, "worker_close", { workerId: w.id }),
+  ).rejects.toThrow("undelivered report");
+  app.dispose();
+  const resumedRuntime = new FakeRuntime();
+  const restarted = new Workspace({
+    directory,
+    runtime: resumedRuntime,
+    projects: async () => fixtureProjects,
+  });
+  cleanups.push(() => restarted.dispose());
+  await restarted.send(a.id, "Resume explicitly", "resume");
+  const resumedToken = resumedRuntime.agents.get(a.id)!.token;
+  const d = restarted
+    .detail(a.id)
+    .deliveries.find((d) => d.reportingWorkerId === w.id)!;
+  expect(d.status).toBe("uncertain");
+  expect(d.text).toContain("Durable completion report");
+  expect(resumedRuntime.inputs.map((i) => i.text)).toEqual([
+    "Resume explicitly",
+  ]);
+  await expect(
+    restarted.tool(resumedToken, "worker_close", { workerId: w.id }),
+  ).rejects.toThrow("undelivered report");
+  await restarted.reconcile(a.id, d.id, true);
+  await restarted.tool(resumedToken, "worker_close", { workerId: w.id });
+  held.resolve("held-turn");
+  await blocker;
+  await expect(report).rejects.toThrow("Workspace is stopped");
+});
+
+test("a rejected Worker report blocks closing its sender and can retry the persisted envelope", async () => {
+  const { app, runtime } = fixture();
+  const a = await app.createOrc("alpha");
+  const token = runtime.agents.get(a.id)!.token;
+  const w = (await app.tool(token, "worker_start", {
+    project: "alpha",
+    title: "Reader",
+    spec: "fixture",
+    message: "Implement",
+  })) as { id: string };
+  runtime.emit(w.id, {
+    type: "completed",
+    turnId: app.detail(w.id).turnId!,
+    status: "completed",
+  });
+  runtime.sendOverride = async () => {
+    throw new DeliveryRejected("Rejected report");
+  };
+  await app.tool(runtime.agents.get(w.id)!.token, "worker_report", {
+    message: "Report contents",
+  });
+  const d = app.detail(a.id).deliveries.at(-1)!;
+  expect(d.status).toBe("failed");
+  await expect(
+    app.tool(token, "worker_close", { workerId: w.id }),
+  ).rejects.toThrow("undelivered report");
+  runtime.sendOverride = undefined;
+  await app.send(a.id, "Attempted replacement", d.id);
+  expect(runtime.inputs.at(-1)?.text).toBe(d.text);
+  await app.tool(token, "worker_close", { workerId: w.id });
+});
+
+test("queued async-question forwarding is durable before the owner queue runs", async () => {
+  const { app, runtime, directory } = fixture();
+  const a = await app.createOrc("alpha");
+  const w = (await app.tool(runtime.agents.get(a.id)!.token, "worker_start", {
+    project: "alpha",
+    title: "Reader",
+    spec: "fixture",
+    message: "Implement",
+  })) as { id: string };
+  const held = Promise.withResolvers<string>();
+  const started = Promise.withResolvers<void>();
+  runtime.sendOverride = async () => {
+    started.resolve();
+    return held.promise;
+  };
+  const blocker = app.send(a.id, "Hold queue", "hold");
+  await started.promise;
+  runtime.emit(w.id, {
+    type: "item",
+    turnId: app.detail(w.id).turnId!,
+    item: {
+      id: "ask-queued",
+      type: "agentMessage",
+      delivery: "async",
+      text: "Required context",
+      questions: [{ question: "Proceed?" }],
+    },
+  });
+  expect(app.detail(a.id).deliveries.at(-1)?.status).toBe("queued");
+  app.dispose();
+  const restarted = new Workspace({
+    directory,
+    runtime: new FakeRuntime(),
+    projects: async () => fixtureProjects,
+  });
+  cleanups.push(() => restarted.dispose());
+  expect(restarted.detail(w.id).questions[0].state).toBe("delegated");
+  expect(restarted.detail(a.id).deliveries.at(-1)).toMatchObject({
+    status: "uncertain",
+    reportingWorkerId: w.id,
+  });
+  expect(restarted.detail(a.id).deliveries.at(-1)?.text).toContain(
+    "Required context",
+  );
+  held.resolve("held-turn");
+  await blocker;
+  await new Promise((resolve) => setTimeout(resolve, 0));
 });

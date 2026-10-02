@@ -10,6 +10,7 @@
   const positions: Record<string, { x: number; y: number }> = JSON.parse(localStorage.getItem("flickgrove/positions") ?? "{}");
   let nodes = $state.raw<Node[]>([]); let focusedId = $state<string | null>(null);
   const flow = useSvelteFlow();
+  let viewport = $state({ x: 0, y: 0, zoom: 1 });
   const roots = $derived(agents.filter(a => a.role === "orc"));
   function toggle(id: string) { expanded = expanded.includes(id) ? expanded.filter(v => v !== id) : [...expanded, id]; localStorage.setItem("flickgrove/expanded", JSON.stringify(expanded)); }
   $effect(() => {
@@ -55,9 +56,9 @@
 <!-- The spatial canvas is a keyboard navigation surface. -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div class="canvas-region" role="region" aria-label={m.canvas()} tabindex="0" onkeydown={keydown} onfocusin={e => { if (e.target instanceof HTMLElement && e.target.dataset.agentId) focusedId = e.target.dataset.agentId; }}>
-  <SvelteFlow bind:nodes {edges} nodeTypes={{ agent: AgentNode }} nodesConnectable={false} elementsSelectable={false} deleteKey={null} disableKeyboardA11y nodesFocusable={false} edgesFocusable={false} minZoom={.25} maxZoom={1.5} colorMode="dark" onnodedragstop={({ nodes: moved }) => { for (const node of moved) positions[node.id] = node.position; localStorage.setItem("flickgrove/positions", JSON.stringify(positions)); }}>
+  <SvelteFlow bind:viewport bind:nodes {edges} nodeTypes={{ agent: AgentNode }} nodesConnectable={false} elementsSelectable={false} deleteKey={null} disableKeyboardA11y nodesFocusable={false} edgesFocusable={false} minZoom={.25} maxZoom={1.5} colorMode="dark" onnodedragstop={({ nodes: moved }) => { for (const node of moved) positions[node.id] = node.position; localStorage.setItem("flickgrove/positions", JSON.stringify(positions)); }}>
     <Background gap={28} size={.6} patternColor="#474747" bgColor="#242424" />
-    <Controls showLock={false} showFitView={false} orientation="horizontal"><ControlButton onclick={fit} title={m.fit_canvas()} aria-label={m.fit_canvas()}>{m.fit_canvas()}</ControlButton></Controls>
+    <Controls showZoom={false} showLock={false} showFitView={false} orientation="horizontal" position="bottom-left"><ControlButton onclick={() => flow.zoomOut()} title={m.zoom_out()} aria-label={m.zoom_out()}>−</ControlButton><span class="zoom-readout">{Math.round(viewport.zoom * 100)}%</span><ControlButton onclick={() => flow.zoomIn()} title={m.zoom_in()} aria-label={m.zoom_in()}>+</ControlButton><ControlButton onclick={fit} title={m.fit_canvas()} aria-label={m.fit_canvas()}>{m.fit_canvas()}</ControlButton></Controls>
   </SvelteFlow>
   <span class="canvas-key-hint">{m.canvas_hint()}</span>
 </div>

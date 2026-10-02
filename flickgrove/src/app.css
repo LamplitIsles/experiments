@@ -122,7 +122,7 @@ main {
 }
 .canvas-key-hint {
   position: absolute;
-  left: 28px;
+  left: 264px;
   bottom: 25px;
   color: #858480;
   font-size: 11px;
@@ -130,8 +130,8 @@ main {
 }
 .svelte-flow__controls {
   bottom: 17px;
-  left: auto;
-  right: 20px;
+  left: 24px;
+  right: auto;
   box-shadow: none;
   border: 1px solid #454545;
   border-radius: 5px;
@@ -221,10 +221,10 @@ main {
 }
 .node-state .working,
 .working {
-  color: #e4b775;
+  color: #5dc5f8;
 }
 .working i {
-  background: #e4b775;
+  background: #5dc5f8;
 }
 .failed {
   color: #db9393;
@@ -232,8 +232,6 @@ main {
 .failed i {
   background: #db9393;
 }
-time,
-.model-note,
 code,
 pre {
   font-family: "IBM Plex Mono", monospace;
@@ -251,19 +249,23 @@ pre {
 }
 .canvas-empty {
   position: absolute;
-  top: 35%;
-  left: 0;
-  width: 100%;
-  text-align: center;
+  top: 32%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(628px, calc(100% - 48px));
+  text-align: left;
   pointer-events: none;
 }
 .canvas-empty h1 {
-  font-size: 23px;
+  font-size: 32px;
   font-weight: 500;
   color: #d2cdc4;
 }
 .canvas-empty p {
-  margin: 12px 0 24px;
+  margin: 36px 0 44px;
+  max-width: 500px;
+  white-space: pre-line;
+  line-height: 1.6;
   color: #96938d;
 }
 .canvas-empty button {
@@ -298,11 +300,14 @@ pre {
   color: #bbb0a0;
 }
 .agent-detail {
-  width: 480px;
+  width: min(536px, 40vw);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-left: 1px solid #45433f;
+  border: 1px solid #454545;
+  border-radius: 16px;
+  margin: 12px 16px 16px 0;
+  overflow: hidden;
   background: #262626;
 }
 .detail-heading {
@@ -336,7 +341,7 @@ pre {
   color: #aaa8a2;
 }
 .model-note {
-  margin-top: 12px;
+  margin-top: 16px;
   font-size: 10px;
   color: #87837d;
 }
@@ -348,15 +353,15 @@ pre {
   scrollbar-color: #555 #262626;
 }
 .first-message {
-  padding-top: 30px;
+  padding-top: 110px;
 }
 .first-message h2 {
-  font-size: 16px;
+  font-size: 24px;
   font-weight: 500;
 }
 .first-message p {
   color: #9b978f;
-  margin-top: 12px;
+  margin-top: 50px;
   line-height: 1.8;
 }
 .user-message {
@@ -370,9 +375,7 @@ pre {
 }
 .message-role {
   color: #a49b8e;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
+  font-size: 12px;
   margin-bottom: 10px;
 }
 .user-message .message-role {
@@ -452,8 +455,7 @@ pre {
   max-width: 100%;
 }
 .composer-wrap {
-  padding: 16px 22px 20px;
-  border-top: 1px solid #3c3b38;
+  padding: 16px 15px 18px;
   position: relative;
 }
 .composer {
@@ -474,7 +476,7 @@ pre {
   outline: none;
   resize: vertical;
   padding: 14px;
-  min-height: 78px;
+  min-height: 50px;
   max-height: 200px;
   line-height: 1.6;
 }
@@ -526,10 +528,10 @@ pre {
   font-size: 11px;
 }
 .completion-list button.selected {
-  background: #4a4030;
+  background: #444;
 }
 .completion-list code {
-  color: #e4b775;
+  color: #f2f1ef;
   flex-shrink: 0;
 }
 .completion-list span {
@@ -568,14 +570,12 @@ pre {
   padding: 17px 16px;
 }
 .question-position {
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  font-size: 9px;
+  font-size: 12px;
   color: #b59a73;
 }
 .question-content h3 {
   margin: 10px 0 18px;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 1.7;
 }
@@ -716,14 +716,15 @@ pre {
   color: #bca17a;
 }
 .modal-box {
-  background: #2b2a28;
-  border: 1px solid #575149;
-  border-radius: 9px;
+  background: #202020;
+  border: 1px solid #434343;
+  border-radius: 16px;
   padding: 28px;
-  max-width: 490px;
+  width: 616px;
+  max-width: calc(100vw - 32px);
 }
 .modal-box h2 {
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 500;
 }
 .modal-help {
@@ -759,8 +760,8 @@ pre {
   justify-content: space-between;
 }
 .project-list > button.selected {
-  border-color: #b08c5c;
-  background: #42382b;
+  border-color: #5dc5f8;
+  background: #283740;
 }
 .project-list span {
   color: #a59b8c;
@@ -770,17 +771,17 @@ pre {
   margin-top: 24px;
 }
 .role-settings h3 {
-  font-size: 12px;
-  margin-bottom: 12px;
-  color: #c6b398;
+  font-size: 16px;
+  margin-bottom: 16px;
+  color: #f2f1ef;
 }
 .model-fields {
   display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 12px;
+  grid-template-columns: 1.8fr 1fr;
+  gap: 16px;
 }
 .model-fields label {
-  font-size: 10px;
+  font-size: 12px;
   color: #a69d90;
 }
 .model-fields .select {
@@ -790,9 +791,10 @@ pre {
   padding-block: 0;
   width: 100%;
   margin-top: 7px;
-  background: #252321;
-  border-color: #585148;
-  font-size: 12px;
+  appearance: auto;
+  background: #242424;
+  border-color: #434343;
+  font-size: 14px;
 }
 .settings-scope,
 .keyboard-scope {
@@ -839,6 +841,8 @@ pre {
     position: absolute;
     inset: 0;
     width: 100%;
+    margin: 0;
+    border-radius: 0;
     z-index: 10;
   }
   .app-header {
@@ -875,7 +879,7 @@ pre {
 }
 .agent-detail {
   background: #202020;
-  width: 520px;
+  width: min(536px, 40vw);
 }
 .conversation {
   scrollbar-color: #555 #202020;
@@ -904,7 +908,7 @@ pre {
   font-size: 16px;
 }
 .worker-node .node-open strong {
-  font-size: 14px;
+  font-size: 16px;
 }
 .node-state {
   font-size: 12px;
@@ -923,7 +927,7 @@ pre {
   font-size: 12px;
 }
 .model-note {
-  font-size: 11px;
+  font-size: 12px;
 }
 .markdown {
   font-size: 15px;
@@ -938,15 +942,15 @@ pre {
 .btn-sm {
   height: 36px;
   min-height: 36px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .question-top,
 .question-position {
-  font-size: 11px;
+  font-size: 12px;
 }
 .question-options label,
 .question-content .textarea {
-  font-size: 13px;
+  font-size: 14px;
 }
 .question-hint,
 .composer-bottom > span {
@@ -956,11 +960,11 @@ pre {
   font-size: 11px;
 }
 .detail-heading {
-  padding: 20px 26px 16px;
+  padding: 18px 23px 18px;
 }
 .detail-heading h1 {
   font-size: 20px;
-  margin: 10px 0;
+  margin: 16px 0;
 }
 @media (max-width: 900px) {
   .agent-detail {
@@ -976,8 +980,10 @@ pre {
   background: #242424;
 }
 .canvas-region .svelte-flow__panel.svelte-flow__controls {
-  left: auto;
-  right: 20px;
+  left: 24px;
+  right: auto;
+  bottom: 20px;
+  margin: 0;
   width: auto;
 }
 .question-content {
@@ -1007,4 +1013,44 @@ pre {
   margin-top: 4px;
   font-size: 11px;
   color: #a69d90;
+}
+
+.zoom-readout {
+  display: grid;
+  place-items: center;
+  min-width: 56px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  background: #303030;
+}
+.svelte-flow__controls-button:last-child {
+  border-left: 1px solid #454545;
+  font-size: 12px;
+}
+.role-settings + .role-settings {
+  border-top: 1px solid #434343;
+  padding-top: 24px;
+}
+.project-keyboard {
+  color: #969592;
+  font-size: 12px;
+  margin-top: 16px;
+}
+.connection-banner {
+  left: 50%;
+  transform: translateX(-50%);
+  width: 648px;
+  min-height: 48px;
+  padding: 8px 14px;
+  color: #e4b775;
+}
+.connection-banner strong {
+  font-weight: 500;
+  font-size: 13px;
+}
+.connection-banner span {
+  font-size: 12px;
+}
+.connection-banner button {
+  margin-left: auto;
 }

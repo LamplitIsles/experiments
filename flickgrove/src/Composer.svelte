@@ -44,7 +44,7 @@
     </div>
   {/if}
   <form class="composer" onsubmit={e => { e.preventDefault(); void send(); }}>
-    <textarea bind:this={input} bind:value={text} aria-label={m.message_orc()} aria-controls={open ? `completion-${agentId}` : undefined} aria-activedescendant={open ? `skill-${agentId}-${selection}` : undefined} placeholder={m.message_placeholder()} disabled={!connected || busy} rows="2" oninput={() => { dismissed = false; selection = 0; }} onkeydown={keydown}></textarea>
+    <textarea bind:this={input} bind:value={text} aria-label={m.message_orc()} aria-controls={open ? `completion-${agentId}` : undefined} aria-activedescendant={open ? `skill-${agentId}-${selection}` : undefined} placeholder={m.message_placeholder()} disabled={!connected || busy} rows="1" oninput={() => { dismissed = false; selection = 0; }} onkeydown={keydown}></textarea>
     <div class="composer-bottom"><span>{open ? m.completion_hint() : m.commands_skills()}</span><button class="btn btn-primary btn-sm btn-square" aria-label={m.send_message()} disabled={!text.trim() || !connected || busy} type="submit">{busy ? "…" : "↑"}</button></div>
   </form>
 </div>

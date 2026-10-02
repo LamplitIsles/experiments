@@ -159,6 +159,7 @@
         if (e.key === "Enter") { e.preventDefault(); void create(); }
       }} />
       <div class="project-list">{#each filteredProjects as project}<button class:selected={project.alias === projectId} onclick={() => projectId = project.alias} aria-label={project.name}><strong>{project.name}</strong>{#if project.name !== project.alias}<span>{project.alias}</span>{/if}</button>{:else}<p>{m.no_projects()}</p>{/each}</div>
+      <p class="project-keyboard">{m.project_keyboard()}</p>
       <div class="modal-action"><button class="btn btn-primary btn-sm" disabled={!connected || saving || !filteredProjects.some(p => p.alias === projectId)} onclick={create}>{saving ? m.sending() : m.create_session()}</button></div>
     {:else if modal === "settings"}
       <h2>{m.settings()}</h2><p class="modal-help">{m.settings_help()}</p>

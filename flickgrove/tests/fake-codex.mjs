@@ -1,5 +1,22 @@
 #!/usr/bin/env node
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 // Adapt the shared ZenCodex protocol fixture at the wire seam for this SDK.
+// This crash mode is used only with a test-owned FAKE_SERVER_ROOT.
+const crashMarker = process.env.FAKE_EXIT_AFTER_ACCEPT
+  ? join(process.env.FAKE_SERVER_ROOT, "crashed")
+  : null;
+const shouldCrash = crashMarker && !existsSync(crashMarker);
+if (crashMarker && existsSync(crashMarker)) {
+  // A fresh process has no running task, even though the fixture persisted it.
+  const statePath = join(
+    process.env.FAKE_SERVER_ROOT,
+    ".fake-app-server-state.json",
+  );
+  const state = JSON.parse(readFileSync(statePath, "utf8"));
+  state.active = null;
+  writeFileSync(statePath, JSON.stringify(state));
+}
 const write = process.stdout.write.bind(process.stdout);
 process.stdout.write = (chunk, ...args) => {
   let message;
@@ -7,6 +24,15 @@ process.stdout.write = (chunk, ...args) => {
     message = JSON.parse(String(chunk));
   } catch {
     return write(chunk, ...args);
+  }
+  if (
+    shouldCrash &&
+    ["item/completed", "turn/completed"].includes(message.method)
+  )
+    return true;
+  if (shouldCrash && message.result?.turn?.status === "inProgress") {
+    writeFileSync(crashMarker, "accepted");
+    setTimeout(() => process.exit(42), 10);
   }
   if (message.result?.data?.[0]?.serviceTiers)
     message.result.data[0].serviceTiers = [

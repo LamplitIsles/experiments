@@ -48,8 +48,9 @@ export interface Question {
 export interface Delivery {
   id: string;
   text: string;
-  status: "sending" | "sent" | "failed" | "uncertain";
+  status: "queued" | "sending" | "sent" | "failed" | "uncertain";
   source: "user" | "worker" | "question";
+  reportingWorkerId?: string;
   questionIds: string[];
   error?: string;
   at: number;
