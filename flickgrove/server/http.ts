@@ -4,6 +4,7 @@ import type { Workspace } from "./workspace";
 
 const text = z.string().trim().min(1).max(100_000);
 const defaults = z.object({
+  fast: z.boolean(),
   model: z.string().min(1),
   effort: z.string().min(1),
 });

@@ -97,5 +97,8 @@
   "close": "Close",
   "reconcile_help": "Check the conversation before confirming whether this message arrived.",
   "confirm_delivered": "Confirm delivered",
-  "confirm_not_delivered": "Confirm not delivered"
+  "confirm_not_delivered": "Confirm not delivered",
+  "fast_mode": "Fast",
+  "fast_help": "Faster responses, increased usage.",
+  "fast_unavailable": "Unavailable for this model."
 }

@@ -231,6 +231,11 @@ export class Workspace {
           ?.efforts.includes(defaults.effort)
       )
         throw new Error("Choose a supported model and reasoning effort");
+      if (
+        defaults.fast &&
+        !models.find((m) => m.id === defaults.model)?.fastTier
+      )
+        throw new Error("Fast is not available for this model");
     }
     this.state.settings = structuredClone(settings);
     this.save();
@@ -242,7 +247,11 @@ export class Workspace {
       const models = await this.models();
       const model = models.find((m) => m.isDefault) ?? models[0];
       if (!model) throw new Error("No models available");
-      const defaults = { model: model.id, effort: model.defaultEffort };
+      const defaults = {
+        model: model.id,
+        effort: model.defaultEffort,
+        fast: false,
+      };
       this.state.settings = { orc: { ...defaults }, worker: { ...defaults } };
     }
     const a: RuntimeAgent = {
@@ -252,6 +261,11 @@ export class Workspace {
       project,
       title: "New session",
       ...this.state.settings.orc,
+      serviceTier: this.state.settings.orc.fast
+        ? (await this.models()).find(
+            (m) => m.id === this.state.settings!.orc.model,
+          )!.fastTier!
+        : "default",
       state: "idle",
       closed: false,
       questions: [],
@@ -497,6 +511,11 @@ export class Workspace {
             project,
             title: input.title,
             ...this.state.settings!.worker,
+            serviceTier: this.state.settings!.worker.fast
+              ? (await this.models()).find(
+                  (m) => m.id === this.state.settings!.worker.model,
+                )!.fastTier!
+              : "default",
             state: "idle",
             closed: false,
             questions: [],

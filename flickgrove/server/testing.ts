@@ -27,6 +27,7 @@ export class FakeRuntime implements Runtime {
         efforts: ["medium", "high"],
         defaultEffort: "medium",
         isDefault: true,
+        fastTier: "priority",
       },
       {
         id: "luna",
@@ -34,6 +35,7 @@ export class FakeRuntime implements Runtime {
         efforts: ["low"],
         defaultEffort: "low",
         isDefault: false,
+        fastTier: null,
       },
     ];
   }

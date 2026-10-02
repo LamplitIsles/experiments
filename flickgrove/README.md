@@ -20,7 +20,7 @@ bun run --cwd flickgrove start --port 4319 --codex /path/to/codex --state /path/
 
 State defaults to `~/.local/share/flickgrove/workspace.sqlite`. Stop the backend with Ctrl+C. On restart, previously active sessions appear interrupted; the next message resumes their durable thread. Confirmed messages, questions, answers, ownership and captured model settings survive restart. A delivery whose acceptance is unknown is never replayed automatically: check its conversation and explicitly confirm whether it arrived before retrying or closing.
 
-Use Settings to choose the model and reasoning effort independently for new Orcs and Workers. Existing agents retain their captured settings. Session titles are generated from the first message with the same isolated lightweight-model strategy as ZenCodex.
+Use Settings to choose the model and reasoning effort independently for new Orcs and Workers. Each role also has a Fast switch when its selected model advertises the priority service tier. Fast requests faster responses with increased usage. The selected tier is captured when an agent is created and sent explicitly on thread start/resume and new turns. Existing agents retain their captured settings. Session titles are generated from the first message with the same isolated lightweight-model strategy as ZenCodex.
 
 Send ordinary instructions to Orc. Type `$` to select an enabled project skill; completion inserts the skill without sending. For example, ask Orc to delegate `$to-orc-impl` with one repository, one spec and one intended PR. Models and reasoning effort are application settings and do not belong in skill arguments. This application does not create, merge, or deploy PRs itself.
 

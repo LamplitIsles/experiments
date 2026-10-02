@@ -13,7 +13,7 @@
   let projects = $state<Project[]>([]); let models = $state<Model[]>([]);
   let connected = $state(false); let loading = $state(true); let error = $state("");
   let now = $state(Date.now()); let canvas: { fit(): void; expandFocused(): void };
-  let dialog: HTMLDialogElement; let modal = $state<"new" | "settings" | "keys" | null>(null);
+  let projectSearch = $state<HTMLInputElement>(); let dialog: HTMLDialogElement; let modal = $state<"new" | "settings" | "keys" | null>(null);
   let search = $state(""); let projectId = $state(""); let saving = $state(false);
   let settings = $state<Settings | null>(null); let sequence = 0;
   let install = $state<(Event & { prompt: () => Promise<void> }) | null>(null);
@@ -21,6 +21,7 @@
   const owner = $derived(snapshot.agents.find(a => a.id === detail?.ownerId));
   const filteredProjects = $derived(projects.filter(p => `${p.alias} ${p.name}`.toLowerCase().includes(search.toLowerCase())));
 
+  $effect(() => { if (modal === "new" && !filteredProjects.some(p => p.alias === projectId)) projectId = filteredProjects[0]?.alias ?? ""; });
   function closeDetail() { selectedId = null; detail = null; localStorage.removeItem("flickgrove/selected"); }
   async function refreshDetail(id: string) {
     const seq = ++sequence;
@@ -74,14 +75,15 @@
     if (kind === "new") { search = ""; projectId = projects[0]?.alias ?? ""; }
     if (kind === "settings") {
       const model = models.find(m => m.isDefault) ?? models[0];
-      settings = snapshot.settings ? structuredClone($state.snapshot(snapshot.settings)) : model ? { orc: { model: model.id, effort: model.defaultEffort }, worker: { model: model.id, effort: model.defaultEffort } } : null;
+      settings = snapshot.settings ? structuredClone($state.snapshot(snapshot.settings)) : model ? { orc: { model: model.id, effort: model.defaultEffort, fast: false }, worker: { model: model.id, effort: model.defaultEffort, fast: false } } : null;
     }
-    await tick(); dialog.showModal();
+    if (kind === "settings" && settings) { settings.orc.fast = !!settings.orc.fast; settings.worker.fast = !!settings.worker.fast; }
+    await tick(); dialog.showModal(); if (kind === "new") projectSearch?.focus();
   }
   function closeModal() { dialog?.close(); modal = null; }
   async function create() {
     if (!projectId || saving || !connected) return; saving = true;
-    try { const agent = await api<Agent>("/agents", { project: projectId }); closeModal(); adopt(await api<Snapshot>("/snapshot")); await open(agent.id); }
+    try { const agent = await api<Agent>("/agents", { project: projectId }); closeModal(); adopt(await api<Snapshot>("/snapshot")); await open(agent.id); await tick(); document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(); }
     catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { saving = false; }
   }
@@ -150,7 +152,7 @@
   <div class="modal-box"><button class="btn btn-sm btn-square modal-close" aria-label={m.close()} onclick={closeModal}>×</button>
     {#if modal === "new"}
       <h2>{m.new_session()}</h2><p class="modal-help">{m.choose_project()}</p>
-      <input class="input project-search" aria-label={m.search_projects()} placeholder={m.search_projects()} bind:value={search} onkeydown={e => {
+      <input bind:this={projectSearch} class="input project-search" aria-label={m.search_projects()} placeholder={m.search_projects()} bind:value={search} onkeydown={e => {
         if (e.isComposing) return;
         if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); const i = filteredProjects.findIndex(p => p.alias === projectId); projectId = filteredProjects[Math.max(0, Math.min(filteredProjects.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))]?.alias ?? ""; }
         if (e.key === "Enter") { e.preventDefault(); void create(); }
@@ -159,7 +161,7 @@
       <div class="modal-action"><button class="btn btn-primary btn-sm" disabled={!connected || saving || !filteredProjects.some(p => p.alias === projectId)} onclick={create}>{saving ? m.sending() : m.create_session()}</button></div>
     {:else if modal === "settings"}
       <h2>{m.settings()}</h2><p class="modal-help">{m.settings_help()}</p>
-      {#if settings}{#each ["orc", "worker"] as role}{@const key = role as "orc" | "worker"}<section class="role-settings"><h3>{key === "orc" ? m.orc() : m.worker()}</h3><div class="model-fields"><label>{m.model()}<select class="select" bind:value={settings[key].model} onchange={() => { if (settings) settings[key].effort = models.find(model => model.id === settings![key].model)?.defaultEffort ?? ""; }}>{#each models as model}<option value={model.id}>{model.name}</option>{/each}</select></label><label>{m.effort()}<select class="select" bind:value={settings[key].effort}>{#each models.find(model => model.id === settings![key].model)?.efforts ?? [] as effort}<option value={effort}>{effort}</option>{/each}</select></label></div></section>{/each}{/if}
+      {#if settings}{#each ["orc", "worker"] as role}{@const key = role as "orc" | "worker"}<section class="role-settings"><h3>{key === "orc" ? m.orc() : m.worker()}</h3><div class="model-fields"><label>{m.model()}<select class="select" bind:value={settings[key].model} onchange={() => { if (settings) settings[key].effort = models.find(model => model.id === settings![key].model)?.defaultEffort ?? ""; if (settings && !models.find(model => model.id === settings![key].model)?.fastTier) settings[key].fast = false; }}>{#each models as model}<option value={model.id}>{model.name}</option>{/each}</select></label><label>{m.effort()}<select class="select" bind:value={settings[key].effort}>{#each models.find(model => model.id === settings![key].model)?.efforts ?? [] as effort}<option value={effort}>{effort}</option>{/each}</select></label></div><label class="fast-setting"><span><strong>{m.fast_mode()}</strong><small>{models.find(model => model.id === settings![key].model)?.fastTier ? m.fast_help() : m.fast_unavailable()}</small></span><input type="checkbox" class="toggle toggle-primary toggle-sm" aria-label={m.fast_mode()} bind:checked={settings[key].fast} disabled={!models.find(model => model.id === settings![key].model)?.fastTier} /></label></section>{/each}{/if}
       <p class="settings-scope">{m.settings_scope()}</p><div class="modal-action">{#if install}<button class="install-link" onclick={() => install?.prompt()}>{m.install_app()}</button>{/if}<button class="btn btn-primary btn-sm" disabled={!settings || !connected || saving} onclick={saveSettings}>{saving ? m.sending() : m.save_changes()}</button></div>
     {:else if modal === "keys"}
       <h2>{m.shortcuts()}</h2><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["F", m.key_fit()], ["Esc", m.key_escape()], ["/ or $", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()], ["← →", m.key_questions()]] as [key, label]}<div><dt><kbd class="kbd kbd-sm">{key}</kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>

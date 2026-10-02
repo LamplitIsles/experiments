@@ -101,13 +101,24 @@ test("settings affect new sessions, Markdown stays safe and offline reload resto
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.screenshot({
+    path: "../.scratch/flickgrove/settings.png",
+    animations: "disabled",
+  });
   const orc = page.locator(".role-settings").first();
+  await orc.getByRole("checkbox", { name: "Fast", exact: true }).check();
   await orc
     .getByRole("combobox", { name: "Model", exact: true })
     .selectOption("luna");
   await expect(
     orc.getByRole("combobox", { name: "Reasoning effort", exact: true }),
   ).toHaveValue("low");
+  await expect(
+    orc.getByRole("checkbox", { name: "Fast", exact: true }),
+  ).not.toBeChecked();
+  await expect(
+    orc.getByRole("checkbox", { name: "Fast", exact: true }),
+  ).toBeDisabled();
   await page.getByRole("button", { name: "Save changes" }).click();
   await page
     .getByRole("button", { name: "New session", exact: true })
@@ -160,4 +171,25 @@ test("settings affect new sessions, Markdown stays safe and offline reload resto
     path: "../.scratch/flickgrove/desktop.png",
     fullPage: true,
   });
+});
+
+test("N opens the project chooser with typing focus in search", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(
+    page.getByRole("button", { name: "New session", exact: true }).first(),
+  ).toBeEnabled();
+  await page.locator("body").click({ position: { x: 100, y: 70 } });
+  await page.keyboard.press("n");
+  const search = page.getByRole("textbox", { name: "Search projects" });
+  await expect(search).toBeFocused();
+  await page.keyboard.type("Beta");
+  await expect(
+    page.getByRole("button", { name: "Alpha", exact: true }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("textbox", { name: "Message Orc" }),
+  ).toBeFocused();
 });

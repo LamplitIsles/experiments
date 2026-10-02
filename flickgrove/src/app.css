@@ -784,7 +784,10 @@ pre {
   color: #a69d90;
 }
 .model-fields .select {
-  display: block;
+  display: inline-block;
+  height: 40px;
+  line-height: 38px;
+  padding-block: 0;
   width: 100%;
   margin-top: 7px;
   background: #252321;
@@ -985,4 +988,23 @@ pre {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.fast-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 15px;
+}
+.fast-setting strong {
+  font-size: 12px;
+  font-weight: 500;
+  color: #ded8d0;
+}
+.fast-setting small {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #a69d90;
 }

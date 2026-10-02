@@ -12,8 +12,10 @@ export interface Model {
   efforts: Effort[];
   defaultEffort: Effort;
   isDefault: boolean;
+  fastTier: string | null;
 }
 export interface Defaults {
+  fast: boolean;
   model: string;
   effort: Effort;
 }
@@ -53,6 +55,7 @@ export interface Delivery {
   at: number;
 }
 export interface Agent {
+  serviceTier: string;
   id: string;
   role: Role;
   ownerId?: string;

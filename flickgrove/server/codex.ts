@@ -80,6 +80,7 @@ export class CodexRuntime implements Runtime {
           efforts: m.supportedReasoningEfforts.map((e) => e.reasoningEffort),
           defaultEffort: m.defaultReasoningEffort,
           isDefault: m.isDefault,
+          fastTier: m.serviceTiers.find((t) => t.id === "priority")?.id ?? null,
         });
       cursor = response.nextCursor;
       if (cursor && seen.has(cursor))
@@ -156,6 +157,7 @@ export class CodexRuntime implements Runtime {
     const params = {
       cwd: agent.project.path,
       model: agent.model,
+      serviceTier: agent.serviceTier ?? "default",
       approvalPolicy: "never" as const,
       sandbox: "danger-full-access" as const,
       developerInstructions: roleInstructions,
@@ -195,6 +197,7 @@ export class CodexRuntime implements Runtime {
               input,
               model: agent.model,
               effort: agent.effort as ReasoningEffort,
+              serviceTier: agent.serviceTier ?? "default",
             })
           ).turn.id;
         } catch (error) {

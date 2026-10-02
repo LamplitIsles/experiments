@@ -30,8 +30,8 @@ test("new Orcs capture defaults and retain their own project and conversation", 
   const { app } = fixture();
   const first = await app.createOrc("alpha");
   await app.saveSettings({
-    orc: { model: "luna", effort: "low" },
-    worker: { model: "sol", effort: "high" },
+    orc: { model: "luna", effort: "low", fast: false },
+    worker: { model: "sol", effort: "high", fast: true },
   });
   const second = await app.createOrc("beta");
   await app.send(first.id, "Build a reader", "message-1");
@@ -408,4 +408,30 @@ test("explicit reconciliation resolves an uncertain answer without replaying the
   expect(runtime.inputs).toHaveLength(count);
   await app.send(a.id, "/close", "close-2");
   expect(app.snapshot().agents).toEqual([]);
+});
+
+test("Fast defaults are validated and captured independently by Orcs and Workers", async () => {
+  const { app, runtime } = fixture();
+  const first = await app.createOrc("alpha");
+  await app.saveSettings({
+    orc: { model: "sol", effort: "high", fast: true },
+    worker: { model: "sol", effort: "medium", fast: false },
+  });
+  const second = await app.createOrc("alpha");
+  expect(app.detail(first.id).serviceTier).toBe("default");
+  expect(app.detail(second.id).serviceTier).toBe("priority");
+  const token = runtime.agents.get(second.id)!.token;
+  const worker = (await app.tool(token, "worker_start", {
+    project: "beta",
+    title: "Reader",
+    spec: "fixture",
+    message: "Implement",
+  })) as { id: string };
+  expect(app.detail(worker.id).serviceTier).toBe("default");
+  await expect(
+    app.saveSettings({
+      orc: { model: "luna", effort: "low", fast: true },
+      worker: { model: "sol", effort: "medium", fast: false },
+    }),
+  ).rejects.toThrow("Fast is not available");
 });

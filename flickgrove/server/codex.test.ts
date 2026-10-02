@@ -30,6 +30,7 @@ test("the SDK adapter initializes isolated role configuration, discovers enabled
         efforts: ["medium"],
         defaultEffort: "medium",
         isDefault: true,
+        fastTier: "priority",
       },
     ]);
     expect(await runtime.skills(directory)).toEqual([
@@ -43,6 +44,7 @@ test("the SDK adapter initializes isolated role configuration, discovers enabled
       title: "New session",
       model: "fixture-model",
       effort: "medium",
+      serviceTier: "priority",
       state: "idle",
       closed: false,
       questions: [],
@@ -115,6 +117,12 @@ test("the SDK adapter initializes isolated role configuration, discovers enabled
       .split("\n")
       .map((line) => JSON.parse(line));
     expect(
+      requests.find(
+        (r) =>
+          r.method === "turn/start" && r.params.threadId === handle.threadId,
+      ).params.serviceTier,
+    ).toBe("priority");
+    expect(
       requests.some(
         (r) =>
           r.method === "thread/resume" && r.params.threadId === handle.threadId,
@@ -127,6 +135,7 @@ test("the SDK adapter initializes isolated role configuration, discovers enabled
       model: "fixture-model",
       approvalPolicy: "never",
       sandbox: "danger-full-access",
+      serviceTier: "priority",
     });
     expect(
       requests.find((r) => r.method === "thread/start" && !r.params.ephemeral)

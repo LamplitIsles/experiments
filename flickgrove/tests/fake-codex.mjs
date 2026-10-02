@@ -8,6 +8,10 @@ process.stdout.write = (chunk, ...args) => {
   } catch {
     return write(chunk, ...args);
   }
+  if (message.result?.data?.[0]?.serviceTiers)
+    message.result.data[0].serviceTiers = [
+      { id: "priority", name: "Fast", description: "Faster responses" },
+    ];
   if (
     message.id != null &&
     message.result &&
