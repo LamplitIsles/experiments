@@ -20,7 +20,7 @@ bun run --cwd flickgrove start --port 4319 --codex /path/to/codex --state /path/
 
 State defaults to `~/.local/share/flickgrove/workspace.sqlite`. Stop the backend with Ctrl+C. On restart, previously active sessions appear interrupted; the next message resumes their durable thread. Confirmed messages, questions, answers, ownership and captured model settings survive restart. A delivery whose acceptance is unknown is never replayed automatically: check its conversation and explicitly confirm whether it arrived before retrying or closing.
 
-Use Settings to choose the model and reasoning effort independently for new Orcs and Workers. One global Fast switch applies to all new Orc and Worker sessions when both selected models advertise the priority service tier. Fast requests faster responses with increased usage. The selected tier is captured when an agent is created and sent explicitly on thread start/resume and new turns. Existing agents retain their captured settings. Session titles are generated from the first message with the same isolated lightweight-model strategy as ZenCodex.
+Use Settings to choose the model and reasoning effort independently for new Orcs and Workers. One global Fast switch applies to all new Orc and Worker sessions when both selected models advertise the priority service tier. Fast requests faster responses with increased usage. The selected tier is captured when an agent is created and sent explicitly on thread start/resume and new turns. Existing agents retain their captured settings. Session titles are generated from the first message in an isolated lightweight-model thread.
 
 Send ordinary instructions to Orc. Type `$` to select an enabled project skill; completion inserts the skill without sending. For example, ask Orc to delegate `$to-orc-impl` with one repository, one spec and one intended PR. Models and reasoning effort are application settings and do not belong in skill arguments. This application does not create, merge, or deploy PRs itself.
 
@@ -43,6 +43,6 @@ bun run --cwd flickgrove build
 bun run --cwd flickgrove test:browser
 ```
 
-Browser checks use installed Google Chrome with an isolated Playwright profile. All test state belongs to temporary directories; tests do not use real Codex credentials or mutate the project registry. SDK tests adapt the existing ZenCodex fake app-server at the wire boundary, and MCP checks use a real stdio client against an isolated backend. A fake process verifies protocol integration, not a live model run.
+Browser checks use installed Google Chrome with an isolated Playwright profile. All test state belongs to temporary directories; tests do not use real Codex credentials or mutate the project registry. SDK tests use the local fake app-server at the wire boundary, and MCP checks use a real stdio client against an isolated backend. A fake process verifies protocol integration, not a live model run.
 
 Implementation record: FlickNote spec **#3109**, tickets **#3110–#3113**. Design follows the refined desktop canvas/detail reference, with FlickGrove naming and the subsequent compact skill and multiple-question decisions. English UI messages use Paraglide; Markdown is rendered as Svelte tokens with raw HTML rejected and safe links.

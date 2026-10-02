@@ -5,7 +5,7 @@ import {
 } from "@jaminzhou/codex-app-server-client";
 import type { ReasoningEffort } from "@jaminzhou/codex-app-server-client/protocol";
 import { fileURLToPath } from "node:url";
-import { nameThreadFromPrompt } from "../../zencodex/src/thread-title";
+import { nameThreadFromPrompt } from "./thread-title";
 import type { Model, Skill } from "../src/contracts";
 import {
   DeliveryRejected,
