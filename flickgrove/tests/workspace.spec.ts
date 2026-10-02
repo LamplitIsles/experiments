@@ -10,7 +10,7 @@ test("create, delegate, read a Worker, insert a skill and close the tree through
     .first()
     .click();
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
-  await page.getByRole("button", { name: "Create session" }).click();
+  await page.getByRole("button", { name: /Create on/ }).click();
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Build a reader");
   await input.press("Enter");
@@ -58,7 +58,7 @@ test("multiple questions preserve drafts, contextual arrow navigation and explic
     .first()
     .click();
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
-  await page.getByRole("button", { name: "Create session" }).click();
+  await page.getByRole("button", { name: /Create on/ }).click();
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Ask me questions");
   await input.press("Enter");
@@ -128,7 +128,7 @@ test("settings affect new sessions, Markdown stays safe and offline reload resto
     .first()
     .click();
   await page.getByRole("button", { name: "Beta", exact: true }).click();
-  await page.getByRole("button", { name: "Create session" }).click();
+  await page.getByRole("button", { name: /Create on/ }).click();
   await expect(page.locator(".model-note")).toHaveText("luna / low");
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Show Markdown");

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Workspace } from "./workspace";
+import { HostService } from "./hosts";
 import { createHandler } from "./http";
 import { FakeRuntime, fixtureProjects } from "./testing";
 
@@ -16,10 +17,19 @@ test("local API creates a session, preserves work across visits and rejects fore
     projects: async () => fixtureProjects,
   });
   dispose = () => {
+    service.dispose();
     app.dispose();
     rmSync(directory, { recursive: true, force: true });
   };
-  const fetch = createHandler(app, { origin: () => "http://127.0.0.1:4321" });
+  const service = new HostService(app, {
+    directory,
+    hub: true,
+    origin: () => "http://127.0.0.1:4321",
+  });
+  const fetch = createHandler(app, {
+    service,
+    origin: () => "http://127.0.0.1:4321",
+  });
   const request = (
     path: string,
     body?: unknown,

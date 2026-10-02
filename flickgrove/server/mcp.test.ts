@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Workspace } from "./workspace";
 import { FakeRuntime, fixtureProjects } from "./testing";
+import { HostService } from "./hosts";
 import { createHandler } from "./http";
 
 test("a real stdio MCP client discovers role tools and delegates through the authenticated bridge", async () => {
@@ -21,7 +22,14 @@ test("a real stdio MCP client discovers role tools and delegates through the aut
   const http = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: createHandler(app, { origin: () => origin }),
+    fetch: createHandler(app, {
+      origin: () => origin,
+      service: new HostService(app, {
+        directory,
+        hub: false,
+        origin: () => origin,
+      }),
+    }),
   });
   origin = `http://127.0.0.1:${http.port}`;
   const clients: Client[] = [];

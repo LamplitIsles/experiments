@@ -6,7 +6,7 @@ import {
 import type { ReasoningEffort } from "@jaminzhou/codex-app-server-client/protocol";
 import { fileURLToPath } from "node:url";
 import { nameThreadFromPrompt } from "./thread-title";
-import type { Model, Skill } from "../src/contracts";
+import type { Model, Skill, WeeklyUsage } from "../src/contracts";
 import {
   DeliveryRejected,
   StaleTurn,
@@ -90,6 +90,24 @@ export class CodexRuntime implements Runtime {
     } while (cursor);
     this.catalogModels = models;
     return models;
+  }
+  async weekly(): Promise<WeeklyUsage> {
+    const result = await (
+      await this.getCatalog()
+    ).call("account/rateLimits/read", undefined, { timeoutMs: 4000 });
+    const weekly = [
+      result.rateLimits.primary,
+      result.rateLimits.secondary,
+    ].find((w) => w?.windowDurationMins === 10080);
+    return {
+      remaining:
+        weekly && Number.isFinite(weekly.usedPercent)
+          ? Math.max(0, Math.min(100, 100 - weekly.usedPercent))
+          : null,
+      resetsAt: weekly?.resetsAt ?? undefined,
+      accountId: result.accountId ?? undefined,
+      fetchedAt: Date.now(),
+    };
   }
   async skills(cwd: string): Promise<Skill[]> {
     const response = await (
@@ -226,6 +244,12 @@ export class CodexRuntime implements Runtime {
           }
           throw error;
         }
+      },
+      interrupt: async (turnId) => {
+        await client.turnInterrupt(
+          { threadId: id, turnId },
+          { timeoutMs: 4000 },
+        );
       },
       title: async (input) => {
         const models = this.catalogModels ?? (await this.models());

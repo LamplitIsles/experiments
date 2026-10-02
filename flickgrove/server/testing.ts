@@ -1,4 +1,4 @@
-import type { Model } from "../src/contracts";
+import type { Model, WeeklyUsage } from "../src/contracts";
 import type {
   Runtime,
   RuntimeAgent,
@@ -19,6 +19,16 @@ export class FakeRuntime implements Runtime {
     text: string,
     turnId?: string,
   ) => Promise<string>;
+  readonly interruptions: { agentId: string; turnId: string }[] = [];
+  interruptOverride?: (id: string, turnId: string) => Promise<void>;
+  async weekly(): Promise<WeeklyUsage> {
+    return {
+      remaining: 72,
+      fetchedAt: Date.now(),
+      accountId: "fixture-account",
+      resetsAt: 1791252000,
+    };
+  }
   async models(): Promise<Model[]> {
     return [
       {
@@ -60,6 +70,11 @@ export class FakeRuntime implements Runtime {
         return this.sendOverride
           ? this.sendOverride(agent.id, text, turnId)
           : (turnId ?? `turn-${this.inputs.length}`);
+      },
+      interrupt: async (turnId) => {
+        this.interruptions.push({ agentId: agent.id, turnId });
+        if (this.interruptOverride)
+          await this.interruptOverride(agent.id, turnId);
       },
       title: async () => undefined,
       close: async () => {

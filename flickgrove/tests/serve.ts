@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { Workspace } from "../server/workspace";
+import { HostService } from "../server/hosts";
 import { createHandler } from "../server/http";
 import { FakeRuntime, fixtureProjects } from "../server/testing";
 const directory = mkdtempSync(join(tmpdir(), "flickgrove-browser-"));
@@ -75,17 +76,25 @@ runtime.sendOverride = async (id, text) => {
   );
   return turnId;
 };
+const service = new HostService(app, {
+  directory,
+  hub: true,
+  name: "NUC",
+  origin: () => "http://127.0.0.1:14318",
+});
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: 14318,
   idleTimeout: 0,
   fetch: createHandler(app, {
     origin: () => "http://127.0.0.1:14318",
+    service,
     assets: resolve("dist"),
   }),
 });
 function cleanup() {
   server.stop(true);
+  service.dispose();
   app.dispose();
   rmSync(directory, { recursive: true, force: true });
   process.exit();

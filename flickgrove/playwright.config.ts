@@ -9,9 +9,16 @@ export default defineConfig({
     viewport: { width: 1440, height: 900 },
     trace: "retain-on-failure",
   },
-  webServer: {
-    command: "bun tests/serve.ts",
-    url: "http://127.0.0.1:14318",
-    reuseExistingServer: false,
-  },
+  webServer: [
+    {
+      command: "bun tests/serve.ts",
+      url: "http://127.0.0.1:14318",
+      reuseExistingServer: false,
+    },
+    {
+      command: "bun tests/design-serve.ts",
+      url: "http://127.0.0.1:14319",
+      reuseExistingServer: false,
+    },
+  ],
 });

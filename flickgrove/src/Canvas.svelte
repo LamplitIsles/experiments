@@ -1,42 +1,52 @@
 <script lang="ts">
+  import { storagePrefix } from "./api";
   import { tick } from "svelte";
   import { Background, Controls, ControlButton, SvelteFlow, useSvelteFlow, type Node, type Edge } from "@xyflow/svelte";
   import AgentNode from "./AgentNode.svelte";
-  import type { Agent } from "./contracts";
+  import type { Agent, Host } from "./contracts";
   import { editable } from "./api";
   import * as m from "./paraglide/messages";
-  let { agents, selectedId, now, onopen }: { agents: Agent[]; selectedId: string | null; now: number; onopen: (id: string) => void } = $props();
-  let expanded = $state<string[]>(JSON.parse(localStorage.getItem("flickgrove/expanded") ?? "[]"));
-  const positions: Record<string, { x: number; y: number }> = JSON.parse(localStorage.getItem("flickgrove/positions") ?? "{}");
+  let { agents, hosts, oncreate, selectedId, now, onopen }: { agents: Agent[]; hosts: Host[]; oncreate: (id: string) => void; selectedId: string | null; now: number; onopen: (id: string) => void } = $props();
+  let expanded = $state<string[]>(JSON.parse(localStorage.getItem(`${storagePrefix}/expanded`) ?? "[]"));
+  const positions: Record<string, { x: number; y: number }> = JSON.parse(localStorage.getItem(`${storagePrefix}/positions`) ?? "{}");
   let nodes = $state.raw<Node[]>([]); let focusedId = $state<string | null>(null);
   const flow = useSvelteFlow();
-  let viewport = $state({ x: 0, y: 0, zoom: 1 });
+  let viewport = $state(JSON.parse(localStorage.getItem(`${storagePrefix}/viewport`) ?? '{"x":0,"y":0,"zoom":1}') as { x: number; y: number; zoom: number });
+  $effect(() => { localStorage.setItem(`${storagePrefix}/viewport`, JSON.stringify(viewport)); });
+  const hostIds = $derived([...new Set(agents.map(a => a.hostId))]);
   const roots = $derived(agents.filter(a => a.role === "orc"));
-  function toggle(id: string) { expanded = expanded.includes(id) ? expanded.filter(v => v !== id) : [...expanded, id]; localStorage.setItem("flickgrove/expanded", JSON.stringify(expanded)); }
+  function toggle(id: string) { expanded = expanded.includes(id) ? expanded.filter(v => v !== id) : [...expanded, id]; localStorage.setItem(`${storagePrefix}/expanded`, JSON.stringify(expanded)); }
   $effect(() => {
     const visible = agents.filter(a => a.role === "orc" || expanded.includes(a.ownerId!));
     nodes = visible.map(a => {
-      const rootIndex = roots.findIndex(root => root.id === (a.ownerId ?? a.id));
+      const hostIndex = hostIds.indexOf(a.hostId);
+      const rootIndex = roots.filter(root => root.hostId === a.hostId).findIndex(root => root.id === (a.ownerId ?? a.id));
       const rootId = a.ownerId ?? a.id;
       let slot = rootIndex;
-      let rootPosition = positions[rootId] ?? { x: 180 + (slot % 3) * 400, y: 140 + Math.floor(slot / 3) * 360 };
+      let rootPosition = positions[rootId] ?? { x: 90 + hostIndex * 430, y: 136 + slot * 640 };
       if (!positions[rootId]) {
         while (roots.some(root => root.id !== rootId && positions[root.id]?.x === rootPosition.x && positions[root.id]?.y === rootPosition.y)) {
-          slot++; rootPosition = { x: 180 + (slot % 3) * 400, y: 140 + Math.floor(slot / 3) * 360 };
+          slot++; rootPosition = { x: 90 + hostIndex * 430, y: 136 + slot * 640 };
         }
         positions[rootId] = rootPosition;
       }
       const siblings = agents.filter(w => w.ownerId === a.ownerId && w.role === "worker");
       const childIndex = siblings.findIndex(w => w.id === a.id);
-      const position = positions[a.id] ?? (a.role === "orc" ? rootPosition : { x: rootPosition.x + childIndex * 288 - 144 * (siblings.length - 1), y: rootPosition.y + 240 });
+      const position = positions[a.id] ?? (a.role === "orc" ? rootPosition : { x: rootPosition.x + 20, y: rootPosition.y + 220 + childIndex * 150 });
       positions[a.id] ??= position;
       const children = agents.filter(w => w.ownerId === a.id);
-      return { id: a.id, type: "agent", position, width: a.role === "orc" ? 296 : 248, height: a.role === "orc" ? 148 : 108, data: { agent: a, expanded: expanded.includes(a.id), count: children.length, working: children.filter(w => w.state === "working").length, selected: selectedId === a.id, now, open: onopen, toggle } };
+      return { id: a.id, type: "agent", position, width: a.role === "orc" ? 300 : 252, height: a.role === "orc" ? 166 : 110, data: { agent: a, host: hosts.find(h => h.id === a.hostId), expanded: expanded.includes(a.id), count: children.length, working: children.filter(w => w.state === "working").length, selected: selectedId === a.id, now, open: onopen, toggle } };
     });
-    localStorage.setItem("flickgrove/positions", JSON.stringify(positions));
+    localStorage.setItem(`${storagePrefix}/positions`, JSON.stringify(positions));
   });
   const edges = $derived<Edge[]>(agents.filter(a => a.ownerId && expanded.includes(a.ownerId)).map(a => ({ id: `${a.ownerId}-${a.id}`, source: a.ownerId!, target: a.id, type: "smoothstep", selectable: false, style: "stroke: #515151; stroke-width: 1.25" })));
   export function fit() { void flow.fitView({ padding: .18, duration: 0 }); }
+  export function reveal(id: string) {
+    const node = nodes.find(n => n.id === id);
+    const element = document.querySelector(`[data-agent-id="${id}"]`);
+    const bounds = element?.getBoundingClientRect(); const canvas = element?.closest(".canvas-region")?.getBoundingClientRect();
+    if (node && bounds && canvas && (bounds.top < canvas.top || bounds.bottom > canvas.bottom || bounds.left < canvas.left || bounds.right > canvas.right)) void flow.setCenter(node.position.x + 150, node.position.y + 83, { zoom: viewport.zoom, duration: 0 });
+  }
   export function expandFocused() { const a = agents.find(a => a.id === focusedId || a.id === selectedId); if (a?.role === "orc") toggle(a.id); }
   async function keydown(event: KeyboardEvent) {
     if (editable(event.target) || event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -56,9 +66,11 @@
 <!-- The spatial canvas is a keyboard navigation surface. -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div class="canvas-region" role="region" aria-label={m.canvas()} tabindex="0" onkeydown={keydown} onfocusin={e => { if (e.target instanceof HTMLElement && e.target.dataset.agentId) focusedId = e.target.dataset.agentId; }}>
-  <SvelteFlow bind:viewport bind:nodes {edges} nodeTypes={{ agent: AgentNode }} nodesConnectable={false} elementsSelectable={false} deleteKey={null} disableKeyboardA11y nodesFocusable={false} edgesFocusable={false} minZoom={.25} maxZoom={1.5} colorMode="dark" onnodedragstop={({ nodes: moved }) => { for (const node of moved) positions[node.id] = node.position; localStorage.setItem("flickgrove/positions", JSON.stringify(positions)); }}>
+  <SvelteFlow bind:viewport bind:nodes {edges} nodeTypes={{ agent: AgentNode }} nodesConnectable={false} elementsSelectable={false} deleteKey={null} disableKeyboardA11y nodesFocusable={false} edgesFocusable={false} minZoom={.25} maxZoom={1.5} colorMode="dark" onnodedragstop={({ nodes: moved }) => { for (const node of moved) positions[node.id] = node.position; localStorage.setItem(`${storagePrefix}/positions`, JSON.stringify(positions)); }}>
     <Background gap={28} size={.6} patternColor="#474747" bgColor="#242424" />
     <Controls showZoom={false} showLock={false} showFitView={false} orientation="horizontal" position="bottom-left"><ControlButton onclick={() => flow.setZoom(viewport.zoom / 1.2)} title={m.zoom_out()} aria-label={m.zoom_out()}>−</ControlButton><span class="zoom-readout">{Math.round(viewport.zoom * 100)}%</span><ControlButton onclick={() => flow.setZoom(viewport.zoom * 1.2)} title={m.zoom_in()} aria-label={m.zoom_in()}>+</ControlButton><ControlButton onclick={fit} title={m.fit_canvas()} aria-label={m.fit_canvas()}>{m.fit_canvas()}</ControlButton></Controls>
   </SvelteFlow>
+  <div class="host-column-labels" style={`transform:translate(${viewport.x}px,${viewport.y}px) scale(${viewport.zoom})`}>{#each hostIds as id, i}<span class:host-warning={hosts.find(h => h.id === id)?.connected === false} style={`left:${90 + i * 430}px`}>{agents.find(a => a.hostId === id)?.hostName}</span>{/each}</div>
+  <div class="empty-hosts">{#each hosts.filter(h => h.connected && !agents.some(a => a.hostId === h.id)) as host}<button onclick={() => oncreate(host.id)}><strong>{host.name}</strong><span>{m.host_empty()}</span></button>{/each}</div>
   <span class="canvas-key-hint">{m.canvas_hint()}</span>
 </div>

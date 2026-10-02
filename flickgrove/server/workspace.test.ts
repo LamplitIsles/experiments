@@ -660,3 +660,184 @@ test("an oversized Worker report envelope is rejected before queue persistence",
   expect(app.detail(a.id).deliveries).toHaveLength(0);
   await app.tool(token, "worker_close", { workerId: w.id });
 });
+
+test("stop targets only the observed Orc turn, waits for authoritative interruption and leaves Workers open", async () => {
+  const { app, runtime } = fixture();
+  const orc = await app.createOrc("alpha");
+  const token = runtime.agents.get(orc.id)!.token;
+  const worker = (await app.tool(token, "worker_start", {
+    project: "alpha",
+    title: "Worker",
+    spec: "fixture",
+    message: "Work",
+  })) as { id: string };
+  await app.send(orc.id, "Work", "work");
+  const turnId = app.detail(orc.id).turnId!;
+  const stopped = await app.stop(orc.id, turnId);
+  expect(stopped.state).toBe("stopping");
+  expect(stopped.stop?.status).toBe("pending");
+  await expect(app.send(orc.id, "Do more", "more")).rejects.toThrow("outcome");
+  await expect(app.send(orc.id, "/close", "close")).rejects.toThrow(
+    "Workers first",
+  );
+  runtime.emit(orc.id, { type: "completed", turnId, status: "interrupted" });
+  expect(app.detail(orc.id).state).toBe("idle");
+  expect(app.detail(orc.id).stop?.status).toBe("confirmed");
+  expect(app.detail(worker.id).state).toBe("working");
+  expect(runtime.interruptions).toEqual([{ agentId: orc.id, turnId }]);
+  await app.send(orc.id, "Next", "next");
+  await expect(app.stop(orc.id, turnId)).rejects.toThrow("no longer");
+  expect(runtime.interruptions).toHaveLength(1);
+});
+test("normal completion wins the stop race and disconnected interruption remains unknown", async () => {
+  const { app, runtime } = fixture();
+  const orc = await app.createOrc("alpha");
+  await app.send(orc.id, "Work", "work");
+  const turnId = app.detail(orc.id).turnId!;
+  runtime.interruptOverride = async () => {
+    runtime.emit(orc.id, { type: "completed", turnId, status: "completed" });
+  };
+  expect((await app.stop(orc.id, turnId)).stop?.status).toBe("completed");
+  await app.send(orc.id, "Next", "next");
+  const next = app.detail(orc.id).turnId!;
+  runtime.interruptOverride = async () => {
+    runtime.emit(orc.id, { type: "disconnected", error: "fixture disconnect" });
+    throw new Error("fixture timeout");
+  };
+  const unknown = await app.stop(orc.id, next);
+  expect(unknown.stop?.status).toBe("unknown");
+  expect(unknown.state).toBe("error");
+  await expect(app.stop(orc.id, next)).rejects.toThrow();
+  expect(runtime.interruptions).toHaveLength(2);
+  await expect(app.send(orc.id, "/close", "close")).rejects.toThrow(
+    "still working",
+  );
+});
+test("a report during Stopping is retained for explicit retry and cannot make closing pass", async () => {
+  const { app, runtime } = fixture();
+  const orc = await app.createOrc("alpha");
+  const token = runtime.agents.get(orc.id)!.token;
+  const worker = (await app.tool(token, "worker_start", {
+    project: "alpha",
+    title: "Worker",
+    spec: "fixture",
+    message: "Work",
+  })) as { id: string };
+  await app.send(orc.id, "Work", "work");
+  const turnId = app.detail(orc.id).turnId!;
+  await app.stop(orc.id, turnId);
+  await app.tool(runtime.agents.get(worker.id)!.token, "worker_report", {
+    message: "Report retained",
+  });
+  const report = app
+    .detail(orc.id)
+    .deliveries.find((d) => d.source === "worker")!;
+  expect(report.status).toBe("failed");
+  expect(report.text).toContain("Report retained");
+  runtime.emit(orc.id, { type: "completed", turnId, status: "interrupted" });
+  runtime.emit(worker.id, {
+    type: "completed",
+    turnId: app.detail(worker.id).turnId!,
+    status: "completed",
+  });
+  await expect(
+    app.tool(token, "worker_close", { workerId: worker.id }),
+  ).rejects.toThrow("undelivered report");
+  await app.send(orc.id, report.text, report.id);
+  expect(
+    app.detail(orc.id).deliveries.find((d) => d.id === report.id)?.status,
+  ).toBe("sent");
+});
+
+test("backend restart keeps a requested stop unknown and cannot replay it against a resumed turn", async () => {
+  const { app, runtime, directory } = fixture();
+  const orc = await app.createOrc("alpha");
+  await app.send(orc.id, "Work", "work");
+  const turnId = app.detail(orc.id).turnId!;
+  await app.stop(orc.id, turnId);
+  app.dispose();
+  const nextRuntime = new FakeRuntime();
+  nextRuntime.sendOverride = async () => "resumed-turn";
+  const restarted = new Workspace({
+    directory,
+    runtime: nextRuntime,
+    projects: async () => fixtureProjects,
+  });
+  cleanups.push(() => restarted.dispose());
+  expect(restarted.detail(orc.id).stop?.status).toBe("unknown");
+  await expect(restarted.stop(orc.id, turnId)).rejects.toThrow();
+  await restarted.send(orc.id, "Explicit next turn", "next");
+  expect(restarted.detail(orc.id).stop).toBeUndefined();
+  expect(nextRuntime.interruptions).toHaveLength(0);
+  expect(runtime.interruptions).toHaveLength(1);
+});
+
+test("a late failed stop response cannot affect a new explicitly resumed turn", async () => {
+  const { app, runtime } = fixture();
+  const orc = await app.createOrc("alpha");
+  await app.send(orc.id, "Work", "work");
+  const observed = app.detail(orc.id).turnId!;
+  const release = Promise.withResolvers<void>();
+  runtime.interruptOverride = async () => {
+    await release.promise;
+    throw new Error("old request timed out");
+  };
+  const stop = app.stop(orc.id, observed);
+  runtime.emit(orc.id, { type: "disconnected", error: "lost old connection" });
+  runtime.sendOverride = async () => "explicit-new-turn";
+  await app.send(orc.id, "Explicit resume", "new");
+  release.resolve();
+  expect((await stop).turnId).toBe("explicit-new-turn");
+  expect(app.detail(orc.id).state).toBe("working");
+  expect(app.detail(orc.id).stop).toBeUndefined();
+  expect(runtime.interruptions).toEqual([
+    { agentId: orc.id, turnId: observed },
+  ]);
+});
+
+test.each(["pending", "unknown"] as const)(
+  "an in-flight stale steer retains %s Stop until authoritative completion",
+  async (status) => {
+    const { app, runtime } = fixture();
+    const orc = await app.createOrc("alpha");
+    await app.send(orc.id, "Work", "work");
+    const observed = app.detail(orc.id).turnId!;
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let sends = 0;
+    runtime.sendOverride = async () => {
+      sends++;
+      started.resolve();
+      await release.promise;
+      throw new StaleTurn("observed steer rejected");
+    };
+    const delivery = app.send(orc.id, "Steer retained", "steer");
+    await started.promise;
+    if (status === "unknown")
+      runtime.interruptOverride = async () => {
+        throw new Error("fixture timeout");
+      };
+    await app.stop(orc.id, observed);
+    release.resolve();
+    await delivery;
+    const stopped = app.detail(orc.id);
+    expect(sends).toBe(1);
+    expect(stopped.state).toBe("stopping");
+    expect(stopped.turnId).toBe(observed);
+    expect(stopped.stop).toEqual({ turnId: observed, status });
+    expect(stopped.deliveries.find((d) => d.id === "steer")?.status).toBe(
+      "failed",
+    );
+    runtime.emit(orc.id, {
+      type: "completed",
+      turnId: observed,
+      status: "interrupted",
+    });
+    runtime.sendOverride = async () => "explicit-retry";
+    await app.send(orc.id, "Steer retained", "steer");
+    expect(
+      app.detail(orc.id).deliveries.find((d) => d.id === "steer")?.status,
+    ).toBe("sent");
+    expect(app.detail(orc.id).turnId).toBe("explicit-retry");
+  },
+);

@@ -1,5 +1,5 @@
 export type Role = "orc" | "worker";
-export type WorkState = "idle" | "working" | "error";
+export type WorkState = "idle" | "working" | "stopping" | "error";
 export type Effort = string;
 export interface Project {
   alias: string;
@@ -56,6 +56,12 @@ export interface Delivery {
   at: number;
 }
 export interface Agent {
+  hostId?: string;
+  hostName?: string;
+  stop?: {
+    turnId: string;
+    status: "pending" | "unknown" | "confirmed" | "completed";
+  };
   serviceTier: string;
   id: string;
   role: Role;
@@ -76,7 +82,27 @@ export interface Detail extends Agent {
   messages: Message[];
   deliveries: Delivery[];
 }
+export interface Host {
+  id: string;
+  name: string;
+  url: string;
+  role: "hub" | "execution";
+  connected: boolean;
+  lastSeen?: number;
+  defaults: "synced" | "pending" | "failed";
+  error?: string;
+}
+export interface WeeklyUsage {
+  remaining: number | null;
+  resetsAt?: number;
+  accountId?: string;
+  fetchedAt: number;
+  hostId?: string;
+  source?: string;
+}
 export interface Snapshot {
+  hubId?: string;
+  hosts?: Host[];
   agents: Agent[];
   settings: Settings | null;
   revision: number;

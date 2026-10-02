@@ -1,6 +1,7 @@
 import { resolve, sep } from "node:path";
 import { z } from "zod";
 import type { Workspace } from "./workspace";
+import type { HostService } from "./hosts";
 
 const text = z.string().trim().min(1).max(100_000);
 const defaults = z.object({
@@ -10,24 +11,46 @@ const defaults = z.object({
 const json = (value: unknown, status = 200) =>
   Response.json(value, { status, headers: { "Cache-Control": "no-store" } });
 export function createHandler(
-  app: Workspace,
-  options: { origin: () => string; assets?: string },
+  workspace: Workspace,
+  options: {
+    origin: () => string;
+    localOrigin?: () => string;
+    assets?: string;
+    service: HostService;
+  },
 ) {
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
-    const origin = options.origin();
+    const execution = url.pathname.startsWith("/execution/");
+    const mcp = url.pathname.startsWith("/api/mcp/");
+    const origin = mcp
+      ? (options.localOrigin?.() ?? options.origin())
+      : options.origin();
     if (
       url.host !== new URL(origin).host ||
       (request.headers.get("origin") &&
         request.headers.get("origin") !== origin)
     )
-      return json({ error: "Open FlickGrove from its local address" }, 403);
-    if (
-      request.method !== "GET" &&
-      request.headers.get("origin") !== origin &&
-      !url.pathname.startsWith("/api/mcp")
-    )
-      return json({ error: "This action requires the FlickGrove page" }, 403);
+      return json(
+        { error: "Open FlickGrove from its configured address" },
+        403,
+      );
+    if (execution) {
+      if (
+        request.headers.get("authorization") !==
+        `Bearer ${options.service.credential}`
+      )
+        return json({ error: "Service authorization required" }, 401);
+      if (url.pathname === "/execution/identity" && request.method === "GET")
+        return json(options.service.identity);
+      url.pathname = "/api" + url.pathname.slice("/execution".length);
+    } else if (!mcp) {
+      if (!options.service.options.hub)
+        return json({ error: "Execution service has no browser entry" }, 404);
+      if (request.method !== "GET" && request.headers.get("origin") !== origin)
+        return json({ error: "This action requires the FlickGrove page" }, 403);
+    }
+    const app = execution ? workspace : options.service;
     try {
       if (url.pathname.startsWith("/api/mcp/")) {
         const token = /^Bearer (.+)$/.exec(
@@ -35,21 +58,44 @@ export function createHandler(
         )?.[1];
         if (!token) return json({ error: "Agent authorization required" }, 401);
         if (request.method === "GET" && url.pathname === "/api/mcp/info")
-          return json(app.identity(token));
+          return json(workspace.identity(token));
         if (request.method === "POST" && url.pathname === "/api/mcp/call") {
           const body = z
             .object({ name: z.string().min(1), arguments: z.unknown() })
             .parse(await request.json());
-          return json(await app.tool(token, body.name, body.arguments));
+          return json(await workspace.tool(token, body.name, body.arguments));
         }
         return json({ error: "Tool action not found" }, 404);
       }
+      if (
+        !execution &&
+        request.method === "POST" &&
+        url.pathname === "/api/hosts"
+      ) {
+        const body = z
+          .object({
+            id: z.string().optional(),
+            name: z.string().min(1).max(120),
+            url: z.string().min(1).max(2048),
+            credential: z.string().max(1000),
+          })
+          .parse(await request.json());
+        return json(await options.service.register(body));
+      }
+      if (request.method === "GET" && url.pathname === "/api/weekly")
+        return json(
+          await app.weekly(url.searchParams.get("host") ?? undefined),
+        );
       if (request.method === "GET" && url.pathname === "/api/snapshot")
         return json(app.snapshot());
       if (request.method === "GET" && url.pathname === "/api/projects")
-        return json(await app.projects());
+        return json(
+          await app.projects(url.searchParams.get("host") ?? undefined),
+        );
       if (request.method === "GET" && url.pathname === "/api/models")
-        return json(await app.models());
+        return json(
+          await app.models(url.searchParams.get("host") ?? undefined),
+        );
       if (request.method === "GET" && url.pathname === "/api/events") {
         let stop = () => {};
         const stream = new ReadableStream<Uint8Array>({
@@ -97,18 +143,26 @@ export function createHandler(
           await app.createOrc(
             z.object({ project: z.string().min(1) }).parse(await request.json())
               .project,
+            url.searchParams.get("host") ?? undefined,
           ),
         );
       const agentPath =
-        /^\/api\/agents\/([^/]+)(?:\/(messages|answer|skills|reconcile))?$/.exec(
+        /^\/api\/agents\/([^/]+)(?:\/(messages|answer|skills|reconcile|stop))?$/.exec(
           url.pathname,
         );
       if (agentPath) {
         const id = decodeURIComponent(agentPath[1]);
         const action = agentPath[2];
-        if (request.method === "GET" && !action) return json(app.detail(id));
+        if (request.method === "GET" && !action)
+          return json(await app.detail(id));
         if (request.method === "GET" && action === "skills")
           return json(await app.skills(id));
+        if (request.method === "POST" && action === "stop") {
+          const body = z
+            .object({ turnId: z.string().min(1) })
+            .parse(await request.json());
+          return json(await app.stop(id, body.turnId));
+        }
         if (request.method === "POST" && action === "messages") {
           const body = z
             .object({ text, requestId: z.string().min(1).max(120) })
@@ -133,7 +187,12 @@ export function createHandler(
       }
       if (url.pathname.startsWith("/api/"))
         return json({ error: "Action not found" }, 404);
-      if (request.method !== "GET" || !options.assets)
+      if (
+        request.method !== "GET" ||
+        !options.assets ||
+        !options.service.options.hub ||
+        execution
+      )
         return json({ error: "Build the FlickGrove web app first" }, 404);
       const root = resolve(options.assets);
       const path = resolve(root, `.${decodeURIComponent(url.pathname)}`);

@@ -246,6 +246,7 @@ function createNativeImage(kind, number) {
 
 async function runTurn(turn) {
   const wait = () => {
+    if (turn.status !== "inProgress") return;
     if (control().hold) return setTimeout(wait, 15);
     const text = textOf(
       turn.items
@@ -970,6 +971,53 @@ async function handle(request) {
         rpcError(-32600, "cannot start a turn while another turn is active");
       const turn = startTurn(p.input, p.clientUserMessageId);
       return { turn };
+    }
+    case "account/rateLimits/read": {
+      const weekly = {
+        usedPercent: 28,
+        windowDurationMins: 10080,
+        resetsAt: 1791252000,
+      };
+      const daily = { usedPercent: 9, windowDurationMins: 300, resetsAt: null };
+      const limits = {
+        limitId: "codex",
+        limitName: null,
+        primary: control().weeklyPrimary ? weekly : daily,
+        secondary: control().weeklyMissing
+          ? null
+          : control().weeklyPrimary
+            ? daily
+            : weekly,
+        credits: null,
+        individualLimit: null,
+        planType: "plus",
+        rateLimitReachedType: null,
+      };
+      if (control().weeklyMissing) limits.primary = null;
+      if (control().weeklyUsed !== undefined)
+        weekly.usedPercent = control().weeklyUsed;
+      return {
+        rateLimits: limits,
+        rateLimitsByLimitId: {
+          model: { ...limits, primary: { ...weekly, usedPercent: 99 } },
+        },
+        rateLimitResetCredits: null,
+        accountId: "fixture-account",
+      };
+    }
+    case "turn/interrupt": {
+      const turn = state.turns.find((t) => t.id === p.turnId);
+      if (!turn || state.active !== p.turnId)
+        rpcError(-32600, "observed turn is no longer active");
+      turn.status = "interrupted";
+      turn.completedAt = nowSeconds();
+      state.active = null;
+      save();
+      send({
+        method: "turn/completed",
+        params: { threadId: p.threadId, turn },
+      });
+      return {};
     }
     case "turn/steer":
       return steerTurn(p);

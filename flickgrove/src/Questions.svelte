@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { storagePrefix } from "./api";
   import { untrack } from "svelte";
   import type { Delivery, Question } from "./contracts";
   import { editable } from "./api";
   import * as m from "./paraglide/messages";
   let { agentId, questions, deliveries, connected, onanswer }: { agentId: string; questions: Question[]; deliveries: Delivery[]; connected: boolean; onanswer: (id: string, answer: string) => Promise<boolean> } = $props();
-  const storageKey = untrack(() => `flickgrove/questions/${agentId}`);
+  const storageKey = untrack(() => `${storagePrefix}/questions/${agentId}`);
   type Draft = { selected: string; text: string };
   let drafts = $state<Record<string, Draft>>(JSON.parse(localStorage.getItem(storageKey) ?? "{}"));
   let currentId = $state(untrack(() => localStorage.getItem(`${storageKey}/current`) ?? questions.find(q => q.state === "unanswered")?.id ?? questions[0]?.id));

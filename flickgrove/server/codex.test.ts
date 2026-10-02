@@ -256,3 +256,86 @@ test("app-server exit stops Working and an explicit message resumes the same thr
     await rm(directory, { recursive: true, force: true });
   }
 }, 10000);
+
+test("official wire interruption confirms the observed turn and weekly reads canonical 10080-minute account windows", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "grove-controls-sdk-"));
+  const control = join(directory, "control.json");
+  // This fixture's control and Codex home are exclusively test-owned.
+  await writeFile(control, JSON.stringify({ hold: true }));
+  const runtime = new CodexRuntime({
+    cwd: directory,
+    origin: () => "http://127.0.0.1:14318",
+    codexPath: fileURLToPath(
+      new URL("../tests/fake-codex.mjs", import.meta.url),
+    ),
+    env: {
+      ...process.env,
+      CODEX_HOME: join(directory, "codex-home"),
+      FAKE_SERVER_ROOT: directory,
+      FAKE_SERVER_CONTROL: control,
+    },
+  });
+  try {
+    expect((await runtime.weekly()).remaining).toBe(72);
+    await writeFile(
+      control,
+      JSON.stringify({ hold: true, weeklyPrimary: true, weeklyUsed: 120 }),
+    );
+    expect((await runtime.weekly()).remaining).toBe(0);
+    await writeFile(
+      control,
+      JSON.stringify({ hold: true, weeklyPrimary: true, weeklyUsed: -5 }),
+    );
+    expect((await runtime.weekly()).remaining).toBe(100);
+    await writeFile(
+      control,
+      JSON.stringify({ hold: true, weeklyMissing: true }),
+    );
+    expect((await runtime.weekly()).remaining).toBeNull();
+    const agent: RuntimeAgent = {
+      id: "orc",
+      token: "fixture",
+      role: "orc",
+      project: { alias: "fixture", name: "Fixture", path: directory },
+      title: "Fixture",
+      model: "fixture-model",
+      effort: "medium",
+      serviceTier: "default",
+      state: "idle",
+      closed: false,
+      questions: [],
+      messages: [],
+      deliveries: [],
+    };
+    const events: RuntimeEvent[] = [];
+    const handle = await runtime.open(agent, (event) => events.push(event));
+    const turnId = await handle.send("Work");
+    await handle.interrupt(turnId);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(events).toContainEqual({
+      type: "completed",
+      turnId,
+      status: "interrupted",
+      error: undefined,
+    });
+    await expect(handle.interrupt(turnId)).rejects.toThrow();
+    const requests = (
+      await readFile(join(directory, ".fake-app-server-requests.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((s) => JSON.parse(s));
+    expect(
+      requests
+        .filter((r) => r.method === "turn/interrupt")
+        .every(
+          (r) =>
+            r.params.turnId === turnId && r.params.threadId === handle.threadId,
+        ),
+    ).toBe(true);
+    await handle.close();
+  } finally {
+    await runtime.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

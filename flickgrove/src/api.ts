@@ -1,3 +1,4 @@
+export const storagePrefix = `flickgrove/${location.origin}`;
 export async function api<T>(
   path: string,
   body?: unknown,

@@ -1,4 +1,4 @@
-import type { Detail, Model, Skill } from "../src/contracts";
+import type { Detail, Model, Skill, WeeklyUsage } from "../src/contracts";
 
 export interface RuntimeItem {
   id: string;
@@ -26,10 +26,12 @@ export interface RuntimeAgent extends Detail {
 export interface RuntimeHandle {
   threadId: string;
   send(text: string, turnId?: string): Promise<string>;
+  interrupt(turnId: string): Promise<void>;
   title(input: string): Promise<string | undefined>;
   close(): Promise<void>;
 }
 export interface Runtime {
+  weekly(): Promise<WeeklyUsage>;
   models(): Promise<Model[]>;
   skills(cwd: string): Promise<Skill[]>;
   open(

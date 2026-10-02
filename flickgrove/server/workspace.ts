@@ -56,7 +56,8 @@ export class Workspace {
       ? JSON.parse(row.value)
       : { agents: [], settings: null, revision: 0 };
     for (const a of this.state.agents) {
-      if (a.state === "working") {
+      if (a.state === "working" || a.state === "stopping") {
+        if (a.stop?.status === "pending") a.stop.status = "unknown";
         a.state = "error";
         a.error = "Backend restarted. Send a message to resume.";
         a.turnId = undefined;
@@ -88,7 +89,11 @@ export class Workspace {
   private event(a: RuntimeAgent, event: RuntimeEvent) {
     if (a.closed || this.disposed) return;
     if (event.type === "working") {
-      a.state = "working";
+      if (a.stop && a.stop.turnId !== event.turnId) a.stop = undefined;
+      a.state =
+        a.stop?.turnId === event.turnId && a.stop.status === "pending"
+          ? "stopping"
+          : "working";
       a.turnId = event.turnId;
       a.workingSince ??= Date.now();
       a.error = undefined;
@@ -165,9 +170,13 @@ export class Workspace {
       }
       this.finalAnswers.delete(key);
       if (a.turnId === event.turnId) {
-        a.state = event.status === "completed" ? "idle" : "error";
+        const stopped =
+          a.stop?.turnId === event.turnId && event.status === "interrupted";
+        if (a.stop?.turnId === event.turnId)
+          a.stop.status = stopped ? "confirmed" : "completed";
+        a.state = stopped || event.status === "completed" ? "idle" : "error";
         a.error =
-          event.status === "completed"
+          a.state === "idle"
             ? undefined
             : (event.error ?? "Work was interrupted");
         a.turnId = undefined;
@@ -175,6 +184,7 @@ export class Workspace {
       }
     } else {
       if (event.type === "disconnected") this.handles.delete(a.id);
+      if (a.stop?.status === "pending") a.stop.status = "unknown";
       a.state = "error";
       a.error = event.error;
       a.turnId = undefined;
@@ -213,10 +223,43 @@ export class Workspace {
       deliveries: structuredClone(a.deliveries),
     };
   }
-  models() {
+  async weekly(_hostId?: string) {
+    try {
+      return await this.options.runtime.weekly();
+    } catch {
+      return { remaining: null, fetchedAt: Date.now() };
+    }
+  }
+  async stop(id: string, turnId: string) {
+    const a = this.agent(id);
+    if (
+      a.role !== "orc" ||
+      a.state !== "working" ||
+      !turnId ||
+      a.turnId !== turnId
+    )
+      throw new Error(
+        "The observed Orc turn is no longer Working. Refresh before stopping.",
+      );
+    const handle = this.handles.get(id);
+    if (!handle) throw new Error("Turn connection unavailable");
+    a.stop = { turnId, status: "pending" };
+    a.state = "stopping";
+    this.save();
+    try {
+      await handle.interrupt(turnId);
+    } catch {
+      if (a.stop?.turnId === turnId && a.stop.status === "pending") {
+        a.stop.status = "unknown";
+        this.save();
+      }
+    }
+    return this.detail(id);
+  }
+  models(_hostId?: string) {
     return this.options.runtime.models();
   }
-  projects() {
+  projects(_hostId?: string) {
     return this.options.projects();
   }
   async saveSettings(settings: Settings) {
@@ -237,7 +280,7 @@ export class Workspace {
     this.state.settings = structuredClone(settings);
     this.save();
   }
-  async createOrc(alias: string) {
+  async createOrc(alias: string, _hostId?: string) {
     const project = (await this.projects()).find((p) => p.alias === alias);
     if (!project) throw new Error("Registered project not found");
     if (!this.state.settings) {
@@ -336,6 +379,18 @@ export class Workspace {
     questionIds: string[] = [],
   ) {
     if (this.disposed) throw new Error("Workspace is stopped");
+    if (a.state === "stopping") {
+      const queued = a.deliveries.find(
+        (d) => d.id === requestId && d.status === "queued",
+      );
+      if (queued) {
+        queued.status = "failed";
+        queued.error =
+          "Orc is stopping. Report retained; retry after its observed turn outcome.";
+        this.save();
+      }
+      return this.detail(a.id);
+    }
     if (!text.trim()) throw new Error("Write a message first");
     if (text.length > 100_000) throw new Error("Message is too long");
     let d = a.deliveries.find((d) => d.id === requestId);
@@ -373,6 +428,14 @@ export class Workspace {
         turnId = await handle.send(text, activeTurn);
       } catch (error) {
         if (!(error instanceof StaleTurn)) throw error;
+        if (
+          a.stop &&
+          a.stop.turnId === activeTurn &&
+          (a.stop.status === "pending" || a.stop.status === "unknown")
+        )
+          throw new DeliveryRejected(
+            "Observed Orc turn is stopping. Delivery retained; retry explicitly after its authoritative outcome.",
+          );
         const currentTurn =
           error.activeTurnId ??
           (a.turnId !== activeTurn ? a.turnId : undefined);
@@ -380,6 +443,7 @@ export class Workspace {
         turnId = await handle.send(text, currentTurn);
       }
       if (!this.completedTurns.has(`${a.id}/${turnId}`)) a.turnId = turnId;
+      if (a.stop && a.stop.turnId !== turnId) a.stop = undefined;
       if (!a.messages.some((m) => m.id === requestId))
         a.messages.splice(messagePosition, 0, {
           id: requestId,
@@ -426,9 +490,13 @@ export class Workspace {
     return this.detail(a.id);
   }
   send(id: string, text: string, requestId: string) {
+    if (text.trim() === "/stop")
+      throw new Error("Stop requires the observed turn ID");
     if (text.trim() === "/close") return this.closeTree(id);
     return this.serialize(id, () => {
       const a = this.agent(id);
+      if (a.state === "stopping")
+        throw new Error("Wait for the observed turn outcome before sending");
       if (a.role !== "orc") throw new Error("Send instructions through Orc");
       return this.deliver(a, text, requestId, "user");
     });
@@ -455,6 +523,8 @@ export class Workspace {
       const a = this.agent(id);
       if (a.role !== "orc")
         throw new Error("Answer Worker questions through Orc");
+      if (a.state === "stopping")
+        throw new Error("Wait for the observed turn outcome before answering");
       const q = a.questions.find((q) => q.id === questionId);
       if (!q) throw new Error("Question not found");
       if (q.state === "answered") return this.detail(id);
@@ -650,7 +720,7 @@ export class Workspace {
   }
   private assertIdle(a: RuntimeAgent) {
     if (
-      a.state === "working" ||
+      a.state !== "idle" ||
       this.queues.has(a.id) ||
       this.opening.has(a.id) ||
       a.deliveries.some(
