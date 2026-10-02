@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-// Adapt the shared ZenCodex protocol fixture at the wire seam for this SDK.
+// Adapt the local protocol fixture at the wire seam for this SDK.
 // This crash mode is used only with a test-owned FAKE_SERVER_ROOT.
 const crashMarker = process.env.FAKE_EXIT_AFTER_ACCEPT
   ? join(process.env.FAKE_SERVER_ROOT, "crashed")
@@ -70,4 +70,4 @@ process.stdout.write = (chunk, ...args) => {
   }
   return write(JSON.stringify(message) + "\n", ...args);
 };
-await import("../../zencodex/src/fake-app-server-entry.mjs");
+await import("./fake-app-server-entry.mjs");

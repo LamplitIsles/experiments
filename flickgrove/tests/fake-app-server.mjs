@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 
 // Defaults keep this copied CFL fixture directly runnable through the
-// published client in zencodex tests.  Production never invokes this file.
+// published client in isolated protocol tests.  Production never invokes this file.
 const root = process.env.FAKE_SERVER_ROOT ?? process.cwd();
 const statePath =
   process.env.FAKE_SERVER_STATE ?? join(root, ".fake-app-server-state.json");
