@@ -2,6 +2,7 @@
   "name": "experiments",
   "private": true,
   "workspaces": [
+    "flickgrove",
     "flicklog",
     "utterlog",
     "zencodex"
