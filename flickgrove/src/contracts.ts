@@ -15,11 +15,11 @@ export interface Model {
   fastTier: string | null;
 }
 export interface Defaults {
-  fast: boolean;
   model: string;
   effort: Effort;
 }
 export interface Settings {
+  fast: boolean;
   orc: Defaults;
   worker: Defaults;
 }

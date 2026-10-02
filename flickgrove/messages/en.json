@@ -99,6 +99,6 @@
   "confirm_delivered": "Confirm delivered",
   "confirm_not_delivered": "Confirm not delivered",
   "fast_mode": "Fast",
-  "fast_help": "Faster responses, increased usage.",
-  "fast_unavailable": "Unavailable for this model."
+  "fast_help": "Faster responses for all new sessions, increased usage.",
+  "fast_unavailable": "Unavailable for the selected models."
 }

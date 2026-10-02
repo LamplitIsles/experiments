@@ -105,8 +105,11 @@ test("settings affect new sessions, Markdown stays safe and offline reload resto
     path: "../.scratch/flickgrove/settings.png",
     animations: "disabled",
   });
+  await expect(
+    page.getByRole("checkbox", { name: "Fast", exact: true }),
+  ).toHaveCount(1);
   const orc = page.locator(".role-settings").first();
-  await orc.getByRole("checkbox", { name: "Fast", exact: true }).check();
+  await page.getByRole("checkbox", { name: "Fast", exact: true }).check();
   await orc
     .getByRole("combobox", { name: "Model", exact: true })
     .selectOption("luna");
@@ -114,10 +117,10 @@ test("settings affect new sessions, Markdown stays safe and offline reload resto
     orc.getByRole("combobox", { name: "Reasoning effort", exact: true }),
   ).toHaveValue("low");
   await expect(
-    orc.getByRole("checkbox", { name: "Fast", exact: true }),
+    page.getByRole("checkbox", { name: "Fast", exact: true }),
   ).not.toBeChecked();
   await expect(
-    orc.getByRole("checkbox", { name: "Fast", exact: true }),
+    page.getByRole("checkbox", { name: "Fast", exact: true }),
   ).toBeDisabled();
   await page.getByRole("button", { name: "Save changes" }).click();
   await page

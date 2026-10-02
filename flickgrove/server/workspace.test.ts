@@ -30,8 +30,9 @@ test("new Orcs capture defaults and retain their own project and conversation", 
   const { app } = fixture();
   const first = await app.createOrc("alpha");
   await app.saveSettings({
-    orc: { model: "luna", effort: "low", fast: false },
-    worker: { model: "sol", effort: "high", fast: true },
+    fast: false,
+    orc: { model: "luna", effort: "low" },
+    worker: { model: "sol", effort: "high" },
   });
   const second = await app.createOrc("beta");
   await app.send(first.id, "Build a reader", "message-1");
@@ -410,13 +411,14 @@ test("explicit reconciliation resolves an uncertain answer without replaying the
   expect(app.snapshot().agents).toEqual([]);
 });
 
-test("Fast defaults are validated and captured independently by Orcs and Workers", async () => {
+test("one global Fast setting applies to new Orcs and Workers while existing sessions retain their tier", async () => {
   const { app, runtime } = fixture();
+  const settings = {
+    orc: { model: "sol", effort: "high" },
+    worker: { model: "sol", effort: "medium" },
+  };
   const first = await app.createOrc("alpha");
-  await app.saveSettings({
-    orc: { model: "sol", effort: "high", fast: true },
-    worker: { model: "sol", effort: "medium", fast: false },
-  });
+  await app.saveSettings({ ...settings, fast: true });
   const second = await app.createOrc("alpha");
   expect(app.detail(first.id).serviceTier).toBe("default");
   expect(app.detail(second.id).serviceTier).toBe("priority");
@@ -427,11 +429,17 @@ test("Fast defaults are validated and captured independently by Orcs and Workers
     spec: "fixture",
     message: "Implement",
   })) as { id: string };
-  expect(app.detail(worker.id).serviceTier).toBe("default");
+  expect(app.detail(worker.id).serviceTier).toBe("priority");
+  await app.saveSettings({ ...settings, fast: false });
+  expect(app.detail(second.id).serviceTier).toBe("priority");
+  expect(app.detail(worker.id).serviceTier).toBe("priority");
+  const third = await app.createOrc("alpha");
+  expect(app.detail(third.id).serviceTier).toBe("default");
   await expect(
     app.saveSettings({
-      orc: { model: "luna", effort: "low", fast: true },
-      worker: { model: "sol", effort: "medium", fast: false },
+      ...settings,
+      fast: true,
+      orc: { model: "luna", effort: "low" },
     }),
   ).rejects.toThrow("Fast is not available");
 });

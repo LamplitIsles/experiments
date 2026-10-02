@@ -4,7 +4,6 @@ import type { Workspace } from "./workspace";
 
 const text = z.string().trim().min(1).max(100_000);
 const defaults = z.object({
-  fast: z.boolean(),
   model: z.string().min(1),
   effort: z.string().min(1),
 });
@@ -88,7 +87,7 @@ export function createHandler(
       if (request.method === "PUT" && url.pathname === "/api/settings") {
         await app.saveSettings(
           z
-            .object({ orc: defaults, worker: defaults })
+            .object({ fast: z.boolean(), orc: defaults, worker: defaults })
             .parse(await request.json()),
         );
         return json(app.snapshot());

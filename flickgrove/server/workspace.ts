@@ -232,7 +232,7 @@ export class Workspace {
       )
         throw new Error("Choose a supported model and reasoning effort");
       if (
-        defaults.fast &&
+        settings.fast &&
         !models.find((m) => m.id === defaults.model)?.fastTier
       )
         throw new Error("Fast is not available for this model");
@@ -250,9 +250,12 @@ export class Workspace {
       const defaults = {
         model: model.id,
         effort: model.defaultEffort,
-        fast: false,
       };
-      this.state.settings = { orc: { ...defaults }, worker: { ...defaults } };
+      this.state.settings = {
+        fast: false,
+        orc: { ...defaults },
+        worker: { ...defaults },
+      };
     }
     const a: RuntimeAgent = {
       id: crypto.randomUUID(),
@@ -261,7 +264,7 @@ export class Workspace {
       project,
       title: "New session",
       ...this.state.settings.orc,
-      serviceTier: this.state.settings.orc.fast
+      serviceTier: this.state.settings.fast
         ? (await this.models()).find(
             (m) => m.id === this.state.settings!.orc.model,
           )!.fastTier!
@@ -511,7 +514,7 @@ export class Workspace {
             project,
             title: input.title,
             ...this.state.settings!.worker,
-            serviceTier: this.state.settings!.worker.fast
+            serviceTier: this.state.settings!.fast
               ? (await this.models()).find(
                   (m) => m.id === this.state.settings!.worker.model,
                 )!.fastTier!
