@@ -636,3 +636,27 @@ test("queued async-question forwarding is durable before the owner queue runs", 
   await blocker;
   await new Promise((resolve) => setTimeout(resolve, 0));
 });
+
+test("an oversized Worker report envelope is rejected before queue persistence", async () => {
+  const { app, runtime } = fixture();
+  const a = await app.createOrc("alpha");
+  const token = runtime.agents.get(a.id)!.token;
+  const w = (await app.tool(token, "worker_start", {
+    project: "alpha",
+    title: "Reader",
+    spec: "fixture",
+    message: "Implement",
+  })) as { id: string };
+  runtime.emit(w.id, {
+    type: "completed",
+    turnId: app.detail(w.id).turnId!,
+    status: "completed",
+  });
+  await expect(
+    app.tool(runtime.agents.get(w.id)!.token, "worker_report", {
+      message: "x".repeat(100_000),
+    }),
+  ).rejects.toThrow("including the Worker report header");
+  expect(app.detail(a.id).deliveries).toHaveLength(0);
+  await app.tool(token, "worker_close", { workerId: w.id });
+});

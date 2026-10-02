@@ -628,7 +628,11 @@ export class Workspace {
       }
     }
   }
-  private report(worker: RuntimeAgent, text: string, requestId: string) {
+  private async report(worker: RuntimeAgent, text: string, requestId: string) {
+    if (text.length > 100_000)
+      throw new Error(
+        "Message is too long, including the Worker report header",
+      );
     const owner = this.agent(worker.ownerId!);
     owner.deliveries.push({
       id: requestId,

@@ -196,3 +196,24 @@ test("N opens the project chooser with typing focus in search", async ({
     page.getByRole("textbox", { name: "Message Orc" }),
   ).toBeFocused();
 });
+
+test("zoom controls change the canvas and percentage while Fit all remains available", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(
+    page.getByRole("button", { name: "Zoom in", exact: true }),
+  ).toBeVisible();
+  const zoom = page.locator(".zoom-readout");
+  await expect(zoom).toHaveText("100%");
+  const viewport = page.locator(".svelte-flow__viewport");
+  const before = await viewport.getAttribute("style");
+  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+  await expect(zoom).toHaveText("120%");
+  await expect(viewport).not.toHaveAttribute("style", before!);
+  await page.getByRole("button", { name: "Zoom out", exact: true }).click();
+  await expect(zoom).toHaveText("100%");
+  await expect(
+    page.getByRole("button", { name: "Fit all", exact: true }),
+  ).toBeVisible();
+});
