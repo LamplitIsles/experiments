@@ -1,0 +1,83 @@
+export type Role = "orc" | "worker";
+export type WorkState = "idle" | "working" | "error";
+export type Effort = string;
+export interface Project {
+  alias: string;
+  name: string;
+  path: string;
+}
+export interface Model {
+  id: string;
+  name: string;
+  efforts: Effort[];
+  defaultEffort: Effort;
+  isDefault: boolean;
+}
+export interface Defaults {
+  model: string;
+  effort: Effort;
+}
+export interface Settings {
+  orc: Defaults;
+  worker: Defaults;
+}
+export interface Message {
+  id: string;
+  turnId?: string;
+  role: "user" | "assistant";
+  text: string;
+  at: number;
+}
+export interface QuestionOption {
+  label: string;
+  description?: string;
+}
+export interface Question {
+  id: string;
+  itemId: string;
+  index: number;
+  title: string;
+  text: string;
+  options: QuestionOption[];
+  state: "unanswered" | "delegated" | "answered";
+  answer?: string;
+  at: number;
+}
+export interface Delivery {
+  id: string;
+  text: string;
+  status: "sending" | "sent" | "failed" | "uncertain";
+  source: "user" | "worker" | "question";
+  questionIds: string[];
+  error?: string;
+  at: number;
+}
+export interface Agent {
+  id: string;
+  role: Role;
+  ownerId?: string;
+  project: Project;
+  title: string;
+  model: string;
+  effort: Effort;
+  state: WorkState;
+  workingSince?: number;
+  threadId?: string;
+  turnId?: string;
+  error?: string;
+  closed: boolean;
+  questions: Question[];
+}
+export interface Detail extends Agent {
+  messages: Message[];
+  deliveries: Delivery[];
+}
+export interface Snapshot {
+  agents: Agent[];
+  settings: Settings | null;
+  revision: number;
+}
+export interface Skill {
+  name: string;
+  description: string;
+}
