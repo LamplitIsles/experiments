@@ -21,7 +21,9 @@ export function searchSkills(skills: Skill[], query: string): Skill[] {
       const phrase =
         q.length > 0 &&
         name.some((_, i) => q.every((t, j) => name[i + j] === t));
-      const partial = unique.filter((t) => name.some((n) => n.includes(t)));
+      const partial = unique.filter((t) =>
+        [...names].some((n) => n.includes(t)),
+      );
       return {
         skill,
         rank: [

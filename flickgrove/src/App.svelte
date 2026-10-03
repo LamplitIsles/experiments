@@ -155,7 +155,9 @@
   function keydown(event: KeyboardEvent) {
     if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === "Escape") { if (modal) closeModal(); else closeDetail(); return; }
-    if (editable(event.target) || modal || (event.target instanceof HTMLElement && event.target.closest(".question-card"))) return;
+    if (editable(event.target) || modal) return;
+    if (event.key.toLowerCase() === "i" && detail?.role === "orc") { event.preventDefault(); document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(); return; }
+    if (event.target instanceof HTMLElement && event.target.closest(".question-card")) return;
     if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter"].includes(event.key) && !detail) { void canvas?.keydown(event); return; }
     if (event.key.toLowerCase() === "n" && connected) { event.preventDefault(); void show("new"); }
     else if (event.key.toLowerCase() === "f") { event.preventDefault(); canvas?.fit(); }
@@ -217,7 +219,7 @@
     {:else if modal === "hosts"}
       <Hosts {hosts} sessionCount={roots.length} onadopt={value => adopt(value, true)} />
     {:else if modal === "keys"}
-      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["F", m.key_fit()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()], ["← →", m.key_questions()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
+      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["F", m.key_fit()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()], ["← →", m.key_questions()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
     {/if}
     {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
   </Dialog.Content>

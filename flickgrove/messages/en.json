@@ -81,6 +81,7 @@
   "key_open": "Open the focused agent",
   "key_expand": "Expand or collapse Workers",
   "key_new": "New session",
+  "key_input": "Focus the Orc message input",
   "key_fit": "Fit all trees",
   "key_escape": "Close the top menu or panel",
   "key_completion": "Choose a command or skill",

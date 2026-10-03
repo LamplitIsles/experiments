@@ -37,7 +37,7 @@
       const position = positions[a.id] ?? (a.role === "orc" ? rootPosition : { x: rootPosition.x + 20, y: rootPosition.y + 220 + childIndex * 150 });
       positions[a.id] ??= position;
       const children = agents.filter(w => w.ownerId === a.id);
-      return { id: a.id, type: "agent", position, width: a.role === "orc" ? 300 : 252, height: a.role === "orc" ? 166 : 110, data: { agent: a, host: hosts.find(h => h.id === a.hostId), expanded: expanded.includes(a.id), count: children.length, working: children.filter(w => w.state === "working").length, selected: selectedId === a.id, navigation: focusedId === a.id, now, open: onopen, toggle } };
+      return { id: a.id, type: "agent", position, width: a.role === "orc" ? 300 : 252, height: a.role === "orc" ? 166 : 128, data: { agent: a, host: hosts.find(h => h.id === a.hostId), expanded: expanded.includes(a.id), count: children.length, working: children.filter(w => w.state === "working").length, selected: selectedId === a.id, navigation: focusedId === a.id, now, open: onopen, toggle } };
     });
     localStorage.setItem(`${storagePrefix}/positions`, JSON.stringify(positions));
   });

@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { searchSkills, tokens } from "../src/skill-search";
 describe("skill search", () => {
+  test("matches incomplete joined names across separators", () => {
+    const skill = {
+      name: "to-orc-impl",
+      description: "Delegate implementation",
+    };
+    for (const query of ["toorc", "to-orc", "ToOrc", "orcimp"])
+      expect(searchSkills([skill], query)).toEqual([skill]);
+    const exact = { name: "toorc", description: "An exact name" };
+    expect(searchSkills([skill, exact], "toorc")[0]).toEqual(exact);
+  });
   test("splits punctuation and camel case like orga", () => {
     expect(tokens("HTTPServerAudit git-review")).toEqual([
       "http",

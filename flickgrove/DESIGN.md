@@ -4,7 +4,7 @@ FlickGrove is an agent workbench: choose a host/project, open an Orc or Worker, 
 
 Use project-owned shadcn-svelte components in src/lib/components/ui and Lucide icons. DaisyUI has been removed. Keep a compact Inter-based dark surface, muted borders, blue primary actions and amber for attention states. Use one set of control sizes rather than repeated CSS overrides. Context decisions: FlickNote3159 and3160.
 
-Interaction uses pointer actions and application shortcuts. N opens creation into project search. Arrow keys locate one canvas node, Enter opens it, E expands it and F fits the canvas. The visible navigation marker wraps the full card. It is separate from an open detail and from Agent work status. Pointer actions do not create global focus highlights.
+Interaction uses pointer actions and application shortcuts. N opens creation into project search. I focuses Composer when an Orc detail is open and the user is not editing text. Arrow keys locate one canvas node, Enter opens it, E expands it and F fits the canvas. The visible navigation marker wraps the full card. It is separate from an open detail and from Agent work status. Pointer actions do not create global focus highlights. Worker cards keep their narrower width; their smaller titles show at most two lines, with space reserved for the status row.
 
 Tab is completion, not page traversal. In / command suggestions and $ skill search it accepts the current item without sending. With no candidate it keeps the input target. Shift+Tab does not introduce another navigation mode. Preserve IME and browser/system combinations. Esc handles the topmost search, dialog or detail once.
 

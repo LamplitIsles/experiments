@@ -78,6 +78,9 @@ test("multiple questions preserve drafts, contextual arrow navigation and explic
     page.getByText("Question 1 of 8", { exact: true }),
   ).toBeVisible();
   await navigation.focus();
+  await navigation.press("i");
+  await expect(input).toBeFocused();
+  await navigation.focus();
   await navigation.press("ArrowRight");
   await expect(
     page.getByText("Question 2 of 8", { exact: true }),
@@ -178,7 +181,7 @@ test("settings affect new sessions, Markdown stays safe and offline reload resto
   });
 });
 
-test("N opens the project chooser with typing focus in search", async ({
+test("N focuses creation, I focuses Composer, and canvas navigation survives detail", async ({
   page,
 }) => {
   await page.goto("/");
@@ -197,6 +200,15 @@ test("N opens the project chooser with typing focus in search", async ({
   await expect(
     page.getByRole("textbox", { name: "Message Orc" }),
   ).toBeFocused();
+  const composer = page.getByRole("textbox", { name: "Message Orc" });
+  await composer.fill("draft");
+  await page.locator(".role-project").click();
+  await expect(composer).not.toBeFocused();
+  await page.keyboard.press("i");
+  await expect(composer).toBeFocused();
+  await expect(composer).toHaveValue("draft");
+  await composer.press("i");
+  await expect(composer).toHaveValue("drafti");
   await page.keyboard.press("Escape");
   await expect(page.locator(".navigation-focus")).toHaveCount(0);
   await page.keyboard.press("f");
@@ -274,7 +286,7 @@ test("Tab completes without moving focus, skill search preserves drafts, and clo
   await expect(input).toBeFocused();
   await expect(input).toHaveValue("Draft before skill ");
   await input.press("$");
-  await search.fill("impl");
+  await search.fill("toorc");
   await search.press("Tab");
   await expect(input).toHaveValue("Draft before skill $to-orc-impl ");
   await expect(input).toBeFocused();

@@ -81,6 +81,7 @@ main {
   height: calc(100dvh - 60px);
   position: relative;
   display: flex;
+  background: #242424;
 }
 .canvas-region {
   flex: 1;
@@ -148,7 +149,7 @@ main {
 }
 .worker-node {
   width: 252px;
-  height: 110px;
+  height: 128px;
 }
 .agent-node.active {
   border-color: #6b859a;
@@ -192,6 +193,16 @@ main {
 }
 .worker-node .node-open {
   padding-top: 10px;
+}
+.worker-node .node-open strong {
+  font-size: 13px;
+  line-height: 18px;
+  min-height: 36px;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
 }
 .worker-node .node-state {
   margin-top: 10px;
