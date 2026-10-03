@@ -47,6 +47,7 @@ function qualified<T extends Agent>(host: Host, a: T): T {
     questions: a.questions,
     serviceTier: a.serviceTier,
     stop: a.stop,
+    closeRequest: a.closeRequest,
     hostId: host.id,
     hostName: host.name,
   };

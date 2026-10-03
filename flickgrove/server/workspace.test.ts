@@ -527,7 +527,11 @@ test("queued Worker reports survive restart and block closure until explicitly r
   });
   await expect(
     app.tool(token, "worker_close", { workerId: w.id }),
-  ).rejects.toThrow("undelivered report");
+  ).resolves.toMatchObject({
+    closed: false,
+    closing: true,
+    reason: expect.stringContaining("report delivery"),
+  });
   app.dispose();
   const resumedRuntime = new FakeRuntime();
   const restarted = new Workspace({
@@ -548,9 +552,13 @@ test("queued Worker reports survive restart and block closure until explicitly r
   ]);
   await expect(
     restarted.tool(resumedToken, "worker_close", { workerId: w.id }),
-  ).rejects.toThrow("undelivered report");
+  ).resolves.toMatchObject({
+    closed: false,
+    closing: true,
+    reason: expect.stringContaining("report delivery"),
+  });
   await restarted.reconcile(a.id, d.id, true);
-  await restarted.tool(resumedToken, "worker_close", { workerId: w.id });
+  expect(restarted.snapshot().agents.some((a) => a.id === w.id)).toBe(false);
   held.resolve("held-turn");
   await blocker;
   await expect(report).rejects.toThrow("Workspace is stopped");
@@ -581,11 +589,15 @@ test("a rejected Worker report blocks closing its sender and can retry the persi
   expect(d.status).toBe("failed");
   await expect(
     app.tool(token, "worker_close", { workerId: w.id }),
-  ).rejects.toThrow("undelivered report");
+  ).resolves.toMatchObject({
+    closed: false,
+    closing: true,
+    reason: expect.stringContaining("report delivery"),
+  });
   runtime.sendOverride = undefined;
   await app.send(a.id, "Attempted replacement", d.id);
   expect(runtime.inputs.at(-1)?.text).toBe(d.text);
-  await app.tool(token, "worker_close", { workerId: w.id });
+  expect(app.snapshot().agents.some((a) => a.id === w.id)).toBe(false);
 });
 
 test("queued async-question forwarding is durable before the owner queue runs", async () => {
@@ -742,7 +754,11 @@ test("a report during Stopping is retained for explicit retry and cannot make cl
   });
   await expect(
     app.tool(token, "worker_close", { workerId: worker.id }),
-  ).rejects.toThrow("undelivered report");
+  ).resolves.toMatchObject({
+    closed: false,
+    closing: true,
+    reason: expect.stringContaining("report delivery"),
+  });
   await app.send(orc.id, report.text, report.id);
   expect(
     app.detail(orc.id).deliveries.find((d) => d.id === report.id)?.status,
@@ -839,5 +855,220 @@ test.each(["pending", "unknown"] as const)(
       app.detail(orc.id).deliveries.find((d) => d.id === "steer")?.status,
     ).toBe("sent");
     expect(app.detail(orc.id).turnId).toBe("explicit-retry");
+  },
+);
+
+async function workerFixture() {
+  const f = fixture();
+  const owner = await f.app.createOrc("alpha");
+  const token = f.runtime.agents.get(owner.id)!.token;
+  const worker = (await f.app.tool(token, "worker_start", {
+    project: "alpha",
+    title: "Reader",
+    spec: "fixture",
+    message: "Implement",
+  })) as { id: string };
+  return { ...f, owner, token, worker };
+}
+
+test("Worker close waits for the observed turn, rejects new work, and keeps reports before automatic closure", async () => {
+  const { app, runtime, owner, token, worker } = await workerFixture();
+  const turnId = app.detail(worker.id).turnId!;
+  const request = { workerId: worker.id };
+  expect(await app.tool(token, "worker_close", request)).toMatchObject({
+    closed: false,
+    closing: true,
+  });
+  expect(await app.tool(token, "worker_close", request)).toMatchObject({
+    closed: false,
+    closing: true,
+  });
+  await expect(
+    app.tool(token, "worker_send", { ...request, message: "New task" }),
+  ).rejects.toThrow("awaiting closure");
+  await expect(app.send(owner.id, "/close", "premature-close")).rejects.toThrow(
+    "Worker",
+  );
+  runtime.emit(worker.id, {
+    type: "completed",
+    turnId: "stale-turn",
+    status: "completed",
+  });
+  expect(app.detail(worker.id).state).toBe("working");
+  await app.tool(runtime.agents.get(worker.id)!.token, "worker_report", {
+    message: "Implementation failed with diagnostic details",
+  });
+  runtime.emit(worker.id, {
+    type: "item",
+    turnId,
+    item: {
+      id: "final",
+      type: "agentMessage",
+      phase: "final_answer",
+      text: "Failure details",
+    },
+  });
+  runtime.emit(worker.id, {
+    type: "completed",
+    turnId,
+    status: "failed",
+    error: "Compilation failed",
+  });
+  expect(app.snapshot().agents.some((a) => a.id === worker.id)).toBe(false);
+  expect(runtime.listeners.has(worker.id)).toBe(false);
+  expect(runtime.interruptions).toHaveLength(0);
+  expect(
+    app
+      .detail(owner.id)
+      .messages.some((m) => m.text.includes("Implementation failed")),
+  ).toBe(true);
+  expect(
+    app
+      .detail(owner.id)
+      .deliveries.find((d) => d.reportingWorkerId === worker.id)?.status,
+  ).toBe("sent");
+});
+
+test("Worker closure waits for a send acknowledgement even when completion arrives first", async () => {
+  const { app, runtime, token, worker } = await workerFixture();
+  const turnId = app.detail(worker.id).turnId!;
+  const started = Promise.withResolvers<void>();
+  const held = Promise.withResolvers<string>();
+  runtime.sendOverride = async () => {
+    started.resolve();
+    return held.promise;
+  };
+  const send = app.tool(token, "worker_send", {
+    workerId: worker.id,
+    message: "Finish current implementation",
+  });
+  await started.promise;
+  await app.tool(token, "worker_close", { workerId: worker.id });
+  runtime.emit(worker.id, { type: "completed", turnId, status: "completed" });
+  expect(app.detail(worker.id).closeRequest?.reason).toContain("in-flight");
+  held.resolve(turnId);
+  await send;
+  await Promise.resolve();
+  expect(app.snapshot().agents.some((a) => a.id === worker.id)).toBe(false);
+});
+
+test("pending closure allows only contextual answers and waits for the answer turn", async () => {
+  const { app, runtime, token, worker } = await workerFixture();
+  const turnId = app.detail(worker.id).turnId!;
+  runtime.emit(worker.id, {
+    type: "item",
+    turnId,
+    item: {
+      id: "decision",
+      type: "agentMessage",
+      delivery: "async",
+      questions: [{ question: "Which format?" }],
+    },
+  });
+  await app.tool(token, "worker_close", { workerId: worker.id });
+  runtime.emit(worker.id, { type: "completed", turnId, status: "completed" });
+  await app.send(
+    app.detail(worker.id).ownerId!,
+    "Review pending decision",
+    "review-decision",
+  );
+  expect(app.detail(worker.id).closeRequest?.reason).toContain("answers");
+  await expect(
+    app.tool(token, "worker_send", {
+      workerId: worker.id,
+      message: "Unrelated task",
+      questionIds: ["unknown"],
+    }),
+  ).rejects.toThrow("Delegated question");
+  const questionId = app.detail(worker.id).questions[0].id;
+  await app.tool(token, "worker_send", {
+    workerId: worker.id,
+    message: "Use Markdown",
+    questionIds: [questionId],
+  });
+  expect(app.detail(worker.id).questions[0].state).toBe("answered");
+  expect(app.detail(worker.id).state).toBe("working");
+  runtime.emit(worker.id, {
+    type: "completed",
+    turnId: app.detail(worker.id).turnId!,
+    status: "completed",
+  });
+  expect(app.snapshot().agents.some((a) => a.id === worker.id)).toBe(false);
+});
+
+test("restart retains pending closure without pretending an interrupted turn completed", async () => {
+  const { app, runtime, directory, owner, token, worker } =
+    await workerFixture();
+  await app.tool(token, "worker_close", { workerId: worker.id });
+  await expect(
+    app.tool(token, "worker_close", {
+      workerId: worker.id,
+      confirmInterrupted: true,
+    }),
+  ).rejects.toThrow("interrupted Worker");
+  runtime.emit(worker.id, {
+    type: "error",
+    error: "Turn outcome not received",
+  });
+  app.dispose();
+  const resumedRuntime = new FakeRuntime();
+  const restarted = new Workspace({
+    directory,
+    runtime: resumedRuntime,
+    projects: async () => fixtureProjects,
+  });
+  cleanups.push(() => restarted.dispose());
+  expect(restarted.detail(worker.id)).toMatchObject({
+    state: "error",
+    closeRequest: {
+      reason: expect.stringContaining("unconfirmed"),
+    },
+  });
+  expect(resumedRuntime.inputs).toHaveLength(0);
+  await restarted.send(owner.id, "Inspect interrupted Worker", "inspect");
+  const resumedToken = resumedRuntime.agents.get(owner.id)!.token;
+  expect(
+    await restarted.tool(resumedToken, "worker_close", { workerId: worker.id }),
+  ).toMatchObject({ closing: true });
+  expect(
+    await restarted.tool(resumedToken, "worker_close", {
+      workerId: worker.id,
+      confirmInterrupted: true,
+    }),
+  ).toMatchObject({ closed: true, closing: false });
+  expect(restarted.snapshot().agents.some((a) => a.id === worker.id)).toBe(
+    false,
+  );
+});
+
+test.each([false, true])(
+  "authoritative failed completion closes a Worker even when requested afterward or preceded by error (%s)",
+  async (requestAfterCompletion) => {
+    const { app, runtime, owner, token, worker } = await workerFixture();
+    const turnId = app.detail(worker.id).turnId!;
+    await app.tool(runtime.agents.get(worker.id)!.token, "worker_report", {
+      message: "Final failure diagnosis",
+    });
+    if (!requestAfterCompletion)
+      await app.tool(token, "worker_close", { workerId: worker.id });
+    runtime.emit(worker.id, { type: "error", error: "Compilation failed" });
+    expect(app.detail(worker.id).turnId).toBe(turnId);
+    runtime.emit(worker.id, {
+      type: "completed",
+      turnId,
+      status: "failed",
+      error: "Compilation failed",
+    });
+    if (requestAfterCompletion) {
+      expect(
+        await app.tool(token, "worker_close", { workerId: worker.id }),
+      ).toMatchObject({ closed: true });
+    }
+    expect(app.snapshot().agents.some((a) => a.id === worker.id)).toBe(false);
+    expect(
+      app
+        .detail(owner.id)
+        .messages.some((m) => m.text.includes("Final failure diagnosis")),
+    ).toBe(true);
   },
 );

@@ -28,7 +28,7 @@ export const toolDefinitions = {
   },
   worker_send: {
     description:
-      "Send instructions to your Worker. Steers when busy, starts when idle. Include questionIds only for specific delegated questions this message answers.",
+      "Send instructions to your Worker. Steers when busy, starts when idle. Include questionIds only for specific delegated questions this message answers. A Worker awaiting closure only accepts answers to existing delegated questions.",
     shape: {
       workerId,
       message,
@@ -37,8 +37,8 @@ export const toolDefinitions = {
   },
   worker_close: {
     description:
-      "Close your idle Worker after its work and questions have been resolved. Cannot stop a running Worker.",
-    shape: { workerId },
+      "Request closure of your Worker. Closes immediately when ready; otherwise returns closing=true with a waiting reason and automatically closes after the current turn, questions and report deliveries resolve. Does not interrupt work. No new tasks are accepted after this request; answers to existing delegated questions remain allowed. Inspect worker_list or worker_read for pending closure reasons; do not retry closure just because work is still running. If the backend restarted or disconnected, inspect the interrupted Worker and explicitly confirmInterrupted to resolve an unknown turn outcome; delivery and question guards still apply.",
+    shape: { workerId, confirmInterrupted: z.boolean().optional() },
   },
   worker_report: {
     description:

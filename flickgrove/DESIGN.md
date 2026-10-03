@@ -12,6 +12,8 @@ Skill search has its own query field, matches names/full descriptions with Organ
 
 Render incoming Worker reports as left-aligned, initially collapsed timeline cards, with sender and a short preview. Identify them by delivery source and reportingWorkerId joined to message ID, never by text prefixes. Expand to render full Markdown. Folded state stays in the component; no extra report copy is persisted. Keep delivery errors visible beside the affected operation.
 
+Worker closure requested by Orc is durable and asynchronous: show Closing on the node and detail, with the current waiting reason in detail. Keep execution state separate, do not interrupt work, and retain delivery/question/unknown-outcome guards. Pending closure only accepts contextual answers to existing delegated questions. User `/close` remains guarded and explicit.
+
 Use Sonner for brief success feedback, including a three-second tree-close toast. Keep actionable errors beside the relevant operation. Closing detail does not close the tree; Stop interrupts Orc's observed turn, while Workers continue under the existing backend contract.
 
 Verify behavior with the isolated browser fixtures, including desktop and390px mobile, long text, disconnected hosts, settings, question answers, Stop and quota. Tests must never exercise installed credentials or live model sessions. Legacy Penpot boards retain task-flow context; their old DaisyUI styling is superseded by this migration. Use rendered screenshots to assess the current theme.

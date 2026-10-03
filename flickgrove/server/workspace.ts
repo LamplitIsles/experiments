@@ -56,7 +56,12 @@ export class Workspace {
       ? JSON.parse(row.value)
       : { agents: [], settings: null, revision: 0 };
     for (const a of this.state.agents) {
-      if (a.state === "working" || a.state === "stopping") {
+      if (
+        a.state === "working" ||
+        a.state === "stopping" ||
+        (a.state === "error" && a.turnId)
+      ) {
+        a.turnEnded = false;
         if (a.stop?.status === "pending") a.stop.status = "unknown";
         a.state = "error";
         a.error = "Backend restarted. Send a message to resume.";
@@ -71,6 +76,7 @@ export class Workspace {
         }
     }
     this.save();
+    this.advanceWorkerCloses();
   }
   private save() {
     if (this.disposed) return;
@@ -89,6 +95,7 @@ export class Workspace {
   private event(a: RuntimeAgent, event: RuntimeEvent) {
     if (a.closed || this.disposed) return;
     if (event.type === "working") {
+      a.turnEnded = false;
       if (a.stop && a.stop.turnId !== event.turnId) a.stop = undefined;
       a.state =
         a.stop?.turnId === event.turnId && a.stop.status === "pending"
@@ -170,6 +177,7 @@ export class Workspace {
       }
       this.finalAnswers.delete(key);
       if (a.turnId === event.turnId) {
+        a.turnEnded = true;
         const stopped =
           a.stop?.turnId === event.turnId && event.status === "interrupted";
         if (a.stop?.turnId === event.turnId)
@@ -183,14 +191,16 @@ export class Workspace {
         a.workingSince = undefined;
       }
     } else {
+      a.turnEnded = false;
       if (event.type === "disconnected") this.handles.delete(a.id);
       if (a.stop?.status === "pending") a.stop.status = "unknown";
       a.state = "error";
       a.error = event.error;
-      a.turnId = undefined;
+      if (event.type === "disconnected") a.turnId = undefined;
       a.workingSince = undefined;
     }
     this.save();
+    this.advanceWorkerCloses();
   }
   private agent(id: string) {
     const a = this.state.agents.find((a) => a.id === id);
@@ -200,6 +210,7 @@ export class Workspace {
   private publicAgent(a: RuntimeAgent): Agent {
     const {
       token: _token,
+      turnEnded: _turnEnded,
       messages: _messages,
       deliveries: _deliveries,
       ...agent
@@ -367,6 +378,7 @@ export class Workspace {
     void next
       .finally(() => {
         if (this.queues.get(id) === next) this.queues.delete(id);
+        this.advanceWorkerCloses();
       })
       .catch(() => {});
     return next;
@@ -379,6 +391,8 @@ export class Workspace {
     questionIds: string[] = [],
   ) {
     if (this.disposed) throw new Error("Workspace is stopped");
+    if (a.closeRequest && !questionIds.length)
+      throw new Error("Worker is awaiting closure and cannot accept new tasks");
     if (a.state === "stopping") {
       const queued = a.deliveries.find(
         (d) => d.id === requestId && d.status === "queued",
@@ -419,6 +433,7 @@ export class Workspace {
     try {
       const handle = await this.handle(a);
       const activeTurn = a.state === "working" ? a.turnId : undefined;
+      a.turnEnded = false;
       a.state = "working";
       a.workingSince ??= Date.now();
       a.error = undefined;
@@ -681,12 +696,22 @@ export class Workspace {
       case "worker_close": {
         const input = z.object(toolDefinitions.worker_close.shape).parse(args);
         const w = this.ownedWorker(a, input.workerId);
-        this.assertIdle(w);
-        w.closed = true;
+        if (input.confirmInterrupted && (w.state !== "error" || w.turnId))
+          throw new Error(
+            "Only an interrupted Worker with no observed active turn can be confirmed",
+          );
+        w.closeRequest ??= {
+          reason: "Waiting for current work to finish",
+        };
+        if (input.confirmInterrupted) w.turnEnded = true;
         this.save();
-        await this.handles.get(w.id)?.close();
-        this.handles.delete(w.id);
-        return { closed: true, workerId: w.id };
+        this.advanceWorkerCloses();
+        return {
+          closed: w.closed,
+          closing: !w.closed,
+          workerId: w.id,
+          reason: w.closed ? undefined : w.closeRequest.reason,
+        };
       }
       case "worker_report": {
         const input = z.object(toolDefinitions.worker_report.shape).parse(args);
@@ -717,6 +742,55 @@ export class Workspace {
     return this.serialize(owner.id, () =>
       this.deliver(this.agent(owner.id), text, requestId, "worker"),
     );
+  }
+  private advanceWorkerCloses() {
+    if (this.disposed) return;
+    let changed = false;
+    for (const w of this.state.agents) {
+      if (w.role !== "worker" || w.closed || !w.closeRequest) continue;
+      let reason: string | undefined;
+      if (this.queues.has(w.id) || this.opening.has(w.id))
+        reason = "Waiting for in-flight Worker operations";
+      else if (
+        w.deliveries.some((d) =>
+          ["queued", "sending", "uncertain"].includes(d.status),
+        )
+      )
+        reason = "Waiting for Worker delivery confirmation";
+      else if (
+        this.state.agents
+          .find((a) => a.id === w.ownerId)
+          ?.deliveries.some(
+            (d) => d.reportingWorkerId === w.id && d.status !== "sent",
+          )
+      )
+        reason =
+          "Waiting for report delivery to Orc; retry or reconcile unconfirmed reports";
+      else if (w.questions.some((q) => q.state !== "answered"))
+        reason = "Waiting for answers to delegated questions";
+      else if (
+        w.state === "working" ||
+        w.state === "stopping" ||
+        (w.state !== "idle" && !w.turnEnded)
+      )
+        reason =
+          w.state === "working"
+            ? "Waiting for current work to finish"
+            : "Current turn outcome is unconfirmed; inspect the Worker before resolving closure";
+      if (reason) {
+        if (w.closeRequest.reason !== reason) {
+          w.closeRequest.reason = reason;
+          changed = true;
+        }
+        continue;
+      }
+      w.closed = true;
+      changed = true;
+      const handle = this.handles.get(w.id);
+      this.handles.delete(w.id);
+      void handle?.close().catch(() => {});
+    }
+    if (changed) this.save();
   }
   private assertIdle(a: RuntimeAgent) {
     if (

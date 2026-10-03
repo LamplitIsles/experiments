@@ -149,6 +149,7 @@
   "refresh_usage": "Refresh",
   "tree_closed": "Tree closed.",
   "worker_report": "Worker report",
+  "closing_worker": "Closing",
   "current_workers": "{count} open Workers",
   "project_label": "Project",
   "retry_connection": "Retry connection",
