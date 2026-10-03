@@ -1,23 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
-async function newSession(page: Page) {
-  await expect(page.getByRole("dialog")).toBeHidden();
-  await expect(
-    page.getByRole("button", { name: "Settings", exact: true }),
-  ).toBeEnabled();
-  await page.evaluate(() => {
-    if (document.activeElement instanceof HTMLElement)
-      document.activeElement.blur();
-  });
-  await page.keyboard.press("n");
-}
-async function openSettings(page: Page) {
-  if (await page.locator(".agent-detail").count()) {
-    if (await page.getByRole("button", { name: "Close detail" }).isVisible())
-      await page.getByRole("button", { name: "Close detail" }).click();
-    else await page.getByRole("button", { name: "‹ Sessions" }).click();
-  }
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-}
+import { expect, test } from "@playwright/test";
+import { newSession, openSettings } from "./browser-actions";
 
 test("Worker reports stay in the timeline as one folded incoming card, including after Worker closure", async ({
   page,
