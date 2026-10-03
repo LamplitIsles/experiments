@@ -317,7 +317,7 @@ test("history pages move backward and a tree closes only after Orc closes its id
     limit: 1,
   })) as any;
   expect(page.worker.state).toBe("working");
-  await expect(app.send(a.id, "/close", "close-1")).rejects.toThrow("Worker");
+  await expect(app.closeTree(a.id)).rejects.toThrow("Worker");
   runtime.emit(worker.id, { type: "completed", turnId, status: "completed" });
   const latest = (await app.tool(token, "worker_read", {
     workerId: worker.id,
@@ -331,9 +331,9 @@ test("history pages move backward and a tree closes only after Orc closes its id
   })) as any;
   expect(earlier.messages[0].text).toContain("Assigned spec: #3109");
   expect(earlier.hasMore).toBe(false);
-  await expect(app.send(a.id, "/close", "close-2")).rejects.toThrow("Worker");
+  await expect(app.closeTree(a.id)).rejects.toThrow("Worker");
   await app.tool(token, "worker_close", { workerId: worker.id });
-  await app.send(a.id, "/close", "close-3");
+  await app.closeTree(a.id);
   expect(app.snapshot().agents).toEqual([]);
   expect(runtime.inputs.some((i) => i.text === "/close")).toBe(false);
 });
@@ -401,9 +401,7 @@ test("explicit reconciliation resolves an uncertain answer without replaying the
     throw new Error("Disconnected before confirmation");
   };
   await app.answer(a.id, "ask:0", "Blue");
-  await expect(app.send(a.id, "/close", "close")).rejects.toThrow(
-    "unconfirmed",
-  );
+  await expect(app.closeTree(a.id)).rejects.toThrow("unconfirmed");
   const count = runtime.inputs.length;
   const detail = await app.reconcile(a.id, "answer:ask:0", true);
   expect(detail.questions[0]).toMatchObject({
@@ -411,11 +409,9 @@ test("explicit reconciliation resolves an uncertain answer without replaying the
     answer: "Blue",
   });
   expect(runtime.inputs).toHaveLength(count);
-  await expect(app.send(a.id, "/close", "close-2")).rejects.toThrow(
-    "still working",
-  );
+  await expect(app.closeTree(a.id)).rejects.toThrow("still working");
   runtime.emit(a.id, { type: "completed", turnId, status: "completed" });
-  await app.send(a.id, "/close", "close-3");
+  await app.closeTree(a.id);
   expect(app.snapshot().agents).toEqual([]);
 });
 
@@ -467,15 +463,13 @@ test("a rejected steer preserves the active turn and prevents premature closing"
     workingSince,
   });
   expect(app.detail(a.id).deliveries.at(-1)?.status).toBe("failed");
-  await expect(app.send(a.id, "/close", "close")).rejects.toThrow(
-    "still working",
-  );
+  await expect(app.closeTree(a.id)).rejects.toThrow("still working");
   runtime.emit(a.id, {
     type: "completed",
     turnId: turnId!,
     status: "completed",
   });
-  await app.send(a.id, "/close", "close-after-completion");
+  await app.closeTree(a.id);
   expect(app.snapshot().agents).toHaveLength(0);
 });
 
@@ -689,9 +683,7 @@ test("stop targets only the observed Orc turn, waits for authoritative interrupt
   expect(stopped.state).toBe("stopping");
   expect(stopped.stop?.status).toBe("pending");
   await expect(app.send(orc.id, "Do more", "more")).rejects.toThrow("outcome");
-  await expect(app.send(orc.id, "/close", "close")).rejects.toThrow(
-    "Workers first",
-  );
+  await expect(app.closeTree(orc.id)).rejects.toThrow("Workers first");
   runtime.emit(orc.id, { type: "completed", turnId, status: "interrupted" });
   expect(app.detail(orc.id).state).toBe("idle");
   expect(app.detail(orc.id).stop?.status).toBe("confirmed");
@@ -721,9 +713,7 @@ test("normal completion wins the stop race and disconnected interruption remains
   expect(unknown.state).toBe("error");
   await expect(app.stop(orc.id, next)).rejects.toThrow();
   expect(runtime.interruptions).toHaveLength(2);
-  await expect(app.send(orc.id, "/close", "close")).rejects.toThrow(
-    "still working",
-  );
+  await expect(app.closeTree(orc.id)).rejects.toThrow("still working");
 });
 test("a report during Stopping is retained for explicit retry and cannot make closing pass", async () => {
   const { app, runtime } = fixture();
@@ -886,9 +876,7 @@ test("Worker close waits for the observed turn, rejects new work, and keeps repo
   await expect(
     app.tool(token, "worker_send", { ...request, message: "New task" }),
   ).rejects.toThrow("awaiting closure");
-  await expect(app.send(owner.id, "/close", "premature-close")).rejects.toThrow(
-    "Worker",
-  );
+  await expect(app.closeTree(owner.id)).rejects.toThrow("Worker");
   runtime.emit(worker.id, {
     type: "completed",
     turnId: "stale-turn",
@@ -1195,4 +1183,14 @@ test("a rejected rename after disconnect preserves the visible and persisted tit
   cleanups.push(() => restored.dispose());
   await Bun.sleep(0);
   expect(restored.detail(owner.id).title).toBe("Old visible name");
+});
+
+test("slash text is ordinary message content, with no Close or Stop command dispatch", async () => {
+  const { app, runtime } = fixture();
+  const orc = await app.createOrc("alpha");
+  await app.send(orc.id, "/stop", "literal-stop");
+  await app.send(orc.id, "/close", "literal-close");
+  expect(runtime.inputs.map((i) => i.text)).toEqual(["/stop", "/close"]);
+  expect(runtime.interruptions).toHaveLength(0);
+  expect(app.snapshot().agents.some((a) => a.id === orc.id)).toBe(true);
 });

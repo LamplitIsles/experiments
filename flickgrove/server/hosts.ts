@@ -523,6 +523,9 @@ export class HostService {
       this.workspace.send(id, text, requestId),
     );
   }
+  closeTree(id: string) {
+    return this.mutate(id, "close", {}, (id) => this.workspace.closeTree(id));
+  }
   rename(id: string, title: string) {
     return this.mutate(id, "title", { title }, (id) =>
       this.workspace.rename(id, title),

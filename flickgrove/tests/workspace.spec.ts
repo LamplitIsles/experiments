@@ -62,9 +62,7 @@ test("Worker reports stay in the timeline as one folded incoming card, including
     path: "../.scratch/flickgrove-shadcn/worker-report.png",
     animations: "disabled",
   });
-  await input.fill("/close");
-  await input.press("Enter");
-  await input.press("Enter");
+  await page.keyboard.press("Alt+x");
   await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
 });
 
@@ -101,18 +99,14 @@ test("create, delegate, read a Worker, insert a skill and close the tree through
   await expect(page.getByRole("option", { name: /to-orc-impl/ })).toBeVisible();
   await page.getByRole("combobox", { name: "Search skills…" }).press("Tab");
   await expect(input).toHaveValue("$to-orc-impl ");
-  await input.fill("/close");
-  await input.press("Enter");
-  await input.press("Enter");
+  await page.keyboard.press("Alt+x");
   await expect(page.getByRole("alert")).toContainText("Workers first");
   await input.fill("Close the workers");
   await input.press("Enter");
   await expect(
     page.getByText("Workers are closed.", { exact: true }),
   ).toBeVisible();
-  await input.fill("/close");
-  await input.press("Enter");
-  await input.press("Enter");
+  await page.keyboard.press("Alt+x");
   await expect(page.getByText("A place for your next task.")).toBeVisible();
 });
 
@@ -327,12 +321,12 @@ test("Tab completes without moving focus, skill search preserves drafts, and clo
   await expect(input).toBeFocused();
   await input.fill("/cl");
   await input.press("Tab");
-  await expect(input).toHaveValue("/close");
+  await expect(input).toHaveValue("/cl");
   await expect(input).toBeFocused();
   await expect(
     page.getByRole("textbox", { name: "Message Orc" }),
   ).toBeVisible();
-  await input.press("Enter");
+  await page.keyboard.press("Alt+x");
   await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
   await expect(page.getByText("Tree closed.", { exact: true })).toHaveCount(0, {
     timeout: 6500,
@@ -388,9 +382,7 @@ test("Orc closure of a running Worker shows Closing and automatically removes it
   await expect(report.locator(".report-content")).toContainText(
     "Long Worker final report",
   );
-  await input.fill("/close");
-  await input.press("Enter");
-  await input.press("Enter");
+  await page.keyboard.press("Alt+x");
   await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
 });
 
@@ -497,8 +489,6 @@ test("Orc titles edit in place, cancel safely, retain failed drafts and persist 
   await expect(
     page.getByText("Workers are closed.", { exact: true }),
   ).toBeVisible();
-  await composer.fill("/close");
-  await composer.press("Enter");
-  await composer.press("Enter");
+  await page.keyboard.press("Alt+x");
   await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
 });

@@ -31,6 +31,7 @@ let usage: number | null = 72;
 let stopMode = "pending";
 let peerDrop = false;
 let freshNoWorkers = false;
+let longConversations = false;
 let units: ReturnType<typeof unit>[] = [];
 let current: ReturnType<typeof unit>;
 let peer: ReturnType<typeof unit>;
@@ -75,6 +76,14 @@ function unit(
       defaultEffort: "low",
       isDefault: false,
       fastTier: "priority",
+    },
+  ];
+  runtime.skills = async () => [
+    { name: "to-orc-impl", description: "Implement one spec with one Worker" },
+    {
+      name: "review-code-and-tests",
+      description: "Review code and verify tests",
+      shortDescription: "Review changes",
     },
   ];
   runtime.weekly = async (): Promise<WeeklyUsage> => ({
@@ -133,31 +142,44 @@ function agent(
     closed: false,
     questions: [],
     deliveries: [],
-    messages: freshNoWorkers
+    messages: longConversations
       ? [
           {
-            id: "user",
-            role: "user",
-            text: "Review the voice input requirements.",
+            id: "long",
+            role: "assistant",
+            text: Array.from(
+              { length: 70 },
+              (_, i) =>
+                `Paragraph ${i + 1}. Long conversation fixture for reading and following new messages.`,
+            ).join("\n\n"),
             at: Date.now(),
           },
         ]
-      : role === "orc"
+      : freshNoWorkers
         ? [
             {
               id: "user",
               role: "user",
-              text: "Add streaming voice input and coordinate both projects.",
-              at: Date.now(),
-            },
-            {
-              id: "assistant",
-              role: "assistant",
-              text: "I’ve started two Workers.\n\nVoice input is implementing the change.  \nDocumentation is updating the guide.\n\nI’ll review both results before asking you to merge.",
+              text: "Review the voice input requirements.",
               at: Date.now(),
             },
           ]
-        : [],
+        : role === "orc"
+          ? [
+              {
+                id: "user",
+                role: "user",
+                text: "Add streaming voice input and coordinate both projects.",
+                at: Date.now(),
+              },
+              {
+                id: "assistant",
+                role: "assistant",
+                text: "I’ve started two Workers.\n\nVoice input is implementing the change.  \nDocumentation is updating the guide.\n\nI’ll review both results before asking you to merge.",
+                at: Date.now(),
+              },
+            ]
+          : [],
   };
 }
 async function reset(mode = "working") {
@@ -168,6 +190,7 @@ async function reset(mode = "working") {
   }
   units = [];
   freshNoWorkers = mode === "no-workers";
+  longConversations = mode === "long";
   peerDrop = false;
   usage = 72;
   stopMode = "pending";
@@ -284,7 +307,27 @@ const server = Bun.serve({
         complete?: string;
         question?: boolean;
         restartHub?: boolean;
+        append?: { agentId: string; text: string };
       };
+      if (body.append) {
+        const id = body.append.agentId;
+        const turnId = current.app.detail(id).turnId ?? crypto.randomUUID();
+        current.runtime.emit(id, {
+          type: "item",
+          turnId,
+          item: {
+            id: crypto.randomUUID(),
+            type: "agentMessage",
+            phase: "final_answer",
+            text: body.append.text,
+          },
+        });
+        current.runtime.emit(id, {
+          type: "completed",
+          turnId,
+          status: "completed",
+        });
+      }
       if (body.outage !== undefined) peerDrop = body.outage;
       if (body.usage !== undefined) usage = body.usage;
       if (body.stopMode) stopMode = body.stopMode;

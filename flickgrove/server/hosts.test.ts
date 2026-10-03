@@ -345,7 +345,7 @@ test("unknown mutation response is not replayed; rejected close preserves connec
   expect(result.deliveries[0].status).toBe("uncertain");
   await hub.service.refresh();
   expect(peer.runtime.inputs).toHaveLength(1);
-  await expect(hub.service.send(agent.id, "/close", "close")).rejects.toThrow(
+  await expect(hub.service.closeTree(agent.id)).rejects.toThrow(
     "unconfirmed delivery",
   );
   expect(
@@ -460,3 +460,40 @@ test.each([true, false])(
     expect(peer.app.detail(orc.id).effort).toBe("medium");
   },
 );
+
+test("dedicated Close reaches the execution owner, preserves guards and never sends a message", async () => {
+  const hub = fixture(true),
+    peer = fixture(false);
+  await hub.service.register({
+    name: "Mac",
+    url: peer.origin,
+    credential: peer.service.credential,
+  });
+  for (const hostId of [hub.service.identity.id, peer.service.identity.id]) {
+    const agent = await hub.service.createOrc("alpha", hostId);
+    const closed = await hub.request(`/api/agents/${agent.id}/close`, {});
+    expect(closed.status).toBe(200);
+    expect(await closed.json()).toMatchObject({ closed: true });
+    expect(hub.service.snapshot().agents.some((a) => a.id === agent.id)).toBe(
+      false,
+    );
+  }
+  expect(hub.runtime.inputs).toHaveLength(0);
+  expect(peer.runtime.inputs).toHaveLength(0);
+  const agent = await hub.service.createOrc("alpha", peer.service.identity.id);
+  await hub.service.send(agent.id, "Work", "working");
+  const rejected = await hub.request(`/api/agents/${agent.id}/close`, {});
+  expect(rejected.status).toBe(400);
+  expect(peer.runtime.inputs).toHaveLength(1);
+  expect(hub.service.snapshot().agents.some((a) => a.id === agent.id)).toBe(
+    true,
+  );
+  expect(
+    (
+      await peer.request(
+        `/execution/agents/${peer.app.snapshot().agents[0].id}/close`,
+        {},
+      )
+    ).status,
+  ).toBe(401);
+});

@@ -25,7 +25,7 @@
   let detail = $state<Detail | null>(null); let skills = $state<Skill[]>([]);
   let projects = $state<Project[]>([]); let models = $state<Model[]>([]);
   let connected = $state(false); let loading = $state(true); let error = $state("");
-  let now = $state(Date.now()); let sessionList: { keydown(event: KeyboardEvent): Promise<void>; expandFocused(): void; reveal(id: string): Promise<void> };
+  let now = $state(Date.now()); let sessionList: { keydown(event: KeyboardEvent): Promise<void>; expandFocused(): void; reveal(id: string): Promise<void>; closeTarget(): string | null };
   let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | null>(null);
   let search = $state(""); let projectId = $state(""); let saving = $state(false);
   let settings = $state<Settings | null>(null); let sequence = 0; let focusCreatedId = $state<string | null>(null);
@@ -138,12 +138,24 @@
   async function send(text: string, requestId: string) {
     if (!selectedId || !hostConnected) return false; error = ""; const id = selectedId;
     try {
-      if (text === "/stop") return await stop();
-      const result = await api<Detail | { closed: true }>(`/agents/${id}/messages`, { text, requestId });
-      if ("closed" in result && result.closed) { closeDetail(); toast.success(m.tree_closed(), { duration: 3000 }); adopt(await api<Snapshot>("/snapshot")); return true; }
-      if (selectedId === id) detail = result as Detail;
-      return (result as Detail).deliveries.find(d => d.id === requestId)?.status === "sent";
+      const result = await api<Detail>(`/agents/${id}/messages`, { text, requestId });
+      if (selectedId === id) detail = result;
+      return result.deliveries.find(d => d.id === requestId)?.status === "sent";
     } catch (e) { error = e instanceof Error ? e.message : m.load_failure(); return false; }
+  }
+  let closingId = $state<string | null>(null);
+  let closeError = $state<{ id: string; reason: string } | null>(null);
+  async function closeTree(id: string) {
+    if (closingId) return;
+    closeError = null;
+    if (!connected || hosts.find(h => h.id === snapshot.agents.find(a => a.id === id)?.hostId)?.connected === false) { closeError = { id, reason: m.host_offline() }; return; }
+    closingId = id;
+    try {
+      await api(`/agents/${id}/close`, {});
+      toast.success(m.tree_closed(), { duration: 3000 });
+      adopt(await api<Snapshot>("/snapshot"));
+    } catch(e) { closeError = { id, reason: e instanceof Error ? e.message : m.load_failure() }; }
+    finally { closingId = null; }
   }
   async function rename(title: string) {
     if (!selectedId || !hostConnected) return m.host_offline();
@@ -173,7 +185,15 @@
     catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
   }
   function keydown(event: KeyboardEvent) {
-    if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.defaultPrevented || event.isComposing) return;
+    if (event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && event.code === "KeyX") {
+      event.preventDefault();
+      if (navigation.surfaces.length) return;
+      const id = navigation.details.length ? (detail?.role === "orc" ? detail.id : null) : sessionList?.closeTarget();
+      if (id && !event.repeat) void closeTree(id);
+      return;
+    }
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === "Escape") {
       event.preventDefault(); void back();
       return;
@@ -211,11 +231,11 @@
   <div class="header-actions"><Weekly hostId={detail?.hostId ?? snapshot.hubId} connected={connected && (selectedHost?.connected ?? true)} /><Button variant="ghost" size="icon-sm" aria-label={m.settings()} disabled={!connected} onclick={() => show("settings")}><SettingsIcon /></Button></div>
 </header>
 <main class:with-detail={!!selectedId}>
-  <SessionList bind:this={sessionList} agents={visibleAgents} {hosts} {selectedId} {loading} {connected} onopen={open} onnew={() => show("new")} />
+  <SessionList bind:this={sessionList} agents={visibleAgents} {hosts} {selectedId} {loading} {connected} {closingId} closeError={selectedId === closeError?.id ? null : closeError} onclosetree={closeTree} onopen={open} onnew={() => show("new")} />
   {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !detail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
   {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
   {#if error && !modal && !detail}<div class="app-error" role="alert"><span>{error}</span><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => error = ""}><X /></Button></div>{/if}
-  {#if detail && selectedId}{#key detail.id}<AgentDetail {detail} {owner} {skills} {now} connected={hostConnected} onstop={stop} onrename={rename} onrefresh={load} actionError={error} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answer} onreconcile={reconcile} />{/key}{/if}
+  {#if detail && selectedId}{#key detail.id}<AgentDetail {detail} {owner} {skills} {now} connected={hostConnected} onstop={stop} onrename={rename} onrefresh={load} actionError={error} closeError={closeError?.id === detail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answer} onreconcile={reconcile} />{/key}{/if}
 </main>
 
 <Dialog.Root open={modalOpen} onOpenChange={value => { if (!value && modal) void closeModal(); }}>
@@ -238,7 +258,7 @@
       <p class="settings-scope">{m.settings_scope()}</p><div class="modal-action">{#if install}<button class="install-link" onclick={() => install?.prompt()}>{m.install_app()}</button>{/if}<Button variant="default" size="sm" disabled={!settings || !connected || saving} onclick={saveSettings}>{saving ? m.sending() : m.save_changes()}</Button></div>
       <details class="settings-hosts"><summary>{m.hosts()}</summary><Hosts {hosts} sessionCount={roots.length} onadopt={value => adopt(value, true)} /></details>
     {:else if modal === "keys"}
-      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()], ["← →", m.key_questions()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
+      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Option/Alt + X", m.close_tree()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()], ["← →", m.key_questions()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
     {/if}
     {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
   </Dialog.Content>

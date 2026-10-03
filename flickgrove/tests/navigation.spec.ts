@@ -296,10 +296,8 @@ test("a closed historical target stays closed on Forward", async ({
   await page
     .getByRole("button", { name: "Open Streaming voice input Orc" })
     .click();
-  const input = page.getByRole("textbox", { name: "Message Orc" });
-  await input.fill("/close");
-  await input.press("Tab");
-  await input.press("Enter");
+  await expect(page.locator(".role-project")).toContainText("Orc");
+  await page.keyboard.press("Alt+x");
   await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
   await expect(page.locator(".agent-detail")).toHaveCount(0);
   await page.goForward();

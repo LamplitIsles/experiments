@@ -529,9 +529,6 @@ export class Workspace {
     return this.detail(a.id);
   }
   send(id: string, text: string, requestId: string) {
-    if (text.trim() === "/stop")
-      throw new Error("Stop requires the observed turn ID");
-    if (text.trim() === "/close") return this.closeTree(id);
     return this.serialize(id, () => {
       const a = this.agent(id);
       if (a.state === "stopping")
@@ -540,7 +537,7 @@ export class Workspace {
       return this.deliver(a, text, requestId, "user");
     });
   }
-  private async closeTree(id: string) {
+  async closeTree(id: string) {
     const a = this.agent(id);
     if (a.role !== "orc") throw new Error("Only Orc can close Workers");
     const workers = this.state.agents.filter(
