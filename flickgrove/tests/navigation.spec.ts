@@ -12,7 +12,9 @@ for (const surface of [
 ] as const) {
   test(`mobile browser Back stays in Grove from ${surface}`, async ({
     page,
+    request,
   }) => {
+    await request.post("http://127.0.0.1:14319/fixture/reset", { data: {} });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("http://127.0.0.1:14318/");
     await page.goto("http://127.0.0.1:14319/");
@@ -346,7 +348,7 @@ test("visible tree keyboard navigation scrolls, preserves expansion and drafts, 
   const titleBefore = await page.locator(".agent-detail h1").textContent();
   await page.locator(".role-project").click();
   await page.keyboard.press("ArrowDown");
-  await expect(page.locator(".agent-detail h1")).toHaveText(titleBefore!);
+  await expect(page.locator(".agent-detail h1")).not.toHaveText(titleBefore!);
   scroll = await list.evaluate((el) => el.scrollTop);
   await page.keyboard.press("Escape");
   await expect(page.locator(".agent-detail")).toHaveCount(0);

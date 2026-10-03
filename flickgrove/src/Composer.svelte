@@ -11,6 +11,7 @@
   let { agentId, project, skills, connected, working = false, stopping = false, onstop, onsend }: { agentId: string; project: string; skills: Skill[]; connected: boolean; working?: boolean; stopping?: boolean; onstop?: () => Promise<boolean>; onsend: (text: string, requestId: string) => Promise<boolean> } = $props();
   let text = $state(untrack(() => localStorage.getItem(`${storagePrefix}/composer/${agentId}`) ?? ''));
   let busy = $state(false); let input = $state<HTMLTextAreaElement | null>(null);
+  let composing = false;
   const skillOpen = $derived(navigation.surfaces.includes("skill")); let insertion = {start:0,end:0};
   $effect(() => { localStorage.setItem(`${storagePrefix}/composer/${agentId}`, text); });
   async function restoreInput() { await tick(); input?.focus(); input?.setSelectionRange(insertion.start,insertion.end); }
@@ -21,7 +22,7 @@
     setSurface("skill", false); await restoreInput();
   }
   async function send() {
-    if(!text.trim() || busy || !connected || stopping) return;
+    if(composing || !text.trim() || busy || !connected || stopping) return;
     busy = true;
     try { if(await onsend(text.trim(),crypto.randomUUID())) { text=''; } }
     finally { busy=false; await tick(); input?.focus(); }
@@ -31,10 +32,11 @@
     insertion={start:input.selectionStart,end:input.selectionEnd}; setSurface("skill", true); return true;
   }
   function beforeinput(e:InputEvent) {
-    if(!e.isComposing && e.cancelable && e.inputType === 'insertText' && e.data === '$' && openSkills()) e.preventDefault();
+    if(!composing && !e.isComposing && e.cancelable && e.inputType === 'insertText' && e.data === '$' && openSkills()) e.preventDefault();
   }
   async function keydown(e:KeyboardEvent) {
-    if(e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+    // WebKit may end composition before the confirming Enter keydown.
+    if(composing || e.isComposing || e.keyCode === 229 || e.ctrlKey || e.metaKey || e.altKey) return;
     if(e.key === '$' && openSkills()) { e.preventDefault(); e.stopPropagation(); return; }
     if(e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); return; }
     if(e.key==='Enter' && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); await send(); }
@@ -43,7 +45,7 @@
 <div class="composer-wrap">
   <SkillSearch bind:open={() => skillOpen, value => setSurface("skill", value)} {skills} {project} onselect={skill => void insertSkill(skill)} onclose={() => void restoreInput()} />
   <form class="composer" onsubmit={e => {e.preventDefault();void send();}}>
-    <Textarea bind:ref={input} bind:value={text} aria-label={m.message_orc()} placeholder={m.message_placeholder()} disabled={!connected || busy || stopping} rows={2} onbeforeinput={beforeinput} onkeydown={keydown} />
+    <Textarea bind:ref={input} bind:value={text} aria-label={m.message_orc()} placeholder={m.message_placeholder()} disabled={!connected || busy || stopping} rows={2} oncompositionstart={() => { composing = true; }} oncompositionend={() => { composing = false; }} onbeforeinput={beforeinput} onkeydown={keydown} />
     <div class="composer-bottom"><span>{m.skills_hint()}</span><div class="composer-actions">
       {#if working || stopping}<Button variant="secondary" size="sm" aria-label={stopping ? m.stopping() : m.stop_orc()} disabled={!connected || stopping} onclick={onstop}><Square />{stopping ? m.stopping() : m.stop_orc()}</Button>{/if}
       <Button size="icon-sm" aria-label={m.send_message()} title={m.send_message()} disabled={!text.trim() || !connected || busy || stopping} type="submit">{#if busy}<LoaderCircle class="animate-spin" />{:else}<ArrowUp />{/if}</Button>
