@@ -236,6 +236,14 @@ test("two-host collision routing, shared defaults, simultaneous answers, outage 
     remoteId,
   ]);
   await hub.service.send(remoteId, "Remote message", "remote-message");
+  const renamed = (await hub.service.rename(
+    remoteId,
+    "Remote title",
+  )) as Detail;
+  expect(renamed.id).toBe(remoteId);
+  expect(renamed.title).toBe("Remote title");
+  expect(peer.app.detail("same").title).toBe("Remote title");
+  expect(hub.app.detail("same").title).toBe("Collision");
   expect(peer.runtime.inputs).toHaveLength(1);
   expect(hub.runtime.inputs).toHaveLength(0);
   const turnId = peer.app.detail("same").turnId!;

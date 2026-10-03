@@ -135,6 +135,16 @@
       return (result as Detail).deliveries.find(d => d.id === requestId)?.status === "sent";
     } catch (e) { error = e instanceof Error ? e.message : m.load_failure(); return false; }
   }
+  async function rename(title: string) {
+    if (!selectedId || !hostConnected) return m.host_offline();
+    const id = selectedId;
+    try {
+      const result = await api<Detail>(`/agents/${id}/title`, { title });
+      if (selectedId === id) detail = result;
+      snapshot = { ...snapshot, agents: snapshot.agents.map(a => a.id === id ? { ...a, title: result.title } : a) };
+      return undefined;
+    } catch (e) { return e instanceof Error ? e.message : m.load_failure(); }
+  }
   async function stop() {
     if (!detail?.turnId || !hostConnected || detail.state !== "working") { error = m.stop_not_working(); return false; }
     const id = detail.id; const turnId = detail.turnId;
@@ -154,7 +164,15 @@
   }
   function keydown(event: KeyboardEvent) {
     if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return;
-    if (event.key === "Escape") { if (modal) closeModal(); else closeDetail(); return; }
+    if (event.key === "Escape") {
+      if (modal) closeModal();
+      else {
+        const cancelTitle = document.querySelector<HTMLButtonElement>("[data-title-cancel]");
+        if (cancelTitle) { event.preventDefault(); cancelTitle.click(); }
+        else closeDetail();
+      }
+      return;
+    }
     if (editable(event.target) || modal) return;
     if (event.key.toLowerCase() === "i" && detail?.role === "orc") { event.preventDefault(); document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(); return; }
     if (event.target instanceof HTMLElement && event.target.closest(".question-card")) return;
@@ -195,7 +213,7 @@
   {:else if !roots.length}<div class="canvas-empty"><h1>{m.empty_heading()}</h1><p>{m.empty_help()}</p><Button variant="default" size="sm" disabled={!connected} onclick={() => show("new")}><Plus aria-hidden="true" />{m.new_session()}</Button></div>{/if}
   {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
   {#if error && !modal && !detail}<div class="app-error" role="alert"><span>{error}</span><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => error = ""}><X /></Button></div>{/if}
-  {#if detail && selectedId}{#key detail.id}<AgentDetail {detail} {owner} {skills} {now} connected={hostConnected} onstop={stop} onrefresh={load} actionError={error} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={open} onsend={send} onanswer={answer} onreconcile={reconcile} />{/key}{/if}
+  {#if detail && selectedId}{#key detail.id}<AgentDetail {detail} {owner} {skills} {now} connected={hostConnected} onstop={stop} onrename={rename} onrefresh={load} actionError={error} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={open} onsend={send} onanswer={answer} onreconcile={reconcile} />{/key}{/if}
 </main>
 
 <Dialog.Root bind:open={modalOpen} onOpenChange={value => { if (!value) modal = null; }}>

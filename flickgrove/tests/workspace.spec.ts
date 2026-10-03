@@ -431,3 +431,99 @@ test("Orc closure of a running Worker shows Closing and automatically removes it
   await input.press("Enter");
   await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
 });
+
+test("Orc titles edit in place, cancel safely, retain failed drafts and persist across reload", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page
+    .getByRole("button", { name: "New session", exact: true })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await page.getByRole("button", { name: /Create on/ }).click();
+  await page.getByRole("button", { name: "Edit title", exact: true }).click();
+  const title = page.getByRole("textbox", {
+    name: "Session title",
+    exact: true,
+  });
+  await expect(title).toBeFocused();
+  await title.fill("Cancelled edit");
+  await title.press("Escape");
+  await expect(
+    page.getByRole("heading", { name: "New session", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Edit title", exact: true }).click();
+  await title.fill(" ");
+  await expect(page.getByRole("button", { name: "Save title" })).toBeDisabled();
+  await title.fill("Reader implementation");
+  await page.route(
+    "**/api/agents/*/title",
+    (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Title save failed" }),
+      }),
+    { times: 1 },
+  );
+  await page.getByRole("button", { name: "Save title" }).click();
+  await expect(title).toHaveValue("Reader implementation");
+  await expect(
+    page.getByText("Title save failed", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "../.scratch/flickgrove-shadcn/title-edit.png",
+    animations: "disabled",
+  });
+  await expect(page.locator(".title-edit")).toContainText("Title save failed");
+  await page.getByRole("button", { name: "Save title" }).press("Escape");
+  await expect(
+    page.getByRole("heading", { name: "New session", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Edit title", exact: true }).click();
+  await title.fill("Reader implementation");
+  await title.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "Reader implementation", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "Open Reader implementation Orc",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.locator(".user-message")).toHaveCount(0);
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Reader implementation", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("textbox", { name: "Message Orc" })
+    .fill("Build a reader");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(
+    page.getByText("The reader is ready.", { exact: true }),
+  ).toBeVisible();
+  await page
+    .locator(".agent-node.active")
+    .getByRole("button", { name: "Expand Workers" })
+    .click();
+  await page
+    .getByRole("button", { name: "Open Reader Worker", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Edit title", exact: true }),
+  ).toHaveCount(0);
+  await page.locator(".owner-link").click();
+  const composer = page.getByRole("textbox", { name: "Message Orc" });
+  await composer.fill("Close the workers");
+  await composer.press("Enter");
+  await expect(
+    page.getByText("Workers are closed.", { exact: true }),
+  ).toBeVisible();
+  await composer.fill("/close");
+  await composer.press("Enter");
+  await composer.press("Enter");
+  await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
+});

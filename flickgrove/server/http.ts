@@ -147,7 +147,7 @@ export function createHandler(
           ),
         );
       const agentPath =
-        /^\/api\/agents\/([^/]+)(?:\/(messages|answer|skills|reconcile|stop))?$/.exec(
+        /^\/api\/agents\/([^/]+)(?:\/(messages|answer|skills|reconcile|stop|title))?$/.exec(
           url.pathname,
         );
       if (agentPath) {
@@ -157,6 +157,12 @@ export function createHandler(
           return json(await app.detail(id));
         if (request.method === "GET" && action === "skills")
           return json(await app.skills(id));
+        if (request.method === "POST" && action === "title") {
+          const body = z
+            .object({ title: z.string() })
+            .parse(await request.json());
+          return json(await app.rename(id, body.title));
+        }
         if (request.method === "POST" && action === "stop") {
           const body = z
             .object({ turnId: z.string().min(1) })

@@ -378,6 +378,37 @@ main {
   margin: 12px 0;
   padding-right: 20px;
 }
+.editable-title {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+}
+.editable-title span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.editable-title svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+.title-editor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 12px 0;
+}
+.title-editor input {
+  font-size: 18px;
+}
+.title-error {
+  margin: 0 0 12px;
+  color: #edbb69;
+  font-size: 12px;
+}
 .detail-status {
   display: flex;
   align-items: center;

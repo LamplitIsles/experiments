@@ -1,4 +1,5 @@
 import { z } from "zod";
+export const sessionTitle = z.string().trim().min(1).max(120);
 const message = z.string().trim().min(1).max(100_000);
 const workerId = z.string().min(1);
 export const toolDefinitions = {
@@ -7,7 +8,7 @@ export const toolDefinitions = {
       "Start one implementation Worker for one registered project and one spec. Uses the global Worker model and effort. Return the Worker ID for subsequent operations.",
     shape: {
       project: z.string().min(1),
-      title: z.string().trim().min(1).max(120),
+      title: sessionTitle,
       spec: z.string().trim().min(1).max(500),
       message,
     },

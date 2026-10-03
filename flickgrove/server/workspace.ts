@@ -17,7 +17,7 @@ import type {
 } from "./runtime";
 import { DeliveryRejected, StaleTurn } from "./runtime";
 import { z } from "zod";
-import { roleTools, toolDefinitions } from "./tools";
+import { roleTools, toolDefinitions, sessionTitle } from "./tools";
 
 type State = {
   agents: RuntimeAgent[];
@@ -233,6 +233,13 @@ export class Workspace {
       messages: structuredClone(a.messages),
       deliveries: structuredClone(a.deliveries),
     };
+  }
+  async rename(id: string, title: string) {
+    const a = this.agent(id);
+    if (a.role !== "orc") throw new Error("Only Orc titles can be edited");
+    a.title = sessionTitle.parse(title);
+    this.save();
+    return this.detail(id);
   }
   async weekly(_hostId?: string) {
     try {

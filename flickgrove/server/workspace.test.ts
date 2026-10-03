@@ -1072,3 +1072,26 @@ test.each([false, true])(
     ).toBe(true);
   },
 );
+
+test("Orc title edits are validated, survive restart and never send a model message", async () => {
+  const { app, runtime, directory, owner, worker } = await workerFixture();
+  const inputs = runtime.inputs.length;
+  expect((await app.rename(owner.id, "  Reader implementation  ")).title).toBe(
+    "Reader implementation",
+  );
+  expect(runtime.inputs).toHaveLength(inputs);
+  await expect(app.rename(owner.id, " ")).rejects.toThrow();
+  await expect(app.rename(owner.id, "x".repeat(121))).rejects.toThrow();
+  await expect(app.rename(worker.id, "Rename Worker")).rejects.toThrow(
+    "Only Orc",
+  );
+  app.dispose();
+  const restarted = new Workspace({
+    directory,
+    runtime: new FakeRuntime(),
+    projects: async () => fixtureProjects,
+  });
+  cleanups.push(() => restarted.dispose());
+  expect(restarted.detail(owner.id).title).toBe("Reader implementation");
+  expect(restarted.detail(owner.id).messages).toHaveLength(0);
+});

@@ -523,6 +523,11 @@ export class HostService {
       this.workspace.send(id, text, requestId),
     );
   }
+  rename(id: string, title: string) {
+    return this.mutate(id, "title", { title }, (id) =>
+      this.workspace.rename(id, title),
+    );
+  }
   answer(id: string, questionId: string, answer: string) {
     return this.mutate(id, "answer", { questionId, answer }, (id) =>
       this.workspace.answer(id, questionId, answer),
