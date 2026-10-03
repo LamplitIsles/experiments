@@ -997,7 +997,8 @@ test("pending closure allows only contextual answers and waits for the answer tu
 });
 
 test("restart retains pending closure without pretending an interrupted turn completed", async () => {
-  const { app, directory, owner, token, worker } = await workerFixture();
+  const { app, runtime, directory, owner, token, worker } =
+    await workerFixture();
   await app.tool(token, "worker_close", { workerId: worker.id });
   await expect(
     app.tool(token, "worker_close", {
@@ -1005,6 +1006,10 @@ test("restart retains pending closure without pretending an interrupted turn com
       confirmInterrupted: true,
     }),
   ).rejects.toThrow("interrupted Worker");
+  runtime.emit(worker.id, {
+    type: "error",
+    error: "Turn outcome not received",
+  });
   app.dispose();
   const resumedRuntime = new FakeRuntime();
   const restarted = new Workspace({

@@ -56,7 +56,11 @@ export class Workspace {
       ? JSON.parse(row.value)
       : { agents: [], settings: null, revision: 0 };
     for (const a of this.state.agents) {
-      if (a.state === "working" || a.state === "stopping") {
+      if (
+        a.state === "working" ||
+        a.state === "stopping" ||
+        (a.state === "error" && a.turnId)
+      ) {
         a.turnEnded = false;
         if (a.stop?.status === "pending") a.stop.status = "unknown";
         a.state = "error";
