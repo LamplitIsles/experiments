@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Workspace } from "./workspace";
@@ -305,4 +305,46 @@ test("a failed handle close cannot be reused to report a successful restore", as
     app.resumeHistory("alpha", orc.threadId!, false),
   ).rejects.toThrow("another Codex instance");
   expect(app.snapshot().agents).toHaveLength(0);
+});
+
+test("directory aliases can search, preview and resume, but a different directory is rejected", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "grove-directory-"));
+  const projectPath = join(directory, "Project");
+  const aliasPath = join(directory, "project-link");
+  const otherPath = join(directory, "OtherProject");
+  mkdirSync(projectPath);
+  mkdirSync(otherPath);
+  symlinkSync(projectPath, aliasPath);
+  const runtime = new FakeRuntime();
+  const app = new Workspace({
+    directory,
+    runtime,
+    projects: async () => [
+      { alias: "alpha", name: "Alpha", path: projectPath },
+    ],
+  });
+  cleanup.push(() => {
+    app.dispose();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  session(runtime, { cwd: aliasPath });
+  session(runtime, { threadId: "other", cwd: otherPath });
+  runtime.history = async () => ({
+    sessions: [...runtime.historySessions.values()],
+    nextCursor: null,
+  });
+  expect(
+    (await app.history("alpha", "")).sessions.map((s) => s.threadId),
+  ).toEqual(["cli-history"]);
+  expect(
+    (await app.historyMessages("alpha", "cli-history")).messages,
+  ).toHaveLength(2);
+  const agent = await app.resumeHistory("alpha", "cli-history", false);
+  expect(agent.threadId).toBe("cli-history");
+  await expect(app.historyMessages("alpha", "other")).rejects.toThrow(
+    "does not belong",
+  );
+  await expect(app.resumeHistory("alpha", "other", false)).rejects.toThrow(
+    "does not belong",
+  );
 });

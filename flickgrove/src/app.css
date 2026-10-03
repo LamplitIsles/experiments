@@ -1413,7 +1413,7 @@ pre {
   flex-direction: column;
   min-height: 0;
 }
-.new-modal:has(.session-history) {
+.grove-dialog.new-modal {
   width: min(700px, calc(100vw - 32px));
 }
 .history-heading {

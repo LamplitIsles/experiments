@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,13 +11,15 @@ test("history uses indexed metadata for both archive states, reads paginated ite
   const directory = await mkdtemp(join(tmpdir(), "grove-history-wire-"));
   const controlPath = join(directory, ".fake-app-server-control.json");
   const requestPath = join(directory, ".fake-app-server-requests.jsonl");
+  const alias = join(directory, "project-alias");
+  await symlink(directory, alias);
   const controls = {
     historyThreads: [
       {
         archived: false,
         thread: {
           id: "cli-history",
-          cwd: directory,
+          cwd: alias,
           source: "cli",
           name: "Reader performance",
           preview: "Investigate slow scrolling",
@@ -136,9 +138,7 @@ test("history uses indexed metadata for both archive states, reads paginated ite
       .split("\n")
       .map((line) => JSON.parse(line));
     const lists = requests.filter((r) => r.method === "thread/list");
-    expect(
-      lists.every((r) => r.params.useStateDbOnly && r.params.cwd === directory),
-    ).toBe(true);
+    expect(lists.every((r) => r.params.useStateDbOnly)).toBe(true);
     expect(lists.some((r) => r.params.archived)).toBe(true);
     expect(lists[0].params.sourceKinds).toContain("appServer");
     expect(lists[0].params.sourceKinds).toContain("subAgent");

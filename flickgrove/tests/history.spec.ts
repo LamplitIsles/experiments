@@ -185,3 +185,48 @@ test("restored Grove history includes external turns once and retains folded Wor
   await page.keyboard.press("Alt+x");
   await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
 });
+
+for (const mobile of [false, true]) {
+  test(`new session width stays fixed across history and host changes (${mobile ? "mobile" : "desktop"})`, async ({
+    page,
+  }) => {
+    if (mobile) await page.setViewportSize({ width: 390, height: 844 });
+    await page.request.post("http://127.0.0.1:14319/fixture/reset", {
+      data: {},
+    });
+    await page.goto("http://127.0.0.1:14319/");
+    await newSession(page);
+    const dialog = page.locator(".new-modal");
+    await expect(dialog).toBeVisible();
+    const width = Math.min(700, page.viewportSize()!.width - 32);
+    await expect
+      .poll(() => dialog.evaluate((node) => node.getBoundingClientRect().width))
+      .toBe(width);
+    await page
+      .getByRole("button", { name: "Find history", exact: true })
+      .click();
+    await expect(page.locator(".session-history")).toBeVisible();
+    expect(
+      await dialog.evaluate((node) => node.getBoundingClientRect().width),
+    ).toBe(width);
+    await page
+      .getByRole("textbox", { name: "Search title or first message…" })
+      .fill("no match");
+    expect(
+      await dialog.evaluate((node) => node.getBoundingClientRect().width),
+    ).toBe(width);
+    await page.goBack();
+    await expect(page.locator(".host-choices")).toBeVisible();
+    await page.locator(".host-choices button").last().click();
+    expect(
+      await dialog.evaluate((node) => node.getBoundingClientRect().width),
+    ).toBe(width);
+    expect(
+      await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth),
+    ).toBe(true);
+    await page.screenshot({
+      path: `../.scratch/flickgrove-history-directory/dialog-${mobile ? "mobile" : "desktop"}.png`,
+      animations: "disabled",
+    });
+  });
+}

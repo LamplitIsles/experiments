@@ -8,6 +8,7 @@ import type {
   v2,
 } from "@jaminzhou/codex-app-server-client/protocol";
 import { fileURLToPath } from "node:url";
+import { sameDirectory } from "./directory";
 import { nameThreadFromPrompt } from "./thread-title";
 import type {
   HistoryPage,
@@ -178,7 +179,6 @@ export class CodexRuntime implements Runtime {
         [0, 1].map(async (index) => {
           if (position.done[index]) return;
           const response = await client.threadList({
-            cwd,
             archived: index === 1,
             limit: 50,
             cursor: position.positions[index],
@@ -201,7 +201,7 @@ export class CodexRuntime implements Runtime {
         }),
       );
       for (const session of pages.flatMap((page) => page ?? [])) {
-        if (session.cwd !== cwd) continue;
+        if (!sameDirectory(session.cwd, cwd)) continue;
         sessions.push(session);
       }
     }

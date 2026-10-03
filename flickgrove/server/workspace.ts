@@ -17,6 +17,7 @@ import type {
   RuntimeEvent,
   RuntimeHandle,
 } from "./runtime";
+import { sameDirectory } from "./directory";
 import { DeliveryRejected, StaleTurn } from "./runtime";
 import { z } from "zod";
 import { roleTools, toolDefinitions, sessionTitle } from "./tools";
@@ -348,7 +349,7 @@ export class Workspace {
       for (const entry of page.sessions) {
         const session = this.historyIdentity(entry);
         if (
-          session.cwd === project.path &&
+          sameDirectory(session.cwd, project.path) &&
           `${session.title} ${session.preview}`
             .toLocaleLowerCase()
             .includes(query.toLocaleLowerCase())
@@ -374,7 +375,7 @@ export class Workspace {
   async historySession(alias: string, threadId: string, _hostId?: string) {
     const project = await this.historyProject(alias);
     const session = await this.options.runtime.historyThread(threadId);
-    if (session.cwd !== project.path)
+    if (!sameDirectory(session.cwd, project.path))
       throw new Error("Session does not belong to this project directory");
     return this.historyIdentity(session);
   }
@@ -428,7 +429,7 @@ export class Workspace {
       const existing = this.state.agents.find((a) => a.threadId === threadId);
       if (
         existing?.project.path !== undefined &&
-        existing.project.path !== project.path
+        !sameDirectory(existing.project.path, project.path)
       )
         throw new Error("Session does not belong to this project directory");
       if (existing?.role === "worker")
