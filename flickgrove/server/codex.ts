@@ -3,10 +3,22 @@ import {
   AppServerRpcError,
   AppServerConnectionClosedError,
 } from "@jaminzhou/codex-app-server-client";
-import type { ReasoningEffort } from "@jaminzhou/codex-app-server-client/protocol";
+import type {
+  ReasoningEffort,
+  v2,
+} from "@jaminzhou/codex-app-server-client/protocol";
 import { fileURLToPath } from "node:url";
 import { nameThreadFromPrompt } from "./thread-title";
-import type { Model, Skill, WeeklyUsage } from "../src/contracts";
+import type {
+  HistoryPage,
+  HistorySession,
+  HistoryMessages,
+  Model,
+  Skill,
+  WeeklyUsage,
+  Message,
+} from "../src/contracts";
+import { z } from "zod";
 import {
   DeliveryRejected,
   StaleTurn,
@@ -15,6 +27,41 @@ import {
   type RuntimeEvent,
   type RuntimeHandle,
 } from "./runtime";
+
+const historySourceKinds: v2.ThreadSourceKind[] = [
+  "cli",
+  "vscode",
+  "exec",
+  "appServer",
+  "subAgent",
+  "subAgentReview",
+  "subAgentCompact",
+  "subAgentThreadSpawn",
+  "subAgentOther",
+  "unknown",
+];
+
+function historySession(thread: v2.Thread, archived: boolean): HistorySession {
+  return {
+    threadId: thread.id,
+    title:
+      thread.name?.trim() ||
+      thread.preview.split("\n")[0]?.slice(0, 160) ||
+      "Untitled session",
+    preview: thread.preview,
+    cwd: thread.cwd,
+    updatedAt: thread.updatedAt * 1000,
+    source: typeof thread.source === "string" ? thread.source : "subAgent",
+    role:
+      typeof thread.source === "object" || thread.parentThreadId
+        ? "worker"
+        : "session",
+    ownerThreadId: thread.parentThreadId ?? undefined,
+    archived,
+    model: thread.model ?? undefined,
+    effort: thread.reasoningEffort ?? undefined,
+  };
+}
 
 export class CodexRuntime implements Runtime {
   private readonly clients = new Set<CodexAppServerClient>();
@@ -62,10 +109,20 @@ export class CodexRuntime implements Runtime {
     }
   }
   private getCatalog() {
-    return (this.catalog ??= this.client(this.options.cwd).catch((error) => {
-      this.catalog = undefined;
-      throw error;
-    }));
+    return (this.catalog ??= this.client(this.options.cwd)
+      .then((client) => {
+        client.onError((error) => {
+          if (error instanceof AppServerConnectionClosedError) {
+            this.clients.delete(client);
+            this.catalog = undefined;
+          }
+        });
+        return client;
+      })
+      .catch((error) => {
+        this.catalog = undefined;
+        throw error;
+      }));
   }
   async models(): Promise<Model[]> {
     const client = await this.getCatalog();
@@ -97,6 +154,136 @@ export class CodexRuntime implements Runtime {
         await this.getCatalog()
       ).threadRead({ threadId, includeTurns: false })
     ).thread.name;
+  }
+  async history(cwd: string, cursor?: string): Promise<HistoryPage> {
+    const schema = z.object({
+      cwd: z.string(),
+      positions: z.tuple([z.string().nullable(), z.string().nullable()]),
+      done: z.tuple([z.boolean(), z.boolean()]),
+    });
+    const position = cursor
+      ? schema.parse(JSON.parse(cursor))
+      : {
+          cwd,
+          positions: [null, null] as [string | null, string | null],
+          done: [false, false] as [boolean, boolean],
+        };
+    if (position.cwd !== cwd)
+      throw new Error("Search changed. Start a new history search.");
+    const client = await this.getCatalog();
+    const sessions: HistorySession[] = [];
+    // Read indexed metadata only. Do not invoke thread/search (full rollout search).
+    if (!position.done.every(Boolean)) {
+      const pages = await Promise.all(
+        [0, 1].map(async (index) => {
+          if (position.done[index]) return;
+          const response = await client.threadList({
+            cwd,
+            archived: index === 1,
+            limit: 50,
+            cursor: position.positions[index],
+            sortKey: "updated_at",
+            sortDirection: "desc",
+            sourceKinds: historySourceKinds,
+            modelProviders: [],
+            useStateDbOnly: true,
+          });
+          if (
+            response.nextCursor &&
+            response.nextCursor === position.positions[index]
+          )
+            throw new Error("History returned a repeated page");
+          position.positions[index] = response.nextCursor;
+          position.done[index] = !response.nextCursor;
+          return response.data.map((thread) =>
+            historySession(thread, index === 1),
+          );
+        }),
+      );
+      for (const session of pages.flatMap((page) => page ?? [])) {
+        if (session.cwd !== cwd) continue;
+        sessions.push(session);
+      }
+    }
+    sessions.sort(
+      (a, b) =>
+        b.updatedAt - a.updatedAt || a.threadId.localeCompare(b.threadId),
+    );
+    return {
+      sessions,
+      nextCursor: position.done.every(Boolean)
+        ? null
+        : JSON.stringify(position),
+    };
+  }
+  async historyThread(threadId: string): Promise<HistorySession> {
+    const result = await (
+      await this.getCatalog()
+    ).threadRead({ threadId, includeTurns: false });
+    const client = await this.getCatalog();
+    let cursor: string | null = null;
+    do {
+      const page = await client.threadList({
+        cwd: result.thread.cwd,
+        archived: true,
+        limit: 100,
+        cursor,
+        modelProviders: [],
+        sourceKinds: historySourceKinds,
+        useStateDbOnly: true,
+      });
+      if (page.data.some((thread) => thread.id === threadId))
+        return historySession(result.thread, true);
+      if (page.nextCursor && page.nextCursor === cursor)
+        throw new Error("History returned a repeated page");
+      cursor = page.nextCursor;
+    } while (cursor);
+    return historySession(result.thread, false);
+  }
+  async historyMessages(
+    threadId: string,
+    cursor?: string,
+  ): Promise<HistoryMessages> {
+    const response = await (
+      await this.getCatalog()
+    ).call("thread/items/list", {
+      threadId,
+      cursor,
+      sortDirection: "desc",
+      limit: 100,
+    });
+    const messages: Message[] = [];
+    for (const entry of response.data) {
+      const item = "item" in entry ? entry.item : entry;
+      const turnId = "turnId" in entry ? entry.turnId : undefined;
+      if (item.type === "userMessage") {
+        const text = item.content
+          .map((input) =>
+            input.type === "text"
+              ? input.text
+              : input.type === "image" || input.type === "localImage"
+                ? "[Image]"
+                : "",
+          )
+          .filter(Boolean)
+          .join("\n");
+        if (text)
+          messages.push({ id: item.id, turnId, role: "user", text, at: 0 });
+      } else if (
+        item.type === "agentMessage" &&
+        item.text &&
+        item.phase !== "commentary"
+      ) {
+        messages.push({
+          id: item.id,
+          turnId,
+          role: "assistant",
+          text: item.text,
+          at: 0,
+        });
+      }
+    }
+    return { messages: messages.reverse(), nextCursor: response.nextCursor };
   }
   async weekly(): Promise<WeeklyUsage> {
     const result = await (
@@ -195,15 +382,29 @@ export class CodexRuntime implements Runtime {
         : "You are a Worker in FlickGrove, assigned to one repository and one spec. Use worker_report to send progress, questions and completion to your owning Orc. Do not create or close any agent, use native spawn_agent or Herdr, or choose models/reasoning settings in skills. The Orc manages your lifecycle. Implementation assignments deliver one PR according to the assigned spec. Async questions are forwarded to Orc by the host.";
     const params = {
       cwd: agent.project.path,
-      model: agent.model,
-      serviceTier: agent.serviceTier ?? "default",
+      model: agent.inheritSettings ? undefined : agent.model,
+      serviceTier: agent.inheritSettings
+        ? undefined
+        : (agent.serviceTier ?? "default"),
       approvalPolicy: "never" as const,
       sandbox: "danger-full-access" as const,
       developerInstructions: roleInstructions,
     };
+    let historyCursor: string | undefined;
+    let resumedSettings: {
+      model?: string;
+      effort?: string;
+      serviceTier?: string;
+    } = {};
     try {
+      if (agent.restoreArchived && agent.threadId)
+        await client.call("thread/unarchive", { threadId: agent.threadId });
       const response = agent.threadId
-        ? await client.threadResume({ ...params, threadId: agent.threadId })
+        ? await client.threadResume({
+            ...params,
+            threadId: agent.threadId,
+            excludeTurns: true,
+          })
         : await client.threadStart({
             ...params,
             historyMode: "paginated",
@@ -211,16 +412,43 @@ export class CodexRuntime implements Runtime {
           });
       threadId = response.thread.id;
       threadName = response.thread.name;
+      if (
+        "itemsBackwardsCursor" in response &&
+        typeof response.itemsBackwardsCursor === "string"
+      )
+        historyCursor = response.itemsBackwardsCursor;
+      if (agent.threadId && !historyCursor) {
+        const latest = await client.call("thread/items/list", {
+          threadId,
+          sortDirection: "desc",
+          limit: 1,
+        });
+        historyCursor = latest.backwardsCursor ?? undefined;
+      }
+      resumedSettings = {
+        model: response.model,
+        effort: response.reasoningEffort ?? undefined,
+        serviceTier: response.serviceTier ?? "default",
+      };
     } catch (error) {
       off.forEach((f) => f());
       await client.close();
       this.clients.delete(client);
+      if (
+        error instanceof AppServerRpcError &&
+        /already has an active writer/i.test(error.message)
+      )
+        throw new Error(
+          "This session is in use by another Codex instance. Close it there, then retry.",
+        );
       throw error;
     }
     const id = threadId!;
     return {
       threadId: id,
       threadName,
+      historyCursor,
+      ...resumedSettings,
       rename: async (name) => {
         titleGeneration?.abort();
         await client.call("thread/name/set", { threadId: id, name });

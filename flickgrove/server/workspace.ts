@@ -8,6 +8,8 @@ import type {
   Project,
   Settings,
   Snapshot,
+  HistorySession,
+  Message,
 } from "../src/contracts";
 import type {
   Runtime,
@@ -95,7 +97,13 @@ export class Workspace {
       .query(
         "INSERT INTO workspace(id,value) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value",
       )
-      .run(JSON.stringify(this.state));
+      .run(
+        JSON.stringify(this.state, (key, value) =>
+          key === "inheritSettings" || key === "restoreArchived"
+            ? undefined
+            : value,
+        ),
+      );
     for (const listener of this.subscribers) listener();
   }
   subscribe(listener: () => void) {
@@ -220,6 +228,8 @@ export class Workspace {
   private publicAgent(a: RuntimeAgent): Agent {
     const {
       token: _token,
+      inheritSettings: _inheritSettings,
+      restoreArchived: _restoreArchived,
       turnEnded: _turnEnded,
       messages: _messages,
       deliveries: _deliveries,
@@ -295,6 +305,185 @@ export class Workspace {
   projects(_hostId?: string) {
     return this.options.projects();
   }
+  private async historyProject(alias: string) {
+    const project = (await this.projects()).find((p) => p.alias === alias);
+    if (!project) throw new Error("Registered project not found");
+    return project;
+  }
+  private historyIdentity(session: HistorySession): HistorySession {
+    const agent = this.state.agents.find(
+      (a) => a.threadId === session.threadId,
+    );
+    if (!agent) return session;
+    const owner = this.state.agents.find((a) => a.id === agent.ownerId);
+    return {
+      ...session,
+      title: agent.role === "worker" ? agent.title : session.title,
+      role: agent.role,
+      agentId: agent.id,
+      closed: agent.closed,
+      ownerThreadId: owner?.threadId,
+      ownerProject: owner?.project.alias,
+    };
+  }
+  async history(
+    alias: string,
+    query: string,
+    cursor?: string,
+    _hostId?: string,
+  ) {
+    const project = await this.historyProject(alias);
+    const schema = z.object({
+      cwd: z.string(),
+      query: z.string(),
+      cursor: z.string(),
+    });
+    const position = cursor ? schema.parse(JSON.parse(cursor)) : undefined;
+    if (position && (position.cwd !== project.path || position.query !== query))
+      throw new Error("Search changed. Start a new history search.");
+    let nextCursor = position?.cursor;
+    const sessions: HistorySession[] = [];
+    for (let scan = 0; scan < 8 && sessions.length < 30; scan++) {
+      const page = await this.options.runtime.history(project.path, nextCursor);
+      for (const entry of page.sessions) {
+        const session = this.historyIdentity(entry);
+        if (
+          session.cwd === project.path &&
+          `${session.title} ${session.preview}`
+            .toLocaleLowerCase()
+            .includes(query.toLocaleLowerCase())
+        )
+          sessions.push(session);
+      }
+      if (page.nextCursor && page.nextCursor === nextCursor)
+        throw new Error("History returned a repeated page");
+      nextCursor = page.nextCursor ?? undefined;
+      if (!nextCursor) break;
+    }
+    sessions.sort(
+      (a, b) =>
+        b.updatedAt - a.updatedAt || a.threadId.localeCompare(b.threadId),
+    );
+    return {
+      sessions,
+      nextCursor: nextCursor
+        ? JSON.stringify({ cwd: project.path, query, cursor: nextCursor })
+        : null,
+    };
+  }
+  async historySession(alias: string, threadId: string, _hostId?: string) {
+    const project = await this.historyProject(alias);
+    const session = await this.options.runtime.historyThread(threadId);
+    if (session.cwd !== project.path)
+      throw new Error("Session does not belong to this project directory");
+    return this.historyIdentity(session);
+  }
+  async historyMessages(
+    alias: string,
+    threadId: string,
+    cursor?: string,
+    _hostId?: string,
+  ) {
+    await this.historySession(alias, threadId);
+    return this.options.runtime.historyMessages(threadId, cursor);
+  }
+  async agentHistory(id: string, cursor?: string) {
+    const agent = this.agent(id);
+    if (!agent.threadId || !agent.historyCursor)
+      return { messages: [], nextCursor: null };
+    const page = await this.options.runtime.historyMessages(
+      agent.threadId,
+      cursor ?? agent.historyCursor,
+    );
+    const captured = new Map<string, Message[]>();
+    for (const message of agent.messages.slice(
+      0,
+      agent.historyMessageCount ?? 0,
+    )) {
+      if (!message.turnId) continue;
+      const group = captured.get(message.turnId) ?? [];
+      group.push(message);
+      captured.set(message.turnId, group);
+    }
+    const messages: Message[] = [],
+      inserted = new Set<string>();
+    for (const message of page.messages) {
+      const group = message.turnId ? captured.get(message.turnId) : undefined;
+      if (!group) messages.push(message);
+      else if (!inserted.has(message.turnId!)) {
+        messages.push(...group);
+        inserted.add(message.turnId!);
+      }
+    }
+    return { ...page, messages };
+  }
+  async resumeHistory(
+    alias: string,
+    threadId: string,
+    archived: boolean,
+    _hostId?: string,
+  ) {
+    return this.serialize(`history:${threadId}`, async () => {
+      const project = await this.historyProject(alias);
+      const existing = this.state.agents.find((a) => a.threadId === threadId);
+      if (
+        existing?.project.path !== undefined &&
+        existing.project.path !== project.path
+      )
+        throw new Error("Session does not belong to this project directory");
+      if (existing?.role === "worker")
+        throw new Error("Continue this Worker through its original Orc");
+      if (existing && !existing.closed) return this.publicAgent(existing);
+      const restore = async () => {
+        const session = await this.historySession(alias, threadId);
+        if (session.role === "worker")
+          throw new Error("Continue this Worker through its original Orc");
+        await this.initializeSettings();
+        const agent: RuntimeAgent = existing ?? {
+          id: crypto.randomUUID(),
+          token: crypto.randomUUID(),
+          role: "orc",
+          project,
+          title: session.title,
+          model: session.model ?? "",
+          effort: session.effort ?? "",
+          serviceTier: "default",
+          state: "idle",
+          closed: true,
+          threadId,
+          questions: [],
+          messages: [],
+          deliveries: [],
+          inheritSettings: true,
+        };
+        agent.restoreArchived = archived;
+        try {
+          const handle = await this.handle(agent);
+          agent.title = handle.threadName ?? session.title;
+          if (!existing) {
+            agent.model = handle.model ?? agent.model;
+            agent.effort = handle.effort ?? agent.effort;
+            agent.serviceTier = handle.serviceTier ?? agent.serviceTier;
+            this.state.agents.push(agent);
+          }
+          agent.historyCursor = handle.historyCursor;
+          agent.historyMessageCount = handle.historyCursor
+            ? agent.messages.length
+            : undefined;
+          agent.closed = false;
+          agent.state = "idle";
+          agent.error = undefined;
+          agent.turnEnded = true;
+          delete agent.inheritSettings;
+          this.save();
+          return this.publicAgent(agent);
+        } finally {
+          delete agent.restoreArchived;
+        }
+      };
+      return existing ? this.serialize(existing.id, restore) : restore();
+    });
+  }
   async saveSettings(settings: Settings) {
     const models = await this.models();
     for (const defaults of [settings.orc, settings.worker]) {
@@ -313,9 +502,7 @@ export class Workspace {
     this.state.settings = structuredClone(settings);
     this.save();
   }
-  async createOrc(alias: string, _hostId?: string) {
-    const project = (await this.projects()).find((p) => p.alias === alias);
-    if (!project) throw new Error("Registered project not found");
+  private async initializeSettings() {
     if (!this.state.settings) {
       const models = await this.models();
       const model = models.find((m) => m.isDefault) ?? models[0];
@@ -330,14 +517,19 @@ export class Workspace {
         worker: { ...defaults },
       };
     }
+  }
+  async createOrc(alias: string, _hostId?: string) {
+    const project = (await this.projects()).find((p) => p.alias === alias);
+    if (!project) throw new Error("Registered project not found");
+    await this.initializeSettings();
     const a: RuntimeAgent = {
       id: crypto.randomUUID(),
       token: crypto.randomUUID(),
       role: "orc",
       project,
       title: "New session",
-      ...this.state.settings.orc,
-      serviceTier: this.state.settings.fast
+      ...this.state.settings!.orc,
+      serviceTier: this.state.settings!.fast
         ? (await this.models()).find(
             (m) => m.id === this.state.settings!.orc.model,
           )!.fastTier!
@@ -537,22 +729,25 @@ export class Workspace {
       return this.deliver(a, text, requestId, "user");
     });
   }
-  async closeTree(id: string) {
-    const a = this.agent(id);
-    if (a.role !== "orc") throw new Error("Only Orc can close Workers");
-    const workers = this.state.agents.filter(
-      (w) => w.ownerId === id && !w.closed,
-    );
-    if (workers.length)
-      throw new Error(
-        `Ask Orc to close its Workers first: ${workers.map((w) => w.title).join(", ")}`,
+  closeTree(id: string) {
+    return this.serialize(id, async () => {
+      const a = this.agent(id);
+      if (a.role !== "orc") throw new Error("Only Orc can close Workers");
+      const workers = this.state.agents.filter(
+        (w) => w.ownerId === id && !w.closed,
       );
-    this.assertIdle(a);
-    a.closed = true;
-    this.save();
-    await this.handles.get(id)?.close();
-    this.handles.delete(id);
-    return { closed: true as const, id };
+      if (workers.length)
+        throw new Error(
+          `Ask Orc to close its Workers first: ${workers.map((w) => w.title).join(", ")}`,
+        );
+      this.assertIdle(a);
+      a.closed = true;
+      this.save();
+      const handle = this.handles.get(id);
+      this.handles.delete(id);
+      await handle?.close();
+      return { closed: true as const, id };
+    });
   }
   answer(id: string, questionId: string, answer: string) {
     return this.serialize(id, async () => {
@@ -816,7 +1011,6 @@ export class Workspace {
   private assertIdle(a: RuntimeAgent) {
     if (
       a.state !== "idle" ||
-      this.queues.has(a.id) ||
       this.opening.has(a.id) ||
       a.deliveries.some(
         (d) =>

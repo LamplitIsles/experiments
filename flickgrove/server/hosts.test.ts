@@ -11,6 +11,65 @@ const cleanup: (() => void)[] = [];
 afterEach(() => {
   for (const f of cleanup.splice(0).reverse()) f();
 });
+test("history searches and resumes on the selected execution host through authenticated owner routes", async () => {
+  const hub = fixture(true),
+    peer = fixture(false);
+  const thread = {
+    threadId: "remote-cli",
+    cwd: fixtureProjects[0].path,
+    title: "Remote history",
+    preview: "Only on Mac",
+    archived: false,
+    role: "session" as const,
+    source: "cli",
+    updatedAt: 1000,
+    model: "sol",
+    effort: "medium",
+  };
+  peer.runtime.historySessions.set(thread.threadId, thread);
+  peer.runtime.historyItems.set(thread.threadId, [
+    { id: "original", role: "user", text: "Only on Mac", at: 1 },
+  ]);
+  peer.runtime.names.set(thread.threadId, thread.title);
+  await hub.service.register({
+    name: "Mac",
+    url: peer.origin,
+    credential: peer.service.credential,
+  });
+  const host = peer.service.identity.id;
+  const result = await hub.request(
+    `/api/history?project=alpha&host=${host}&query=Mac`,
+  );
+  expect(result.status).toBe(200);
+  expect((await result.json()).sessions).toHaveLength(1);
+  expect(
+    (await hub.service.history("alpha", "", undefined, hub.service.identity.id))
+      .sessions,
+  ).toHaveLength(0);
+  const resumed = await hub.request(`/api/history/resume?host=${host}`, {
+    project: "alpha",
+    threadId: thread.threadId,
+    archived: false,
+  });
+  expect(resumed.status).toBe(200);
+  const agent = await resumed.json();
+  expect(agent.id.startsWith(host + ":")).toBe(true);
+  expect(agent.historyCursor).toBe("1");
+  expect(agent.historyMessageCount).toBe(0);
+  const detail = await hub.request(
+    `/api/agents/${encodeURIComponent(agent.id)}`,
+  );
+  expect((await detail.json()).historyCursor).toBe("1");
+  expect(hub.app.snapshot().agents).toHaveLength(0);
+  expect(peer.app.snapshot().agents).toHaveLength(1);
+  const page = await hub.request(
+    `/api/agents/${encodeURIComponent(agent.id)}/history`,
+  );
+  expect((await page.json()).messages[0].text).toBe("Only on Mac");
+  const results = await hub.service.history("alpha", "", undefined, host);
+  expect(results.sessions[0].agentId).toBe(agent.id);
+  expect(peer.runtime.inputs).toHaveLength(0);
+});
 function fixture(hub: boolean, collision = false) {
   const directory = mkdtempSync(join(tmpdir(), "grove-host-test-"));
   if (collision) {

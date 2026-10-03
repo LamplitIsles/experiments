@@ -48,6 +48,8 @@ function qualified<T extends Agent>(host: Host, a: T): T {
     serviceTier: a.serviceTier,
     stop: a.stop,
     closeRequest: a.closeRequest,
+    historyCursor: a.historyCursor,
+    historyMessageCount: a.historyMessageCount,
     hostId: host.id,
     hostName: host.name,
   };
@@ -395,6 +397,115 @@ export class HostService {
     if (!p) return this.workspace.models();
     this.available(p);
     return this.request<Awaited<ReturnType<Workspace["models"]>>>(p, "/models");
+  }
+  async history(
+    alias: string,
+    query: string,
+    cursor?: string,
+    hostId?: string,
+  ) {
+    const p = this.host(hostId);
+    if (!p) {
+      const page = await this.workspace.history(alias, query, cursor);
+      return {
+        ...page,
+        sessions: page.sessions.map((session) => ({
+          ...session,
+          agentId: session.agentId
+            ? `${this.identity.id}:${session.agentId}`
+            : undefined,
+        })),
+      };
+    }
+    this.available(p);
+    const params = new URLSearchParams({ project: alias, query });
+    if (cursor) params.set("cursor", cursor);
+    const page = await this.request<Awaited<ReturnType<Workspace["history"]>>>(
+      p,
+      `/history?${params}`,
+    );
+    return {
+      ...page,
+      sessions: page.sessions.map((session) => ({
+        ...session,
+        agentId: session.agentId ? `${p.id}:${session.agentId}` : undefined,
+      })),
+    };
+  }
+  async historySession(alias: string, threadId: string, hostId?: string) {
+    const p = this.host(hostId);
+    if (!p) {
+      const session = await this.workspace.historySession(alias, threadId);
+      return {
+        ...session,
+        agentId: session.agentId
+          ? `${this.identity.id}:${session.agentId}`
+          : undefined,
+      };
+    }
+    this.available(p);
+    const params = new URLSearchParams({ project: alias, thread: threadId });
+    const session = await this.request<
+      Awaited<ReturnType<Workspace["historySession"]>>
+    >(p, `/history/session?${params}`);
+    return {
+      ...session,
+      agentId: session.agentId ? `${p.id}:${session.agentId}` : undefined,
+    };
+  }
+  async historyMessages(
+    alias: string,
+    threadId: string,
+    cursor?: string,
+    hostId?: string,
+  ) {
+    const p = this.host(hostId);
+    if (!p) return this.workspace.historyMessages(alias, threadId, cursor);
+    this.available(p);
+    const params = new URLSearchParams({ project: alias, thread: threadId });
+    if (cursor) params.set("cursor", cursor);
+    return this.request<Awaited<ReturnType<Workspace["historyMessages"]>>>(
+      p,
+      `/history/messages?${params}`,
+    );
+  }
+  async agentHistory(id: string, cursor?: string) {
+    const r = this.route(id);
+    if (!r.peer) return this.workspace.agentHistory(r.id, cursor);
+    this.available(r.peer);
+    const params = new URLSearchParams();
+    if (cursor) params.set("cursor", cursor);
+    return this.request<Awaited<ReturnType<Workspace["agentHistory"]>>>(
+      r.peer,
+      `/agents/${encodeURIComponent(r.id)}/history?${params}`,
+    );
+  }
+  async resumeHistory(
+    alias: string,
+    threadId: string,
+    archived: boolean,
+    hostId?: string,
+  ) {
+    const p = this.host(hostId);
+    if (!p)
+      return qualified(
+        this.local(),
+        await this.workspace.resumeHistory(alias, threadId, archived),
+      );
+    this.available(p);
+    const c = this.caches.get(p.id)!;
+    try {
+      const agent = await this.request<Agent>(p, "/history/resume", {
+        project: alias,
+        threadId,
+        archived,
+      });
+      await this.refresh();
+      return qualified(c.host, agent);
+    } catch (error) {
+      if (error instanceof PeerRejected) throw error;
+      throw this.unknown(c);
+    }
   }
   private configure<T>(work: () => Promise<T>): Promise<T> {
     const next = this.configuring.catch(() => {}).then(work);

@@ -4,12 +4,13 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import { navigation } from "./navigation.svelte";
   import { tick } from "svelte";
-  import type { Agent, Detail, Skill } from "./contracts";
+  import type { Agent, Detail, Skill, Message } from "./contracts";
   import { elapsed } from "./api";
   import TitleEditor from "./TitleEditor.svelte";
   import Weekly from "./Weekly.svelte";
   import Markdown from "./Markdown.svelte";
   import WorkerReport from "./WorkerReport.svelte";
+  import HistoricalMessages from "./HistoricalMessages.svelte";
   import Composer from "./Composer.svelte";
   import Questions from "./Questions.svelte";
   import * as m from "./paraglide/messages";
@@ -28,11 +29,15 @@
     {#if detail.closeRequest}<p class="model-note">{detail.closeRequest.reason}</p>{/if}
     {#if detail.error}<p class="inline-error" role="alert">{detail.error}</p>{/if}
     {#if owner}<button class="owner-link" onclick={() => onopen(owner.id)}>{m.assigned_by({ title: owner.title })}</button>{/if}
-    {#if !detail.messages.length && !detail.questions.length}<div class="first-message"><h2>{m.first_heading()}</h2><p>{m.first_help({ project: detail.project.alias })}</p></div>{/if}
-    {#each detail.messages as message (message.id)}
+    {#if detail.historyCursor}<HistoricalMessages agentId={detail.id} {connected} {renderMessage} />{/if}
+    {#if !detail.historyCursor && !detail.messages.length && !detail.questions.length}<div class="first-message"><h2>{m.first_heading()}</h2><p>{m.first_help({ project: detail.project.alias })}</p></div>{/if}
+    {#snippet renderMessage(message: Message)}
       {@const report = reports.get(message.id)}
       {#if report}<WorkerReport text={message.text} sender={workers.find(w => w.id === report.reportingWorkerId)?.title} />
       {:else}<div class:user-message={message.role === "user"} class:assistant-message={message.role === "assistant"}><div class="message-role">{message.role === "assistant" ? detail.role === "orc" ? m.orc() : m.worker() : ""}</div><Markdown text={message.text} /></div>{/if}
+    {/snippet}
+    {#each detail.messages.slice(detail.historyCursor ? detail.historyMessageCount ?? 0 : 0) as message (message.id)}
+      {@render renderMessage(message)}
     {/each}
     {#if detail.role === "orc" && detail.questions.length}<Questions agentId={detail.id} questions={detail.questions} deliveries={detail.deliveries} connected={connected && detail.state !== "stopping"} {onanswer} />
     {:else if detail.questions.length}<div class="delegated-questions">{#each detail.questions as q}<div><p>{q.text}</p><span>{q.state === "answered" ? m.sent() : m.delegated()}</span></div>{/each}</div>{/if}
