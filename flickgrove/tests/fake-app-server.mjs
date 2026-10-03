@@ -1006,6 +1006,8 @@ async function handle(request) {
       });
       return {};
     case "thread/unsubscribe":
+      if (control().failUnsubscribeThreads?.includes(p.threadId))
+        rpcError(-32603, "fixture unsubscribe failed");
       state.loaded = false;
       save();
       send({ method: "thread/closed", params: { threadId: state.threadId } });

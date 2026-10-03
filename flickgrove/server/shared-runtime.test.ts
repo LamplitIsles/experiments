@@ -93,6 +93,16 @@ test("one managed process isolates concurrent threads, native requests, Stop/Clo
     expect(
       be.some((e) => e.type === "completed" || e.type === "disconnected"),
     ).toBe(false);
+    await writeFile(
+      controlPath,
+      JSON.stringify({ hold: true, failUnsubscribeThreads: [ah.threadId] }),
+    );
+    await expect(ah.close()).rejects.toThrow("fixture unsubscribe failed");
+    await expect(
+      runtime.open({ ...a, threadId: ah.threadId }, () => {}),
+    ).rejects.toThrow("active Grove handle");
+    expect(await bh.send("b during failed a release", bt)).toBe(bt);
+    await writeFile(controlPath, JSON.stringify({ hold: true }));
     await ah.close();
     expect(await processes()).toHaveLength(1);
     expect(await bh.send("b after a close", bt)).toBe(bt);

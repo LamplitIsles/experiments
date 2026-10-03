@@ -249,9 +249,8 @@ test("an observed accepted input survives a late RPC error", async ({
     .poll(() =>
       page.evaluate(
         () =>
-          JSON.parse(
-            localStorage.getItem(`flickgrove/${location.origin}/outgoing`) ??
-              "[]",
+          Object.keys(localStorage).filter((key) =>
+            key.startsWith(`flickgrove/${location.origin}/outgoing/`),
           ).length,
       ),
     )
@@ -267,4 +266,70 @@ test("an observed accepted input survives a late RPC error", async ({
   expect(
     (await (await request.get(origin + "/fixture/info")).json()).inputs,
   ).toHaveLength(1);
+});
+
+test("two tabs cannot erase an unadmitted operation before its owner has a receipt", async ({
+  page,
+  context,
+  request,
+}) => {
+  await request.post(origin + "/fixture/reset", {
+    data: { mode: "no-workers" },
+  });
+  const second = await context.newPage();
+  let operationId = "";
+  const lookups: string[] = [];
+  await page.routeWebSocket("**/api/socket", (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((raw) => {
+      const frame = JSON.parse(String(raw));
+      if (frame.call?.member === "send") {
+        operationId = frame.call.args[0].operationId;
+        return; // Never admitted: there is no owner-side record to reconstruct.
+      }
+      if (frame.call?.member === "lookup")
+        lookups.push(frame.call.args[0].operationId);
+      server.send(raw);
+    });
+    server.onMessage((raw) => ws.send(raw));
+  });
+  await page.goto(origin);
+  await second.goto(origin); // Both modules hydrate before the first tab writes.
+  await page
+    .getByRole("button", { name: "Open Streaming voice input Orc" })
+    .click();
+  const input = page.getByRole("textbox", { name: "Message Orc" });
+  await input.fill("Durable identity across tabs");
+  await input.press("Enter");
+  await expect.poll(() => operationId).not.toBe("");
+  await second
+    .getByRole("button", { name: "Open Reader performance Orc" })
+    .click();
+  await expect(
+    second.getByRole("textbox", { name: "Message Orc" }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page
+      .locator(".user-message")
+      .filter({ hasText: "Durable identity across tabs" }),
+  ).toHaveCount(1);
+  await expect.poll(() => lookups.includes(operationId)).toBe(true);
+  const records = await page.evaluate(() =>
+    Object.keys(localStorage)
+      .filter((key) =>
+        key.startsWith(`flickgrove/${location.origin}/outgoing/`),
+      )
+      .map((key) => JSON.parse(localStorage.getItem(key)!)),
+  );
+  expect(records).toContainEqual(
+    expect.objectContaining({
+      id: operationId,
+      text: "Durable identity across tabs",
+    }),
+  );
+  expect(
+    (await (await request.get(origin + "/fixture/info")).json()).inputs,
+  ).toHaveLength(0);
+  await second.close();
 });

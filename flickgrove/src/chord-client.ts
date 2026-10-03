@@ -88,6 +88,8 @@ export async function openGrove(
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new Error("Response timed out. Outcome unknown."));
+        socket.close();
+        finish();
       }, timeoutMs);
       pending.set(id, { resolve, reject, timer });
       try {

@@ -647,3 +647,46 @@ test("dedicated Close reaches the execution owner, preserves guards and never se
     ).status,
   ).toBe(401);
 });
+
+test("slow native admission times out then reconnects for receipt lookup without replay or host interference", async () => {
+  const hub = fixture(true),
+    peer = fixture(false),
+    other = fixture(false);
+  for (const host of [peer, other])
+    await hub.service.register({
+      name: "Synthetic peer",
+      url: host.origin,
+      credential: host.service.credential,
+    });
+  const a = await hub.service.createOrc("alpha", peer.service.identity.id);
+  const b = await hub.service.createOrc("beta", other.service.identity.id);
+  const held = Promise.withResolvers<string>();
+  peer.runtime.sendOverride = () => held.promise;
+  await expect(
+    hub.service.send(a.id, "Held native input", "slow-once"),
+  ).rejects.toThrow("Outcome unknown");
+  expect(peer.count()).toBe(1);
+  await hub.service.send(b.id, "Independent host", "other-once");
+  expect(other.count()).toBe(1);
+  await until(
+    () =>
+      hub.service
+        .snapshot()
+        .hosts?.find((h) => h.id === peer.service.identity.id)?.connected ===
+      true,
+  );
+  expect(await hub.service.lookup(a.id, "slow-once")).toMatchObject({
+    state: "pending",
+  });
+  held.resolve("native-slow-turn");
+  await until(
+    () => peer.app.detail(a.id.split(":")[1]).deliveries[0]?.status === "sent",
+  );
+  expect(await hub.service.lookup(a.id, "slow-once")).toMatchObject({
+    state: "accepted",
+    operationId: "slow-once",
+  });
+  expect(peer.count()).toBe(1);
+  expect(peer.runtime.interruptions).toHaveLength(0);
+  expect(other.count()).toBe(1);
+});

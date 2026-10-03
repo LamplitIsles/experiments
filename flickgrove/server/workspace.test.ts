@@ -589,6 +589,7 @@ test("a rejected Worker report blocks closing its sender and can retry the persi
   );
   await app.retryDelivery(a.id, d.id);
   expect(runtime.inputs.at(-1)?.text).toBe(d.text);
+  await untilClosed(app, w.id);
   expect(app.snapshot().agents.some((a) => a.id === w.id)).toBe(false);
 });
 
@@ -906,6 +907,7 @@ test("Worker close waits for the observed turn, rejects new work, and keeps repo
     status: "failed",
     error: "Compilation failed",
   });
+  await untilClosed(app, worker.id);
   expect(app.snapshot().agents.some((a) => a.id === worker.id)).toBe(false);
   expect(runtime.listeners.has(worker.id)).toBe(false);
   expect(runtime.interruptions).toHaveLength(0);
@@ -941,6 +943,7 @@ test("Worker closure waits for a send acknowledgement even when completion arriv
   held.resolve(turnId);
   await send;
   await Promise.resolve();
+  await untilClosed(app, worker.id);
   expect(app.snapshot().agents.some((a) => a.id === worker.id)).toBe(false);
 });
 
@@ -985,6 +988,7 @@ test("pending closure allows only contextual answers and waits for the answer tu
     turnId: app.detail(worker.id).turnId!,
     status: "completed",
   });
+  await untilClosed(app, worker.id);
   expect(app.snapshot().agents.some((a) => a.id === worker.id)).toBe(false);
 });
 
@@ -1056,6 +1060,7 @@ test.each([false, true])(
         await app.tool(token, "worker_close", { workerId: worker.id }),
       ).toMatchObject({ closed: true });
     }
+    await untilClosed(app, worker.id);
     expect(app.snapshot().agents.some((a) => a.id === worker.id)).toBe(false);
     expect(
       app
@@ -1198,3 +1203,52 @@ test("slash text is ordinary message content, with no Close or Stop command disp
   expect(runtime.interruptions).toHaveLength(0);
   expect(app.snapshot().agents.some((a) => a.id === orc.id)).toBe(true);
 });
+
+test("failed native release keeps Orc and automatic Worker closure visible and retryable", async () => {
+  const { app, runtime, token, worker } = await workerFixture();
+  const other = await app.createOrc("beta");
+  const attempts: string[] = [];
+  const failed = new Set([other.id, worker.id]);
+  runtime.closeOverride = async (id) => {
+    attempts.push(id);
+    if (failed.has(id)) throw new Error("fixture unsubscribe timeout");
+  };
+  await expect(app.closeTree(other.id)).rejects.toThrow("unsubscribe timeout");
+  expect(app.snapshot().agents.some((a) => a.id === other.id)).toBe(true);
+  expect(runtime.listeners.has(other.id)).toBe(true);
+  await app.tool(token, "worker_close", { workerId: worker.id });
+  runtime.emit(worker.id, {
+    type: "completed",
+    turnId: app.detail(worker.id).turnId!,
+    status: "completed",
+  });
+  await Bun.sleep(0);
+  expect(app.snapshot().agents.some((a) => a.id === worker.id)).toBe(true);
+  expect(app.detail(worker.id).closeRequest?.reason).toContain(
+    "unsubscribe timeout",
+  );
+  expect(runtime.listeners.has(worker.id)).toBe(true);
+  await app.send(other.id, "Other thread remains usable", "other-once");
+  expect(attempts.filter((id) => id === worker.id)).toHaveLength(1);
+  runtime.emit(other.id, {
+    type: "completed",
+    turnId: app.detail(other.id).turnId!,
+    status: "completed",
+  });
+  failed.clear();
+  expect(
+    await app.tool(token, "worker_close", { workerId: worker.id }),
+  ).toMatchObject({ closed: true });
+  await app.closeTree(other.id);
+  expect(runtime.listeners.has(worker.id)).toBe(false);
+  expect(runtime.listeners.has(other.id)).toBe(false);
+  expect(runtime.inputs.filter((i) => i.agentId === other.id)).toHaveLength(1);
+});
+
+async function untilClosed(app: Workspace, id: string) {
+  const deadline = Date.now() + 1000;
+  while (app.snapshot().agents.some((a) => a.id === id)) {
+    if (Date.now() > deadline) throw new Error("Native close did not settle");
+    await Bun.sleep(5);
+  }
+}

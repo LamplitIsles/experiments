@@ -1,7 +1,9 @@
 import { z } from "zod";
 import type { Detail } from "./contracts";
 import { receiptSchema, type Receipt } from "./chord-contract";
-const key = `flickgrove/${location.origin}/outgoing`;
+const prefix = `flickgrove/${location.origin}/outgoing/`;
+const key = (o: Outgoing) =>
+  `${prefix}${encodeURIComponent(o.agentId)}/${encodeURIComponent(o.id)}`;
 const entry = z.object({
   agentId: z.string(),
   id: z.string(),
@@ -11,36 +13,52 @@ const entry = z.object({
   error: z.string().optional(),
 });
 export type Outgoing = z.infer<typeof entry>;
-let saved: Outgoing[] = [];
-try {
-  saved = z
-    .array(entry)
-    .parse(JSON.parse(localStorage.getItem(key) ?? "[]"))
-    .map((o) => ({
+const saved: Outgoing[] = [];
+for (const storageKey of Object.keys(localStorage)) {
+  if (!storageKey.startsWith(prefix)) continue;
+  try {
+    const o = entry.parse(JSON.parse(localStorage.getItem(storageKey)!));
+    saved.push({
       ...o,
       status: o.status === "sending" ? "uncertain" : o.status,
-    }));
-} catch {
-  /* malformed device-owned cache supplies no facts */
+    });
+  } catch {
+    /* malformed device-owned cache supplies no facts */
+  }
 }
 export const outgoing = $state<{ entries: Outgoing[] }>({ entries: saved });
-function persist() {
-  localStorage.setItem(key, JSON.stringify(outgoing.entries));
+function persist(o: Outgoing) {
+  // Each operation owns its record; an unrelated tab cannot erase its journal.
+  const raw = localStorage.getItem(key(o));
+  try {
+    const previous = entry.safeParse(JSON.parse(raw ?? "null"));
+    if (previous.success && previous.data.status === "sent") {
+      o.status = "sent";
+      o.error = undefined;
+    }
+  } catch {
+    /* A malformed record supplies no receipt. */
+  }
+  localStorage.setItem(key(o), JSON.stringify(o));
 }
 export function addOutgoing(agentId: string, text: string, id: string) {
-  outgoing.entries.push({
+  const o: Outgoing = {
     agentId,
     text,
     id,
     at: Date.now(),
     status: "sending",
-  });
-  persist();
+  };
+  outgoing.entries.push(o);
+  persist(o);
 }
 export function observeOutgoing(detail: Detail) {
   outgoing.entries = outgoing.entries.filter((o) => {
     if (o.agentId !== detail.id) return true;
-    if (detail.messages.some((m) => m.id === o.id)) return false;
+    if (detail.messages.some((m) => m.id === o.id)) {
+      localStorage.removeItem(key(o));
+      return false;
+    }
     const d = detail.deliveries.find((d) => d.id === o.id);
     if (d && o.status !== "sent") {
       o.status =
@@ -52,10 +70,10 @@ export function observeOutgoing(detail: Detail) {
               ? "uncertain"
               : o.status;
       o.error = d.error;
+      persist(o);
     }
     return true;
   });
-  persist();
 }
 export function acceptReceipt(agentId: string, raw: Receipt) {
   const receipt = receiptSchema.parse(raw);
@@ -67,14 +85,14 @@ export function acceptReceipt(agentId: string, raw: Receipt) {
   else if (receipt.state === "rejected") o.status = "failed";
   else o.status = "uncertain";
   o.error = receipt.error ?? undefined;
-  persist();
+  persist(o);
 }
 export function unknownOutgoing(agentId: string, id: string, error: string) {
   const o = outgoing.entries.find((o) => o.agentId === agentId && o.id === id);
   if (o && o.status !== "sent") {
     o.status = "uncertain";
     o.error = error;
-    persist();
+    persist(o);
   }
 }
 export function withOutgoing(detail: Detail): Detail {

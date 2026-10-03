@@ -39,6 +39,8 @@ export class Workspace {
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly opening = new Map<string, Promise<RuntimeHandle>>();
   private readonly completedTurns = new Set<string>();
+  private readonly closingWorkers = new Set<string>();
+  private readonly failedWorkerCloses = new Set<string>();
   private disposed = false;
   constructor(
     private readonly options: {
@@ -434,8 +436,8 @@ export class Workspace {
         throw new Error("Session does not belong to this project directory");
       if (existing?.role === "worker")
         throw new Error("Continue this Worker through its original Orc");
-      if (existing && !existing.closed) return this.publicAgent(existing);
       const restore = async () => {
+        if (existing && !existing.closed) return this.publicAgent(existing);
         const session = await this.historySession(alias, threadId);
         if (session.role === "worker")
           throw new Error("Continue this Worker through its original Orc");
@@ -788,11 +790,11 @@ export class Workspace {
           `Ask Orc to close its Workers first: ${workers.map((w) => w.title).join(", ")}`,
         );
       this.assertIdle(a);
+      const handle = this.handles.get(id);
+      await handle?.close();
+      this.handles.delete(id);
       a.closed = true;
       this.save();
-      const handle = this.handles.get(id);
-      this.handles.delete(id);
-      await handle?.close();
       return { closed: true as const, id };
     });
   }
@@ -941,8 +943,9 @@ export class Workspace {
           reason: "Waiting for current work to finish",
         };
         if (input.confirmInterrupted) w.turnEnded = true;
+        this.failedWorkerCloses.delete(w.id);
         this.save();
-        this.advanceWorkerCloses();
+        await this.advanceWorkerCloses();
         return {
           closed: w.closed,
           closing: !w.closed,
@@ -980,11 +983,19 @@ export class Workspace {
       this.deliver(this.agent(owner.id), text, requestId, "worker"),
     );
   }
-  private advanceWorkerCloses() {
+  private async advanceWorkerCloses() {
     if (this.disposed) return;
     let changed = false;
+    const releases: Promise<void>[] = [];
     for (const w of this.state.agents) {
-      if (w.role !== "worker" || w.closed || !w.closeRequest) continue;
+      if (
+        w.role !== "worker" ||
+        w.closed ||
+        !w.closeRequest ||
+        this.closingWorkers.has(w.id) ||
+        this.failedWorkerCloses.has(w.id)
+      )
+        continue;
       let reason: string | undefined;
       if (this.queues.has(w.id) || this.opening.has(w.id))
         reason = "Waiting for in-flight Worker operations";
@@ -1021,13 +1032,27 @@ export class Workspace {
         }
         continue;
       }
-      w.closed = true;
-      changed = true;
-      const handle = this.handles.get(w.id);
-      this.handles.delete(w.id);
-      void handle?.close().catch(() => {});
+      this.closingWorkers.add(w.id);
+      releases.push(
+        (async () => {
+          try {
+            await this.handles.get(w.id)?.close();
+            if (this.disposed) return;
+            this.handles.delete(w.id);
+            w.closed = true;
+          } catch (error) {
+            if (this.disposed) return;
+            this.failedWorkerCloses.add(w.id);
+            w.closeRequest!.reason = `Native thread release failed: ${String(error)}. Retry Worker close.`;
+          } finally {
+            this.closingWorkers.delete(w.id);
+            this.save();
+          }
+        })(),
+      );
     }
     if (changed) this.save();
+    await Promise.all(releases);
   }
   private assertIdle(a: RuntimeAgent) {
     if (
