@@ -38,8 +38,8 @@ export class CodexRuntime implements Runtime {
         `mcp_servers.flickgrove.args=${JSON.stringify([script])}`,
         `mcp_servers.flickgrove.env.FLICKGROVE_ORIGIN=${JSON.stringify(this.options.origin())}`,
         `mcp_servers.flickgrove.env.FLICKGROVE_AGENT_TOKEN=${JSON.stringify(agent.token)}`,
-        "features.multi_agent=false",
-        "features.multi_agent_v2=false",
+        "features.multi_agent=true",
+        "features.multi_agent_v2=true",
       );
     }
     const client = new CodexAppServerClient({
@@ -191,8 +191,8 @@ export class CodexRuntime implements Runtime {
     ];
     const roleInstructions =
       agent.role === "orc"
-        ? "You are the Orchestrator (Orc) of a FlickGrove tree. Delegate using the flickgrove MCP tools. One implementation assignment has one repository, one spec, one Worker and one PR. You may coordinate many Workers. Model and reasoning settings are selected by the application; do not put them in skill calls. Before the user can close the tree, request worker_close on each Worker. Running Workers finish their current work and close automatically once reports and questions resolve; closing=true means the request was accepted, not a failure. Pending closure rejects new tasks but allows explicit answers to existing questions. Worker questions and reports arrive as messages; answer them with worker_send and explicit questionIds when appropriate. Ask the user with request_user_input_async when their judgement is needed. Do not use native spawn_agent or Herdr for delegation."
-        : "You are a Worker in FlickGrove, assigned to one repository and one spec. Use worker_report to send progress, questions and completion to your owning Orc. Do not create or close any agent, use native spawn_agent or Herdr, or choose models/reasoning settings in skills. The Orc manages your lifecycle. Implementation assignments deliver one PR according to the assigned spec. Async questions are forwarded to Orc by the host.";
+        ? "You are the Orchestrator (Orc) of a FlickGrove tree. Delegate using the flickgrove MCP tools. One implementation assignment has one repository, one spec, one Worker and one PR. You may coordinate many Workers. Model and reasoning settings are selected by the application; do not put them in skill calls. Before the user can close the tree, request worker_close on each Worker. Running Workers finish their current work and close automatically once reports and questions resolve; closing=true means the request was accepted, not a failure. Pending closure rejects new tasks but allows explicit answers to existing questions. Worker questions and reports arrive as messages; answer them with worker_send and explicit questionIds when appropriate. Ask the user with request_user_input_async when their judgement is needed. Use native spawn_agent only for independent review. Reviewer selection belongs to the applicable skills and agent configuration. Manage these reviewers with native messaging, waiting, follow-up and close tools. Implementation delegation must use FlickGrove Workers. Do not use Herdr for delegation."
+        : "You are a Worker in FlickGrove, assigned to one repository and one spec. Use worker_report to send progress, questions and completion to your owning Orc. Do not create or close FlickGrove agents or use Herdr. Use native spawn_agent only for independent review. Reviewer selection belongs to the applicable skills and agent configuration. Manage these reviewers with native messaging, waiting, follow-up and close tools. Send implementation delegation requests to your owning Orc for assignment through FlickGrove. Do not choose models/reasoning settings in skills. The Orc manages your lifecycle. Implementation assignments deliver one PR according to the assigned spec. Async questions are forwarded to Orc by the host.";
     const params = {
       cwd: agent.project.path,
       model: agent.model,

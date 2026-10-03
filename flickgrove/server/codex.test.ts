@@ -69,7 +69,8 @@ test("the SDK adapter initializes isolated role configuration, discovers enabled
     expect(args).toContain(
       'mcp_servers.flickgrove.env.FLICKGROVE_ORIGIN="http://127.0.0.1:14318"',
     );
-    expect(args).toContain("features.multi_agent=false");
+    expect(args).toContain("features.multi_agent=true");
+    expect(args).toContain("features.multi_agent_v2=true");
     expect(
       args.some(
         (arg) =>

@@ -12,6 +12,10 @@ _Avoid_：主节点、管理员
 接受所属 Orc 派工的 agent；用户可以阅读其会话，并通过 Orc 给它指令。
 _Avoid_：独立助手、子进程
 
+**Reviewer（审查者）**：
+受委派对指定工作进行独立审查的 agent；审查职责与 Worker 的实现派工职责分别表达。
+_Avoid_：实现 Worker
+
 **Agent 会话**：
 一个 Orc 或 Worker 持有的持续对话与工作上下文。关闭详情或访问界面不等于关闭 Agent 会话。
 _Avoid_：浏览器会话、窗口
