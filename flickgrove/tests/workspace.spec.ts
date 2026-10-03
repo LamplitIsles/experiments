@@ -98,6 +98,7 @@ test("create, delegate, read a Worker, insert a skill and close the tree through
   await input.fill("");
   await input.press("$");
   await expect(page.getByRole("listbox", { name: "Skills" })).toBeVisible();
+  await expect(page.getByRole("option", { name: /to-orc-impl/ })).toBeVisible();
   await page.getByRole("combobox", { name: "Search skills…" }).press("Tab");
   await expect(input).toHaveValue("$to-orc-impl ");
   await input.fill("/close");
@@ -240,7 +241,7 @@ test("settings affect new sessions, Markdown stays safe and offline reload resto
   });
 });
 
-test("N focuses creation, I focuses Composer, and canvas navigation survives detail", async ({
+test("N focuses creation, I focuses Composer, and list navigation survives detail", async ({
   page,
 }) => {
   await page.goto("/");
@@ -270,15 +271,14 @@ test("N focuses creation, I focuses Composer, and canvas navigation survives det
   await expect(composer).toHaveValue("drafti");
   await page.keyboard.press("Escape");
   await expect(page.locator(".navigation-focus")).toHaveCount(0);
-  await page.keyboard.press("f");
-  await page.locator(".node-open").first().click();
+  await page.locator(".session-open").first().click();
   await expect(
     page.getByRole("textbox", { name: "Message Orc" }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.locator(".navigation-focus")).toHaveCount(0);
   await page.keyboard.press("ArrowDown");
-  const navigation = page.locator(".navigation-focus .node-open");
+  const navigation = page.locator(".navigation-focus .session-open");
   await expect(navigation).toHaveCount(1);
   const target = await navigation.getAttribute("data-agent-id");
   await navigation.click();
@@ -287,27 +287,6 @@ test("N focuses creation, I focuses Composer, and canvas navigation survives det
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(navigation).toHaveAttribute("data-agent-id", target!);
-});
-
-test("zoom controls change the canvas and percentage while Fit all remains available", async ({
-  page,
-}) => {
-  await page.goto("/");
-  await expect(
-    page.getByRole("button", { name: "Zoom in", exact: true }),
-  ).toBeVisible();
-  const zoom = page.locator(".zoom-readout");
-  await expect(zoom).toHaveText("100%");
-  const viewport = page.locator(".svelte-flow__viewport");
-  const before = await viewport.getAttribute("style");
-  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
-  await expect(zoom).toHaveText("120%");
-  await expect(viewport).not.toHaveAttribute("style", before!);
-  await page.getByRole("button", { name: "Zoom out", exact: true }).click();
-  await expect(zoom).toHaveText("100%");
-  await expect(
-    page.getByRole("button", { name: "Fit all", exact: true }),
-  ).toBeVisible();
 });
 
 test("Tab completes without moving focus, skill search preserves drafts, and close toast expires", async ({
@@ -380,7 +359,7 @@ test("Orc closure of a running Worker shows Closing and automatically removes it
     page.getByText("Workers are closed.", { exact: true }),
   ).toBeVisible();
   await page
-    .locator(".agent-node.active")
+    .locator(".session-item.active")
     .getByRole("button", { name: "Expand Workers" })
     .click();
   await page.getByRole("button", { name: "Open Long Reader Worker" }).click();
@@ -452,6 +431,22 @@ test("Orc titles edit in place, cancel safely, retain failed drafts and persist 
   await expect(
     page.getByText("Title save failed", { exact: true }),
   ).toBeVisible();
+  const refreshed = page.waitForResponse(
+    (response) =>
+      /\/api\/agents\/[^/]+$/.test(response.url()) &&
+      response.request().method() === "GET",
+  );
+  await (await refreshed).finished();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect(title).toHaveValue("Reader implementation");
+  await expect(
+    page.getByText("Title save failed", { exact: true }),
+  ).toBeVisible();
   await page.screenshot({
     path: "../.scratch/flickgrove-shadcn/title-edit.png",
     animations: "disabled",
@@ -486,7 +481,7 @@ test("Orc titles edit in place, cancel safely, retain failed drafts and persist 
     page.getByText("The reader is ready.", { exact: true }),
   ).toBeVisible();
   await page
-    .locator(".agent-node.active")
+    .locator(".session-item.active")
     .getByRole("button", { name: "Expand Workers" })
     .click();
   await page

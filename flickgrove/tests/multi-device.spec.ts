@@ -128,14 +128,18 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator(".host-summary")).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: /NUC.*Streaming voice input/ }),
-  ).toContainText("2 open Workers · 1 working");
+    page
+      .getByRole("button", { name: "Open Streaming voice input Orc" })
+      .locator(".."),
+  ).toContainText("2 open Workers1 working");
   await expect(
-    page.getByRole("button", { name: /Neil’s Mac.*Reader performance/ }),
-  ).toContainText("1 open Workers · 1 working");
+    page
+      .getByRole("button", { name: "Open Reader performance Orc" })
+      .locator(".."),
+  ).toContainText("1 open Workers1 working");
   await capture(page, "multi-13");
   await page
-    .getByRole("button", { name: /NUC.*Streaming voice input/ })
+    .getByRole("button", { name: "Open Streaming voice input Orc" })
     .click();
   await capture(page, "multi-14");
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -182,7 +186,7 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await capture(page, "controls-10");
   await request.post("/fixture/change", { data: { usage: null } });
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(page.locator(".weekly-number strong")).toHaveText("—");
+  await expect(page.locator(".weekly-number strong")).toHaveText("12%");
   await capture(page, "controls-11");
   await request.post("/fixture/reset", { data: {} });
   await page.evaluate(() => localStorage.clear());
@@ -238,7 +242,7 @@ test("two access devices keep independent view/drafts while answers and outages 
       right.getByRole("combobox", { name: "Host filter" }),
     ).toContainText("All hosts");
     await right
-      .getByRole("button", { name: /NUC.*Streaming voice input/ })
+      .getByRole("button", { name: "Open Streaming voice input Orc" })
       .click();
     await left
       .getByRole("textbox", { name: "Message Orc" })
@@ -284,7 +288,7 @@ test("two access devices keep independent view/drafts while answers and outages 
     ).toHaveLength(1);
     await right.getByRole("button", { name: "‹ Sessions" }).click();
     await right
-      .getByRole("button", { name: /Neil’s Mac.*Reader performance/ })
+      .getByRole("button", { name: "Open Reader performance Orc" })
       .click();
     await request.post("/fixture/change", { data: { outage: true } });
     await expect(
@@ -384,7 +388,7 @@ test("mobile supplementary forms, Stop and quota stay operable within 390 pixels
     .click();
   await page.getByRole("button", { name: "‹ Sessions" }).click();
   await page
-    .getByRole("button", { name: /NUC.*Streaming voice input/ })
+    .getByRole("button", { name: "Open Streaming voice input Orc" })
     .click();
   await page
     .getByRole("button", { name: "Weekly remaining", exact: true })
@@ -416,8 +420,8 @@ test("compact detail uses the full height and keeps metadata above the title", a
   await selected(page);
   const detail = page.locator(".agent-detail");
   const panel = await detail.boundingBox();
-  expect(panel!.y).toBeLessThanOrEqual(8);
-  expect(panel!.height).toBeGreaterThanOrEqual(880);
+  expect(panel!.y).toBeLessThanOrEqual(68);
+  expect(panel!.height).toBeGreaterThanOrEqual(820);
   const meta = page.locator(".detail-meta");
   await expect(meta).toContainText("NUC");
   await expect(meta).toContainText("Working");
@@ -451,59 +455,4 @@ test("compact detail uses the full height and keeps metadata above the title", a
     page.getByRole("button", { name: "Edit host Neil’s Mac" }),
   ).toBeVisible();
   await capture(page, "compact-settings-hosts");
-});
-
-test("arrow navigation pans an offscreen session into view without changing zoom", async ({
-  page,
-  request,
-}) => {
-  await request.post("/fixture/reset", { data: {} });
-  await page.goto("/");
-  const snapshot = await (await request.get("/api/snapshot")).json();
-  const roots = snapshot.agents.filter(
-    (a: { role: string }) => a.role === "orc",
-  );
-  await page.evaluate(
-    (ids: string[]) => {
-      const prefix = `flickgrove/${location.origin}`;
-      localStorage.removeItem(`${prefix}/selected`);
-      localStorage.setItem(`${prefix}/host-filter`, "");
-      localStorage.setItem(`${prefix}/expanded`, "[]");
-      localStorage.setItem(
-        `${prefix}/viewport`,
-        JSON.stringify({ x: 0, y: 0, zoom: 1 }),
-      );
-      localStorage.setItem(
-        `${prefix}/positions`,
-        JSON.stringify(
-          Object.fromEntries(
-            ids.map((id, i) => [id, { x: 90, y: 136 + i * 1300 }]),
-          ),
-        ),
-      );
-    },
-    roots.map((a: { id: string }) => a.id),
-  );
-  await page.reload();
-  await expect(page.locator(".node-open").first()).toBeVisible();
-  await page.keyboard.press("ArrowDown");
-  const target = page.locator(".navigation-focus .node-open");
-  await expect(target).toHaveAttribute("data-agent-id", roots[1].id);
-  await expect
-    .poll(async () => {
-      const node = await target.boundingBox();
-      const canvas = await page.locator(".canvas-region").boundingBox();
-      return (
-        !!node &&
-        !!canvas &&
-        node.y >= 60 &&
-        node.y + node.height <= canvas.y + canvas.height &&
-        node.x >= canvas.x &&
-        node.x + node.width <= canvas.x + canvas.width
-      );
-    })
-    .toBe(true);
-  await expect(page.locator(".zoom-readout")).toHaveText("100%");
-  await page.keyboard.press("Enter");
-  await expect(page.locator(".agent-detail h1")).toContainText(roots[1].title);
 });

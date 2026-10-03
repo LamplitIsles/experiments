@@ -6,17 +6,17 @@
   import { NativeSelect } from "$lib/components/ui/native-select/index.js";
   import { Switch } from "$lib/components/ui/switch/index.js";
   import { Kbd } from "$lib/components/ui/kbd/index.js";
-  import { X, Plus, ChevronRight, Settings as SettingsIcon } from "@lucide/svelte";
+  import { X, Plus, Settings as SettingsIcon } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
+  import { navigation, initializeNavigation, openConversation, setSurface, back, validateNavigation } from "./navigation.svelte";
   import { storagePrefix } from "./api";
   import { onMount, tick } from "svelte";
-  import { SvelteFlowProvider } from "@xyflow/svelte";
   import type { Agent, Detail, Model, Project, Settings, Skill, Snapshot } from "./contracts";
   import { api, editable } from "./api";
   import HostFilter from "./HostFilter.svelte";
   import Hosts from "./Hosts.svelte";
   import Weekly from "./Weekly.svelte";
-  import Canvas from "./Canvas.svelte";
+  import SessionList from "./SessionList.svelte";
   import AgentDetail from "./AgentDetail.svelte";
   import * as m from "./paraglide/messages";
 
@@ -25,10 +25,10 @@
   let detail = $state<Detail | null>(null); let skills = $state<Skill[]>([]);
   let projects = $state<Project[]>([]); let models = $state<Model[]>([]);
   let connected = $state(false); let loading = $state(true); let error = $state("");
-  let now = $state(Date.now()); let canvas: { keydown(event: KeyboardEvent): Promise<void>; fit(): void; expandFocused(): void; reveal(id: string): void };
+  let now = $state(Date.now()); let sessionList: { keydown(event: KeyboardEvent): Promise<void>; expandFocused(): void; reveal(id: string): Promise<void> };
   let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | null>(null);
   let search = $state(""); let projectId = $state(""); let saving = $state(false);
-  let settings = $state<Settings | null>(null); let sequence = 0;
+  let settings = $state<Settings | null>(null); let sequence = 0; let focusCreatedId = $state<string | null>(null);
   let install = $state<(Event & { prompt: () => Promise<void> }) | null>(null);
   let hostFilter = $state(localStorage.getItem(`${storagePrefix}/host-filter`) ?? "");
   let createHost = $state(""); let catalogSequence = 0;
@@ -48,22 +48,31 @@
   const filteredProjects = $derived(projects.filter(p => `${p.alias} ${p.name}`.toLowerCase().includes(search.toLowerCase())));
 
   $effect(() => { if (modal === "new" && !filteredProjects.some(p => p.alias === projectId)) projectId = filteredProjects[0]?.alias ?? ""; });
-  function closeDetail() { error = ""; selectedId = null; detail = null; localStorage.removeItem(`${storagePrefix}/selected`); }
+  function closeDetail() { void back(); }
+  $effect(() => {
+    const id = navigation.details.at(-1) ?? null;
+    if (id !== selectedId) { ++sequence; selectedId = id; detail = null; skills = []; error = ""; if (id) void restoreDetail(id); else localStorage.removeItem(`${storagePrefix}/selected`); }
+  });
+  $effect(() => {
+    const kind = navigation.surfaces.find(s => s === "new" || s === "settings" || s === "keys") ?? null;
+    if (kind !== modal) { modal = kind; modalOpen = !!kind; if (kind) void prepareModal(kind); }
+  });
   async function refreshDetail(id: string) {
     const seq = ++sequence;
     try {
       const result = await api<Detail>(`/agents/${id}`);
       if (selectedId === id && seq === sequence) { detail = result; localStorage.setItem(`${storagePrefix}/detail/${id}`, JSON.stringify(result)); }
-    } catch (e) { if (selectedId === id && connected) error = e instanceof Error ? e.message : m.load_failure(); }
+    } catch (e) { if (selectedId === id && seq === sequence && connected) error = e instanceof Error ? e.message : m.load_failure(); }
   }
-  async function open(id: string) {
+  function open(id: string, fromDetail = false) { openConversation(id, fromDetail, snapshot.agents.find(a => a.id === id)?.ownerId); }
+  async function restoreDetail(id: string) {
     error = ""; selectedId = id; localStorage.setItem(`${storagePrefix}/selected`, id);
     const cached = localStorage.getItem(`${storagePrefix}/detail/${id}`); detail = cached ? JSON.parse(cached) : null; skills = [];
     if (connected) {
       await refreshDetail(id);
       if (snapshot.agents.find(a => a.id === id)?.role === "orc" && hosts.find(h => h.id === snapshot.agents.find(a => a.id === id)?.hostId)?.connected) {
         try { const list = await api<Skill[]>(`/agents/${id}/skills`); if (selectedId === id) skills = list; }
-        catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
+        catch (e) { if (selectedId === id) error = e instanceof Error ? e.message : m.load_failure(); }
       }
     }
   }
@@ -74,15 +83,15 @@
     const retained = snapshot.agents.filter(a => value.hosts?.some(h => h.id === a.hostId && !h.connected) && !value.agents.some(next => next.hostId === a.hostId));
     value = { ...value, agents: [...value.agents, ...retained], hosts: value.hosts?.map(h => !h.connected && !h.lastSeen ? { ...h, lastSeen: snapshot.hosts?.find(old => old.id === h.id)?.lastSeen } : h) };
     snapshot = value; localStorage.setItem(`${storagePrefix}/snapshot`, JSON.stringify(value));
-    if (selectedId && !value.agents.some(a => a.id === selectedId) && !value.hosts?.some(h => h.id === selectedId?.split(":")[0] && !h.connected)) closeDetail();
-    else if (selectedId) void refreshDetail(selectedId);
+    validateNavigation(new Set(value.agents.map(a => a.id)));
+    if (selectedId && value.agents.some(a => a.id === selectedId)) void refreshDetail(selectedId);
   }
   async function load() {
     loading = true; error = "";
     try {
       const [state, registered, catalog] = await Promise.all([api<Snapshot>("/snapshot"), api<Project[]>("/projects"), api<Model[]>("/models")]);
       connected = true; projects = registered; models = catalog; adopt(state, true);
-      if (selectedId) await open(selectedId);
+      if (selectedId) await restoreDetail(selectedId);
     } catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { loading = false; }
   }
@@ -100,8 +109,9 @@
       notification.onclick = () => { window.focus(); void open(a.ownerId ?? a.id); notification.close(); };
     }
   }
-  async function show(kind: "new" | "settings" | "keys") {
-    modal = kind; error = "";
+  function show(kind: "new" | "settings" | "keys") { setSurface(kind, true); }
+  async function prepareModal(kind: "new" | "settings" | "keys") {
+    error = "";
     if (kind === "new") { search = ""; void chooseHost(hostFilter || snapshot.hubId || ""); }
     if (kind === "settings") {
       models = await api<Model[]>("/models");
@@ -109,13 +119,13 @@
       settings = snapshot.settings ? structuredClone($state.snapshot(snapshot.settings)) : model ? { fast: false, orc: { model: model.id, effort: model.defaultEffort }, worker: { model: model.id, effort: model.defaultEffort } } : null;
     }
     if (kind === "settings" && settings) { settings.fast = !!settings.fast; }
-    await tick(); modalOpen = true; if (kind === "new") projectSearch?.focus();
+    await tick(); if (modal === kind && kind === "new") projectSearch?.focus();
   }
-  async function createOnHost(id: string) { await show("new"); await chooseHost(id); }
-  function closeModal() { modalOpen = false; modal = null; }
+  function closeModal() { return back(); }
+  $effect(() => { if (detail?.id === focusCreatedId && focusCreatedId) { focusCreatedId = null; void tick().then(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus()); } });
   async function create() {
     if (!projectId || saving || !connected) return; saving = true;
-    try { const agent = await api<Agent>(`/agents?host=${encodeURIComponent(createHost)}`, { project: projectId }); closeModal(); adopt(await api<Snapshot>("/snapshot")); await open(agent.id); await tick(); canvas?.reveal(agent.id); document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(); }
+    try { const agent = await api<Agent>(`/agents?host=${encodeURIComponent(createHost)}`, { project: projectId }); await closeModal(); adopt(await api<Snapshot>("/snapshot")); focusCreatedId = agent.id; open(agent.id); await sessionList?.reveal(agent.id); }
     catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { saving = false; }
   }
@@ -165,26 +175,21 @@
   function keydown(event: KeyboardEvent) {
     if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === "Escape") {
-      if (modal) closeModal();
-      else {
-        const cancelTitle = document.querySelector<HTMLButtonElement>("[data-title-cancel]");
-        if (cancelTitle) { event.preventDefault(); cancelTitle.click(); }
-        else closeDetail();
-      }
+      event.preventDefault(); void back();
       return;
     }
-    if (editable(event.target) || modal) return;
+    if (editable(event.target) || navigation.surfaces.length) return;
     if (event.key.toLowerCase() === "i" && detail?.role === "orc") { event.preventDefault(); document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(); return; }
     if (event.target instanceof HTMLElement && event.target.closest(".question-card")) return;
-    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter"].includes(event.key) && !detail) { void canvas?.keydown(event); return; }
+    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter"].includes(event.key)) { void sessionList?.keydown(event); return; }
     if (event.key.toLowerCase() === "n" && connected) { event.preventDefault(); void show("new"); }
-    else if (event.key.toLowerCase() === "f") { event.preventDefault(); canvas?.fit(); }
-    else if (event.key.toLowerCase() === "e") { event.preventDefault(); canvas?.expandFocused(); }
+    else if (event.key.toLowerCase() === "e") { event.preventDefault(); sessionList?.expandFocused(); }
     else if (event.key === "?") { event.preventDefault(); void show("keys"); }
   }
   onMount(() => {
     const cached = localStorage.getItem(`${storagePrefix}/snapshot`); if (cached) snapshot = JSON.parse(cached);
     const cachedDetail = selectedId && localStorage.getItem(`${storagePrefix}/detail/${selectedId}`); if (cachedDetail) detail = JSON.parse(cachedDetail);
+    const cleanupNavigation = initializeNavigation(selectedId);
     void load();
     const events = new EventSource("/api/events"); let baseline = true;
     events.onopen = () => { connected = true; baseline = true; };
@@ -196,26 +201,24 @@
     window.addEventListener("keydown", completionTab, true);
     const installer = (e: Event) => { e.preventDefault(); install = e as Event & { prompt: () => Promise<void> }; };
     window.addEventListener("pointerdown", permission, { once: true }); window.addEventListener("keydown", permission, { once: true }); window.addEventListener("keydown", keydown); window.addEventListener("beforeinstallprompt", installer);
-    return () => { window.removeEventListener("keydown", completionTab, true); events.close(); clearInterval(timer); window.removeEventListener("pointerdown", permission); window.removeEventListener("keydown", permission); window.removeEventListener("keydown", keydown); window.removeEventListener("beforeinstallprompt", installer); };
+    return () => { cleanupNavigation(); window.removeEventListener("keydown", completionTab, true); events.close(); clearInterval(timer); window.removeEventListener("pointerdown", permission); window.removeEventListener("keydown", permission); window.removeEventListener("keydown", keydown); window.removeEventListener("beforeinstallprompt", installer); };
   });
 </script>
 
 <Toaster theme="dark" position="bottom-center" />
 <header class="app-header" class:has-selection={!!selectedId}><strong>{m.product()}</strong><span class="session-count">{m.session_count({ count: roots.length })}</span>
   <HostFilter {hosts} bind:value={hostFilter} />
-  <div class="header-actions"><Weekly hostId={detail?.hostId ?? snapshot.hubId} {connected} /><Button variant="ghost" size="icon-sm" aria-label={m.settings()} disabled={!connected} onclick={() => show("settings")}><SettingsIcon /></Button></div>
+  <div class="header-actions"><Weekly hostId={detail?.hostId ?? snapshot.hubId} connected={connected && (selectedHost?.connected ?? true)} /><Button variant="ghost" size="icon-sm" aria-label={m.settings()} disabled={!connected} onclick={() => show("settings")}><SettingsIcon /></Button></div>
 </header>
 <main class:with-detail={!!selectedId}>
-  <SvelteFlowProvider><Canvas bind:this={canvas} agents={visibleAgents} {hosts} oncreate={createOnHost} {selectedId} {now} onopen={open} /></SvelteFlowProvider>
-  <section class="mobile-sessions" aria-label={m.sessions()}><h1>{m.sessions()}</h1><p class="mobile-count">{m.session_count({ count: visibleAgents.filter(a => a.role === "orc").length })} · {m.worker_count({ count: visibleAgents.filter(a => a.role === "worker").length })}</p>{#each visibleAgents.filter(a => a.role === "orc") as agent}<button class="mobile-session" onclick={() => open(agent.id)}><div><span class="mobile-card-meta"><span class="owner-badge">{agent.hostName}</span><span>{agent.project.alias}</span></span><strong>{agent.title}</strong><span class:working={agent.state === "working"}>{agent.state === "working" ? m.working() : agent.state === "stopping" ? m.stopping() : agent.state === "error" ? m.failed() : m.idle()}</span><small>{m.current_workers({ count: snapshot.agents.filter(w => w.ownerId === agent.id).length })} · {m.working_count({ count: snapshot.agents.filter(w => w.ownerId === agent.id && w.state === "working").length })}</small></div><ChevronRight aria-hidden="true" /></button>{/each}<Button class="mobile-new" variant="default" size="sm" disabled={!connected} onclick={() => show("new")}><Plus aria-hidden="true" /> {m.new_session()}</Button></section>
-  {#if loading && !snapshot.agents.length}<div class="canvas-empty"><p>{m.loading()}</p></div>
-  {:else if !roots.length}<div class="canvas-empty"><h1>{m.empty_heading()}</h1><p>{m.empty_help()}</p><Button variant="default" size="sm" disabled={!connected} onclick={() => show("new")}><Plus aria-hidden="true" />{m.new_session()}</Button></div>{/if}
+  <SessionList bind:this={sessionList} agents={visibleAgents} {hosts} {selectedId} {loading} {connected} onopen={open} onnew={() => show("new")} />
+  {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !detail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
   {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
   {#if error && !modal && !detail}<div class="app-error" role="alert"><span>{error}</span><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => error = ""}><X /></Button></div>{/if}
-  {#if detail && selectedId}{#key detail.id}<AgentDetail {detail} {owner} {skills} {now} connected={hostConnected} onstop={stop} onrename={rename} onrefresh={load} actionError={error} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={open} onsend={send} onanswer={answer} onreconcile={reconcile} />{/key}{/if}
+  {#if detail && selectedId}{#key detail.id}<AgentDetail {detail} {owner} {skills} {now} connected={hostConnected} onstop={stop} onrename={rename} onrefresh={load} actionError={error} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answer} onreconcile={reconcile} />{/key}{/if}
 </main>
 
-<Dialog.Root bind:open={modalOpen} onOpenChange={value => { if (!value) modal = null; }}>
+<Dialog.Root open={modalOpen} onOpenChange={value => { if (!value && modal) void closeModal(); }}>
   <Dialog.Content showCloseButton={false} class={`grove-dialog ${modal === "new" ? "new-modal" : modal === "settings" ? "settings-modal" : ""}`} onOpenAutoFocus={e => { e.preventDefault(); if (modal === "new") projectSearch?.focus(); }} onCloseAutoFocus={e => e.preventDefault()}><Button class="modal-close" variant="ghost" size="icon-sm" aria-label={m.close()} onclick={closeModal}><X /></Button>
     {#if modal === "new"}
       <Dialog.Title>{m.new_session()}</Dialog.Title><p class="modal-help">{m.host_project_help()}</p>
@@ -235,7 +238,7 @@
       <p class="settings-scope">{m.settings_scope()}</p><div class="modal-action">{#if install}<button class="install-link" onclick={() => install?.prompt()}>{m.install_app()}</button>{/if}<Button variant="default" size="sm" disabled={!settings || !connected || saving} onclick={saveSettings}>{saving ? m.sending() : m.save_changes()}</Button></div>
       <details class="settings-hosts"><summary>{m.hosts()}</summary><Hosts {hosts} sessionCount={roots.length} onadopt={value => adopt(value, true)} /></details>
     {:else if modal === "keys"}
-      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["F", m.key_fit()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()], ["← →", m.key_questions()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
+      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()], ["← →", m.key_questions()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
     {/if}
     {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
   </Dialog.Content>

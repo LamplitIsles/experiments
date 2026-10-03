@@ -177,10 +177,23 @@ async function reset(mode = "working") {
     true,
     [
       agent("orc", "orc", "Streaming voice input", 0),
+      ...(mode === "dense"
+        ? Array.from({ length: 18 }, (_, i) =>
+            agent(`extra-${i}`, "orc", `Additional task ${i + 1}`, 0),
+          )
+        : []),
       ...(workers
         ? [
             agent("voice", "worker", "Voice input", 0, "orc"),
-            agent("docs", "worker", "Documentation", 1, "orc"),
+            agent(
+              "docs",
+              "worker",
+              mode === "dense"
+                ? "Documentation for a very long Worker assignment covering mobile navigation and persistent conversation drafts across hosts"
+                : "Documentation",
+              1,
+              "orc",
+            ),
           ]
         : []),
     ],

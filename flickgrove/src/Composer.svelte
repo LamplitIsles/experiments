@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { navigation, setSurface } from "./navigation.svelte";
   import { Button } from '$lib/components/ui/button/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
   import { ArrowUp, Square, LoaderCircle } from '@lucide/svelte';
@@ -10,7 +11,7 @@
   let { agentId, project, skills, connected, working = false, stopping = false, onstop, onsend }: { agentId: string; project: string; skills: Skill[]; connected: boolean; working?: boolean; stopping?: boolean; onstop?: () => Promise<boolean>; onsend: (text: string, requestId: string) => Promise<boolean> } = $props();
   let text = $state(untrack(() => localStorage.getItem(`${storagePrefix}/composer/${agentId}`) ?? ''));
   let busy = $state(false); let dismissed = $state(false); let selection = $state(0); let input = $state<HTMLTextAreaElement | null>(null);
-  let skillOpen = $state(false); let insertion = {start:0,end:0};
+  const skillOpen = $derived(navigation.surfaces.includes("skill")); let insertion = {start:0,end:0};
   const commandMatch = $derived(/^\/[^\s]*$/.test(text));
   const choices = $derived(commandMatch ? [{name:'/stop',description:m.stop_help()},{name:'/close',description:m.close_tree_help()}].filter(c => c.name.startsWith(text)) : []);
   const open = $derived(!dismissed && !skillOpen && commandMatch && choices.length > 0);
@@ -24,7 +25,7 @@
     const before = text.slice(0,insertion.start); const after = text.slice(insertion.end);
     const value = `$${skill.name}${after.startsWith(' ') ? '' : ' '}`;
     text = before+value+after; insertion = {start:before.length+value.length,end:before.length+value.length};
-    skillOpen = false; await restoreInput();
+    setSurface("skill", false); await restoreInput();
   }
   async function send() {
     if(!text.trim() || busy || !connected || stopping) return;
@@ -35,7 +36,7 @@
   async function keydown(e:KeyboardEvent) {
     if(e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
     if(e.key === '$' && input && (input.selectionStart===0 || /\s/.test(text[input.selectionStart-1]))) {
-      e.preventDefault(); e.stopPropagation(); insertion={start:input.selectionStart,end:input.selectionEnd}; skillOpen=true; return;
+      e.preventDefault(); e.stopPropagation(); insertion={start:input.selectionStart,end:input.selectionEnd}; setSurface("skill", true); return;
     }
     if(e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); if(open && !e.shiftKey) await insertCommand(); return; }
     if(open && ['ArrowUp','ArrowDown','Enter','Escape'].includes(e.key)) {
@@ -47,7 +48,7 @@
   }
 </script>
 <div class="composer-wrap">
-  <SkillSearch bind:open={skillOpen} {skills} {project} onselect={skill => void insertSkill(skill)} onclose={() => void restoreInput()} />
+  <SkillSearch bind:open={() => skillOpen, value => setSurface("skill", value)} {skills} {project} onselect={skill => void insertSkill(skill)} onclose={() => void restoreInput()} />
   {#if open}<div class="completion"><div class="completion-heading">{m.commands()}</div><div class="completion-list" id={`completion-${agentId}`} role="listbox" aria-label={m.commands()}>
     {#each choices as choice,i}<button tabindex={-1} id={`command-${agentId}-${i}`} role="option" aria-selected={i===selection} class:selected={i===selection} onmousedown={e => e.preventDefault()} onclick={() => {selection=i;void insertCommand();}}><code>{choice.name}</code><span>{choice.description}</span></button>{/each}
   </div><div class="completion-description">{choices[selection]?.description}</div></div>{/if}
