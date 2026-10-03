@@ -224,7 +224,10 @@ test("settings affect new sessions, Markdown stays safe and offline reload resto
     page.getByRole("heading", { name: "Reader notes" }),
   ).toBeVisible();
   await expect(input).toHaveValue("Draft for later");
-  await expect(input).toBeDisabled();
+  await expect(input).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "Send message", exact: true }),
+  ).toBeDisabled();
   await context.setOffline(false);
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(input).toBeEnabled();
@@ -389,6 +392,23 @@ test("Orc closure of a running Worker shows Closing and automatically removes it
 test("Orc titles edit in place, cancel safely, retain failed drafts and persist across reload", async ({
   page,
 }) => {
+  let failTitle = false;
+  await page.routeWebSocket("**/api/socket", (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((raw) => {
+      const frame = JSON.parse(String(raw));
+      if (failTitle && frame.call?.member === "rename") {
+        failTitle = false;
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            id: frame.id,
+            error: "Title save failed",
+          }),
+        );
+      } else server.send(raw);
+    });
+  });
   await page.goto("/");
   await newSession(page);
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
@@ -408,27 +428,12 @@ test("Orc titles edit in place, cancel safely, retain failed drafts and persist 
   await title.fill(" ");
   await expect(page.getByRole("button", { name: "Save title" })).toBeDisabled();
   await title.fill("Reader implementation");
-  await page.route(
-    "**/api/agents/*/title",
-    (route) =>
-      route.fulfill({
-        status: 503,
-        contentType: "application/json",
-        body: JSON.stringify({ error: "Title save failed" }),
-      }),
-    { times: 1 },
-  );
+  failTitle = true;
   await page.getByRole("button", { name: "Save title" }).click();
   await expect(title).toHaveValue("Reader implementation");
   await expect(
     page.getByText("Title save failed", { exact: true }),
   ).toBeVisible();
-  const refreshed = page.waitForResponse(
-    (response) =>
-      /\/api\/agents\/[^/]+$/.test(response.url()) &&
-      response.request().method() === "GET",
-  );
-  await (await refreshed).finished();
   await page.evaluate(
     () =>
       new Promise<void>((resolve) =>

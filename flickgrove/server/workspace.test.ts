@@ -382,7 +382,7 @@ test("Worker async questions are delegated once and only explicit contextual rep
   expect(app.detail(w.id).questions[0].state).toBe("answered");
 });
 
-test("explicit reconciliation resolves an uncertain answer without replaying the message", async () => {
+test("lookup retains an uncertain answer without replaying or inventing native acceptance", async () => {
   const { app, runtime } = fixture();
   const a = await app.createOrc("alpha");
   await app.send(a.id, "Start", "first");
@@ -403,16 +403,11 @@ test("explicit reconciliation resolves an uncertain answer without replaying the
   await app.answer(a.id, "ask:0", "Blue");
   await expect(app.closeTree(a.id)).rejects.toThrow("unconfirmed");
   const count = runtime.inputs.length;
-  const detail = await app.reconcile(a.id, "answer:ask:0", true);
-  expect(detail.questions[0]).toMatchObject({
-    state: "answered",
-    answer: "Blue",
-  });
+  expect(app.lookup(a.id, "answer:ask:0").state).toBe("uncertain");
+  expect(app.detail(a.id).questions[0].state).toBe("unanswered");
   expect(runtime.inputs).toHaveLength(count);
-  await expect(app.closeTree(a.id)).rejects.toThrow("still working");
   runtime.emit(a.id, { type: "completed", turnId, status: "completed" });
-  await app.closeTree(a.id);
-  expect(app.snapshot().agents).toEqual([]);
+  await expect(app.closeTree(a.id)).rejects.toThrow("unconfirmed");
 });
 
 test("one global Fast setting applies to new Orcs and Workers while existing sessions retain their tier", async () => {
@@ -488,7 +483,7 @@ test("a stale steer retries against the current active turn instead of starting 
   expect(app.detail(a.id).turnId).toBe("current-turn");
 });
 
-test("queued Worker reports survive restart and block closure until explicitly reconciled", async () => {
+test("queued Worker reports survive restart and unknown delivery keeps closure blocked", async () => {
   const { app, runtime, directory } = fixture();
   const a = await app.createOrc("alpha");
   const token = runtime.agents.get(a.id)!.token;
@@ -551,8 +546,8 @@ test("queued Worker reports survive restart and block closure until explicitly r
     closing: true,
     reason: expect.stringContaining("report delivery"),
   });
-  await restarted.reconcile(a.id, d.id, true);
-  expect(restarted.snapshot().agents.some((a) => a.id === w.id)).toBe(false);
+  expect(restarted.lookup(a.id, d.id).state).toBe("uncertain");
+  expect(restarted.snapshot().agents.some((a) => a.id === w.id)).toBe(true);
   held.resolve("held-turn");
   await blocker;
   await expect(report).rejects.toThrow("Workspace is stopped");
@@ -589,7 +584,10 @@ test("a rejected Worker report blocks closing its sender and can retry the persi
     reason: expect.stringContaining("report delivery"),
   });
   runtime.sendOverride = undefined;
-  await app.send(a.id, "Attempted replacement", d.id);
+  await expect(app.send(a.id, "Attempted replacement", d.id)).rejects.toThrow(
+    "bound",
+  );
+  await app.retryDelivery(a.id, d.id);
   expect(runtime.inputs.at(-1)?.text).toBe(d.text);
   expect(app.snapshot().agents.some((a) => a.id === w.id)).toBe(false);
 });
@@ -682,7 +680,11 @@ test("stop targets only the observed Orc turn, waits for authoritative interrupt
   const stopped = await app.stop(orc.id, turnId);
   expect(stopped.state).toBe("stopping");
   expect(stopped.stop?.status).toBe("pending");
-  await expect(app.send(orc.id, "Do more", "more")).rejects.toThrow("outcome");
+  expect(
+    (await app.send(orc.id, "Do more", "more")).deliveries.find(
+      (d) => d.id === "more",
+    )?.status,
+  ).toBe("failed");
   await expect(app.closeTree(orc.id)).rejects.toThrow("Workers first");
   runtime.emit(orc.id, { type: "completed", turnId, status: "interrupted" });
   expect(app.detail(orc.id).state).toBe("idle");
@@ -749,7 +751,7 @@ test("a report during Stopping is retained for explicit retry and cannot make cl
     closing: true,
     reason: expect.stringContaining("report delivery"),
   });
-  await app.send(orc.id, report.text, report.id);
+  await app.retryDelivery(orc.id, report.id);
   expect(
     app.detail(orc.id).deliveries.find((d) => d.id === report.id)?.status,
   ).toBe("sent");
@@ -841,8 +843,10 @@ test.each(["pending", "unknown"] as const)(
     });
     runtime.sendOverride = async () => "explicit-retry";
     await app.send(orc.id, "Steer retained", "steer");
+    expect(app.lookup(orc.id, "steer").state).toBe("rejected");
+    await app.send(orc.id, "Steer retained", "steer-retry");
     expect(
-      app.detail(orc.id).deliveries.find((d) => d.id === "steer")?.status,
+      app.detail(orc.id).deliveries.find((d) => d.id === "steer-retry")?.status,
     ).toBe("sent");
     expect(app.detail(orc.id).turnId).toBe("explicit-retry");
   },

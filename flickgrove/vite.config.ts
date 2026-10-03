@@ -40,7 +40,11 @@ export default defineConfig({
       "/api": {
         target: "http://127.0.0.1:4318",
         changeOrigin: true,
+        ws: true,
         configure(proxy) {
+          proxy.on("proxyReqWs", (req) =>
+            req.setHeader("Origin", "http://127.0.0.1:4318"),
+          );
           proxy.on("proxyReq", (req) =>
             req.setHeader("Origin", "http://127.0.0.1:4318"),
           );

@@ -685,6 +685,7 @@ export class Workspace {
           at: d.at,
         });
       d.status = "sent";
+      d.turnId = turnId;
       for (const q of a.questions)
         if (questionIds.includes(q.id)) q.state = "answered";
       this.save();
@@ -721,12 +722,57 @@ export class Workspace {
     }
     return this.detail(a.id);
   }
-  send(id: string, text: string, requestId: string) {
-    return this.serialize(id, () => {
+  retryDelivery(id: string, deliveryId: string) {
+    return this.serialize(id, async () => {
       const a = this.agent(id);
-      if (a.state === "stopping")
-        throw new Error("Wait for the observed turn outcome before sending");
+      const d = a.deliveries.find((d) => d.id === deliveryId);
+      if (!d || d.source === "user" || d.status !== "failed")
+        throw new Error("Only a rejected report or answer can be retried");
+      return this.deliver(a, d.text, d.id, d.source, d.questionIds);
+    });
+  }
+  lookup(id: string, operationId: string) {
+    const a = this.state.agents.find((a) => a.id === id);
+    if (!a) throw new Error("Agent not found");
+    const d = a.deliveries.find((d) => d.id === operationId);
+    return {
+      operationId,
+      state: !d
+        ? ("missing" as const)
+        : d.status === "sent"
+          ? ("accepted" as const)
+          : d.status === "failed"
+            ? ("rejected" as const)
+            : d.status === "uncertain"
+              ? ("uncertain" as const)
+              : ("pending" as const),
+      turnId: d?.turnId ?? null,
+      error: d?.error ?? null,
+    };
+  }
+  send(id: string, text: string, requestId: string) {
+    return this.serialize(id, async () => {
+      const a = this.agent(id);
       if (a.role !== "orc") throw new Error("Send instructions through Orc");
+      const previous = a.deliveries.find((d) => d.id === requestId);
+      if (previous) {
+        if (previous.text !== text || previous.source !== "user")
+          throw new Error("Operation ID is bound to different content");
+        return this.detail(id);
+      }
+      if (a.state === "stopping") {
+        a.deliveries.push({
+          id: requestId,
+          text,
+          source: "user",
+          status: "failed",
+          questionIds: [],
+          at: Date.now(),
+          error: "Wait for the observed turn outcome before sending",
+        });
+        this.save();
+        return this.detail(id);
+      }
       return this.deliver(a, text, requestId, "user");
     });
   }
@@ -776,32 +822,6 @@ export class Workspace {
         this.save();
       }
       return { ...result, questions: structuredClone(a.questions) };
-    });
-  }
-  reconcile(id: string, deliveryId: string, accepted: boolean) {
-    return this.serialize(id, async () => {
-      const a = this.agent(id);
-      const d = a.deliveries.find((d) => d.id === deliveryId);
-      if (!d || d.status !== "uncertain")
-        throw new Error("Unconfirmed delivery not found");
-      d.status = accepted ? "sent" : "failed";
-      d.error = accepted
-        ? undefined
-        : "You confirmed this message was not delivered. It can be retried.";
-      if (accepted) {
-        if (!a.messages.some((m) => m.id === d.id))
-          a.messages.push({ id: d.id, role: "user", text: d.text, at: d.at });
-        for (const q of a.questions)
-          if (d.questionIds.includes(q.id)) {
-            q.state = "answered";
-            q.answer =
-              d.source === "question"
-                ? d.text.slice(d.text.indexOf("\nAnswer: ") + 9)
-                : d.text;
-          }
-      }
-      this.save();
-      return this.detail(id);
     });
   }
   skills(id: string) {
@@ -982,7 +1002,7 @@ export class Workspace {
           )
       )
         reason =
-          "Waiting for report delivery to Orc; retry or reconcile unconfirmed reports";
+          "Waiting for report delivery to Orc; retry rejected reports or inspect unconfirmed delivery";
       else if (w.questions.some((q) => q.state !== "answered"))
         reason = "Waiting for answers to delegated questions";
       else if (

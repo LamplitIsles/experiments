@@ -70,6 +70,7 @@ export interface Question {
   at: number;
 }
 export interface Delivery {
+  turnId?: string;
   id: string;
   text: string;
   status: "queued" | "sending" | "sent" | "failed" | "uncertain";

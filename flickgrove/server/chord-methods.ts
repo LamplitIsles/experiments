@@ -1,0 +1,85 @@
+import { inputs, jsonValue, type Method } from "../src/chord-contract";
+import type { Workspace } from "./workspace";
+import type { HostService } from "./hosts";
+export async function invoke(
+  app: Workspace | HostService,
+  member: Method,
+  input: unknown,
+) {
+  // Each case narrows its schema before invoking the existing domain methods.
+  const parse = <K extends Method>(
+    key: K,
+  ): import("zod").infer<(typeof inputs)[K]> =>
+    inputs[key].parse(input) as import("zod").infer<(typeof inputs)[K]>;
+  switch (member) {
+    case "projects":
+      return await app.projects(parse(member).host);
+    case "models":
+      return await app.models(parse(member).host);
+    case "weekly":
+      return await app.weekly(parse(member).host);
+    case "history": {
+      const p = parse(member);
+      return await app.history(p.project, p.query, p.cursor, p.host);
+    }
+    case "historySession": {
+      const p = parse(member);
+      return await app.historySession(p.project, p.threadId, p.host);
+    }
+    case "historyMessages": {
+      const p = parse(member);
+      return await app.historyMessages(p.project, p.threadId, p.cursor, p.host);
+    }
+    case "resumeHistory": {
+      const p = parse(member);
+      return await app.resumeHistory(p.project, p.threadId, p.archived, p.host);
+    }
+    case "agentHistory": {
+      const p = parse(member);
+      return await app.agentHistory(p.id, p.cursor);
+    }
+    case "detail":
+      return await app.detail(parse(member).id);
+    case "skills":
+      return await app.skills(parse(member).id);
+    case "createOrc": {
+      const p = parse(member);
+      return await app.createOrc(p.project, p.host);
+    }
+    case "saveSettings":
+      await app.saveSettings(parse(member));
+      return await app.snapshot();
+    case "register":
+      if ("register" in app) return await app.register(parse(member));
+      throw new Error("Only the Hub registers hosts");
+    case "send": {
+      const p = parse(member);
+      return await app.send(p.id, p.text, p.operationId);
+    }
+    case "retryDelivery": {
+      const p = parse(member);
+      return await app.retryDelivery(p.id, p.deliveryId);
+    }
+    case "lookup": {
+      const p = parse(member);
+      return await app.lookup(p.id, p.operationId);
+    }
+    case "answer": {
+      const p = parse(member);
+      return await app.answer(p.id, p.questionId, p.answer);
+    }
+    case "stop": {
+      const p = parse(member);
+      return await app.stop(p.id, p.turnId);
+    }
+    case "rename": {
+      const p = parse(member);
+      return await app.rename(p.id, p.title);
+    }
+    case "closeTree":
+      return await app.closeTree(parse(member).id);
+    default:
+      throw new Error("Invalid method");
+  }
+}
+export { jsonValue };

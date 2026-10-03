@@ -14,7 +14,10 @@ if (crashMarker && existsSync(crashMarker)) {
     ".fake-app-server-state.json",
   );
   const state = JSON.parse(readFileSync(statePath, "utf8"));
-  state.active = null;
+  for (const thread of Object.values(state.threads)) {
+    thread.active = null;
+    thread.loaded = false;
+  }
   writeFileSync(statePath, JSON.stringify(state));
 }
 const write = process.stdout.write.bind(process.stdout);

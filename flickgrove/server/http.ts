@@ -1,24 +1,69 @@
 import { resolve, sep } from "node:path";
 import { z } from "zod";
+import type { Server } from "bun";
 import type { Workspace } from "./workspace";
 import type { HostService } from "./hosts";
-
-const text = z.string().trim().min(1).max(100_000);
-const defaults = z.object({
-  model: z.string().min(1),
-  effort: z.string().min(1),
-});
+import type { SocketData } from "./chord-socket";
+import { invoke } from "./chord-methods";
+import { routeCall } from "../src/chord-contract";
 const json = (value: unknown, status = 200) =>
   Response.json(value, { status, headers: { "Cache-Control": "no-store" } });
-export function createHandler(
-  workspace: Workspace,
-  options: {
-    origin: () => string;
-    localOrigin?: () => string;
-    assets?: string;
-    service: HostService;
-  },
-) {
+type Options = {
+  origin: () => string;
+  localOrigin?: () => string;
+  assets?: string;
+  service: HostService;
+};
+export function createUpgrade(workspace: Workspace, options: Options) {
+  return (
+    request: Request,
+    server: Pick<Server<SocketData>, "upgrade">,
+  ): Response | true | undefined => {
+    const url = new URL(request.url);
+    const peer = url.pathname === "/execution/socket";
+    if (!peer && url.pathname !== "/api/socket") return;
+    const origin = options.origin();
+    if (
+      request.method !== "GET" ||
+      url.host !== new URL(origin).host ||
+      (request.headers.get("origin") &&
+        request.headers.get("origin") !== origin)
+    )
+      return json(
+        { error: "Open FlickGrove from its configured address" },
+        403,
+      );
+    if (peer) {
+      if (
+        request.headers.get("authorization") !==
+        `Bearer ${options.service.credential}`
+      )
+        return json({ error: "Service authorization required" }, 401);
+      if (
+        options.service.identity.role !== "execution" ||
+        request.headers.get("grove-host") !== options.service.identity.id
+      )
+        return json({ error: "Wrong execution host identity" }, 403);
+    } else {
+      if (!options.service.options.hub)
+        return json({ error: "Execution service has no browser entry" }, 404);
+      if (request.headers.get("origin") !== origin)
+        return json({ error: "This action requires the FlickGrove page" }, 403);
+    }
+    if (
+      server.upgrade(request, {
+        data: {
+          app: peer ? workspace : options.service,
+          service: options.service,
+          peer,
+        },
+      })
+    )
+      return true;
+    return json({ error: "WebSocket upgrade required" }, 400);
+  };
+}
+export function createHandler(workspace: Workspace, options: Options) {
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const execution = url.pathname.startsWith("/execution/");
@@ -43,16 +88,16 @@ export function createHandler(
         return json({ error: "Service authorization required" }, 401);
       if (url.pathname === "/execution/identity" && request.method === "GET")
         return json(options.service.identity);
-      url.pathname = "/api" + url.pathname.slice("/execution".length);
+      // Peer control/state have a single WebSocket transport. No HTTP fallback.
+      return json({ error: "Execution action not found" }, 404);
     } else if (!mcp) {
       if (!options.service.options.hub)
         return json({ error: "Execution service has no browser entry" }, 404);
       if (request.method !== "GET" && request.headers.get("origin") !== origin)
         return json({ error: "This action requires the FlickGrove page" }, 403);
     }
-    const app = execution ? workspace : options.service;
     try {
-      if (url.pathname.startsWith("/api/mcp/")) {
+      if (mcp) {
         const token = /^Bearer (.+)$/.exec(
           request.headers.get("authorization") ?? "",
         )?.[1];
@@ -67,202 +112,29 @@ export function createHandler(
         }
         return json({ error: "Tool action not found" }, 404);
       }
-      if (
-        !execution &&
-        request.method === "POST" &&
-        url.pathname === "/api/hosts"
-      ) {
-        const body = z
-          .object({
-            id: z.string().optional(),
-            name: z.string().min(1).max(120),
-            url: z.string().min(1).max(2048),
-            credential: z.string().max(1000),
-          })
-          .parse(await request.json());
-        return json(await options.service.register(body));
-      }
-      if (request.method === "GET" && url.pathname === "/api/weekly")
-        return json(
-          await app.weekly(url.searchParams.get("host") ?? undefined),
-        );
       if (request.method === "GET" && url.pathname === "/api/snapshot")
-        return json(app.snapshot());
-      if (request.method === "GET" && url.pathname === "/api/projects")
-        return json(
-          await app.projects(url.searchParams.get("host") ?? undefined),
-        );
-      if (request.method === "GET" && url.pathname.startsWith("/api/history")) {
-        const host = url.searchParams.get("host") ?? undefined;
-        const project = z
-          .string()
-          .min(1)
-          .parse(url.searchParams.get("project"));
-        const cursor = url.searchParams.get("cursor") ?? undefined;
-        if (request.method === "GET" && url.pathname === "/api/history")
-          return json(
-            await app.history(
-              project,
-              url.searchParams.get("query")?.trim() ?? "",
-              cursor,
-              host,
-            ),
-          );
-        const thread = url.searchParams.get("thread");
-        if (request.method === "GET" && url.pathname === "/api/history/session")
-          return json(
-            await app.historySession(
-              project,
-              z.string().min(1).parse(thread),
-              host,
-            ),
-          );
+        return json(options.service.snapshot());
+      if (request.method === "GET" && url.pathname.startsWith("/api/")) {
+        const call = routeCall(url.pathname.slice(4) + url.search);
         if (
-          request.method === "GET" &&
-          url.pathname === "/api/history/messages"
+          ![
+            "projects",
+            "models",
+            "weekly",
+            "history",
+            "historySession",
+            "historyMessages",
+            "agentHistory",
+            "detail",
+            "skills",
+          ].includes(call.member)
         )
-          return json(
-            await app.historyMessages(
-              project,
-              z.string().min(1).parse(thread),
-              cursor,
-              host,
-            ),
-          );
-      }
-      if (request.method === "POST" && url.pathname === "/api/history/resume") {
-        const body = z
-          .object({
-            project: z.string().min(1),
-            threadId: z.string().min(1),
-            archived: z.boolean(),
-          })
-          .parse(await request.json());
-        return json(
-          await app.resumeHistory(
-            body.project,
-            body.threadId,
-            body.archived,
-            url.searchParams.get("host") ?? undefined,
-          ),
-        );
-      }
-      if (request.method === "GET" && url.pathname === "/api/models")
-        return json(
-          await app.models(url.searchParams.get("host") ?? undefined),
-        );
-      if (request.method === "GET" && url.pathname === "/api/events") {
-        let stop = () => {};
-        const stream = new ReadableStream<Uint8Array>({
-          start(controller) {
-            const encoder = new TextEncoder();
-            const publish = () =>
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(app.snapshot())}\n\n`),
-              );
-            publish();
-            const unsubscribe = app.subscribe(publish);
-            const timer = setInterval(
-              () => controller.enqueue(encoder.encode(": keepalive\n\n")),
-              15_000,
-            );
-            stop = () => {
-              clearInterval(timer);
-              unsubscribe();
-              request.signal.removeEventListener("abort", stop);
-            };
-            request.signal.addEventListener("abort", stop, { once: true });
-          },
-          cancel() {
-            stop();
-          },
-        });
-        return new Response(stream, {
-          headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-store",
-            "X-Accel-Buffering": "no",
-          },
-        });
-      }
-      if (request.method === "PUT" && url.pathname === "/api/settings") {
-        await app.saveSettings(
-          z
-            .object({ fast: z.boolean(), orc: defaults, worker: defaults })
-            .parse(await request.json()),
-        );
-        return json(app.snapshot());
-      }
-      if (request.method === "POST" && url.pathname === "/api/agents")
-        return json(
-          await app.createOrc(
-            z.object({ project: z.string().min(1) }).parse(await request.json())
-              .project,
-            url.searchParams.get("host") ?? undefined,
-          ),
-        );
-      const agentPath =
-        /^\/api\/agents\/([^/]+)(?:\/(messages|answer|skills|reconcile|stop|title|close|history))?$/.exec(
-          url.pathname,
-        );
-      if (agentPath) {
-        const id = decodeURIComponent(agentPath[1]);
-        const action = agentPath[2];
-        if (request.method === "GET" && !action)
-          return json(await app.detail(id));
-        if (request.method === "GET" && action === "skills")
-          return json(await app.skills(id));
-        if (request.method === "GET" && action === "history")
-          return json(
-            await app.agentHistory(
-              id,
-              url.searchParams.get("cursor") ?? undefined,
-            ),
-          );
-        if (request.method === "POST" && action === "title") {
-          const body = z
-            .object({ title: z.string() })
-            .parse(await request.json());
-          return json(await app.rename(id, body.title));
-        }
-        if (request.method === "POST" && action === "close")
-          return json(await app.closeTree(id));
-        if (request.method === "POST" && action === "stop") {
-          const body = z
-            .object({ turnId: z.string().min(1) })
-            .parse(await request.json());
-          return json(await app.stop(id, body.turnId));
-        }
-        if (request.method === "POST" && action === "messages") {
-          const body = z
-            .object({ text, requestId: z.string().min(1).max(120) })
-            .parse(await request.json());
-          return json(await app.send(id, body.text, body.requestId));
-        }
-        if (request.method === "POST" && action === "reconcile") {
-          const body = z
-            .object({
-              deliveryId: z.string().min(1).max(500),
-              accepted: z.boolean(),
-            })
-            .parse(await request.json());
-          return json(await app.reconcile(id, body.deliveryId, body.accepted));
-        }
-        if (request.method === "POST" && action === "answer") {
-          const body = z
-            .object({ questionId: z.string().min(1).max(300), answer: text })
-            .parse(await request.json());
-          return json(await app.answer(id, body.questionId, body.answer));
-        }
+          return json({ error: "Action not found" }, 404);
+        return json(await invoke(options.service, call.member, call.input));
       }
       if (url.pathname.startsWith("/api/"))
         return json({ error: "Action not found" }, 404);
-      if (
-        request.method !== "GET" ||
-        !options.assets ||
-        !options.service.options.hub ||
-        execution
-      )
+      if (request.method !== "GET" || !options.assets)
         return json({ error: "Build the FlickGrove web app first" }, 404);
       const root = resolve(options.assets);
       const path = resolve(root, `.${decodeURIComponent(url.pathname)}`);
@@ -284,13 +156,17 @@ export function createHandler(
         },
       });
     } catch (error) {
-      const message =
-        error instanceof z.ZodError
-          ? "Check the values and try again"
-          : error instanceof Error
-            ? error.message
-            : "Could not complete this action";
-      return json({ error: message }, 400);
+      return json(
+        {
+          error:
+            error instanceof z.ZodError
+              ? "Check the values and try again"
+              : error instanceof Error
+                ? error.message
+                : "Could not complete this action",
+        },
+        400,
+      );
     }
   };
 }

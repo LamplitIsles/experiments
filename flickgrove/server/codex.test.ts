@@ -231,21 +231,30 @@ test("the SDK adapter initializes isolated role configuration, discovers enabled
       if (event.type === "completed") completed.resolve();
     });
     const args = JSON.parse(await readFile(argsPath, "utf8")) as string[];
-    expect(args).toContain(
-      'mcp_servers.flickgrove.env.FLICKGROVE_AGENT_TOKEN="test-token"',
-    );
-    expect(args).toContain(
-      'mcp_servers.flickgrove.env.FLICKGROVE_ORIGIN="http://127.0.0.1:14318"',
-    );
-    expect(args).toContain("features.multi_agent=true");
-    expect(args).toContain("features.multi_agent_v2=true");
     expect(
       args.some(
-        (arg) =>
-          arg.startsWith("mcp_servers.flickgrove.args=") &&
-          arg.includes("/flickgrove/server/mcp.ts"),
+        (arg) => arg.includes("test-token") || arg.includes("mcp_servers"),
       ),
-    ).toBe(true);
+    ).toBe(false);
+    const requestsAtStart = (
+      await readFile(join(directory, ".fake-app-server-requests.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(
+      requestsAtStart.find((r) => r.method === "thread/start").params.config,
+    ).toMatchObject({
+      "features.multi_agent": true,
+      "features.multi_agent_v2": true,
+      "mcp_servers.flickgrove": {
+        command: process.execPath,
+        env: {
+          FLICKGROVE_AGENT_TOKEN: "test-token",
+          FLICKGROVE_ORIGIN: "http://127.0.0.1:14318",
+        },
+      },
+    });
     await handle.send("Build a reader");
     await Promise.race([
       completed.promise,

@@ -23,6 +23,7 @@ test("abbreviated skill query inserts the exact invocation without sending", asy
     .click();
   const input = page.getByRole("textbox", { name: "Message Orc" });
   const search = page.getByRole("combobox", { name: "Search skills…" });
+  await expect(page.locator(".user-message")).toHaveCount(1);
   const messagesBefore = await page.locator(".user-message").count();
   await input.fill("before after");
   await input.evaluate((el) =>

@@ -63,8 +63,11 @@ test("quota retains per-host cache through failed refresh, offline remount and r
     data: { outage: true },
   });
   await expect(
-    page.getByRole("textbox", { name: "Message Orc" }),
+    page.getByRole("button", { name: "Send message", exact: true }),
   ).toBeDisabled();
+  await expect(
+    page.getByRole("textbox", { name: "Message Orc" }),
+  ).toBeEnabled();
   await expect(mobileRing).toHaveText("23%");
   await page.reload();
   await expect(mobileRing).toHaveText("23%");
