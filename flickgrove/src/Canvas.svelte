@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Minus, Plus, Maximize } from "@lucide/svelte";
   import { storagePrefix } from "./api";
   import { tick } from "svelte";
   import { Background, Controls, ControlButton, SvelteFlow, useSvelteFlow, type Node, type Edge } from "@xyflow/svelte";
@@ -18,6 +19,7 @@
   function toggle(id: string) { expanded = expanded.includes(id) ? expanded.filter(v => v !== id) : [...expanded, id]; localStorage.setItem(`${storagePrefix}/expanded`, JSON.stringify(expanded)); }
   $effect(() => {
     const visible = agents.filter(a => a.role === "orc" || expanded.includes(a.ownerId!));
+    if (focusedId && !visible.some(a => a.id === focusedId)) focusedId = null;
     nodes = visible.map(a => {
       const hostIndex = hostIds.indexOf(a.hostId);
       const rootIndex = roots.filter(root => root.hostId === a.hostId).findIndex(root => root.id === (a.ownerId ?? a.id));
@@ -35,7 +37,7 @@
       const position = positions[a.id] ?? (a.role === "orc" ? rootPosition : { x: rootPosition.x + 20, y: rootPosition.y + 220 + childIndex * 150 });
       positions[a.id] ??= position;
       const children = agents.filter(w => w.ownerId === a.id);
-      return { id: a.id, type: "agent", position, width: a.role === "orc" ? 300 : 252, height: a.role === "orc" ? 166 : 110, data: { agent: a, host: hosts.find(h => h.id === a.hostId), expanded: expanded.includes(a.id), count: children.length, working: children.filter(w => w.state === "working").length, selected: selectedId === a.id, now, open: onopen, toggle } };
+      return { id: a.id, type: "agent", position, width: a.role === "orc" ? 300 : 252, height: a.role === "orc" ? 166 : 110, data: { agent: a, host: hosts.find(h => h.id === a.hostId), expanded: expanded.includes(a.id), count: children.length, working: children.filter(w => w.state === "working").length, selected: selectedId === a.id, navigation: focusedId === a.id, now, open: onopen, toggle } };
     });
     localStorage.setItem(`${storagePrefix}/positions`, JSON.stringify(positions));
   });
@@ -48,7 +50,7 @@
     if (node && bounds && canvas && (bounds.top < canvas.top || bounds.bottom > canvas.bottom || bounds.left < canvas.left || bounds.right > canvas.right)) void flow.setCenter(node.position.x + 150, node.position.y + 83, { zoom: viewport.zoom, duration: 0 });
   }
   export function expandFocused() { const a = agents.find(a => a.id === focusedId || a.id === selectedId); if (a?.role === "orc") toggle(a.id); }
-  async function keydown(event: KeyboardEvent) {
+  export async function keydown(event: KeyboardEvent) {
     if (editable(event.target) || event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return;
     if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter"].includes(event.key)) return;
     event.preventDefault(); event.stopPropagation();
@@ -65,10 +67,10 @@
 </script>
 <!-- The spatial canvas is a keyboard navigation surface. -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-<div class="canvas-region" role="region" aria-label={m.canvas()} tabindex="0" onkeydown={keydown} onfocusin={e => { if (e.target instanceof HTMLElement && e.target.dataset.agentId) focusedId = e.target.dataset.agentId; }}>
+<div class="canvas-region" role="region" aria-label={m.canvas()} tabindex="-1" onkeydown={keydown}>
   <SvelteFlow bind:viewport bind:nodes {edges} nodeTypes={{ agent: AgentNode }} nodesConnectable={false} elementsSelectable={false} deleteKey={null} disableKeyboardA11y nodesFocusable={false} edgesFocusable={false} minZoom={.25} maxZoom={1.5} colorMode="dark" onnodedragstop={({ nodes: moved }) => { for (const node of moved) positions[node.id] = node.position; localStorage.setItem(`${storagePrefix}/positions`, JSON.stringify(positions)); }}>
     <Background gap={28} size={.6} patternColor="#474747" bgColor="#242424" />
-    <Controls showZoom={false} showLock={false} showFitView={false} orientation="horizontal" position="bottom-left"><ControlButton onclick={() => flow.setZoom(viewport.zoom / 1.2)} title={m.zoom_out()} aria-label={m.zoom_out()}>−</ControlButton><span class="zoom-readout">{Math.round(viewport.zoom * 100)}%</span><ControlButton onclick={() => flow.setZoom(viewport.zoom * 1.2)} title={m.zoom_in()} aria-label={m.zoom_in()}>+</ControlButton><ControlButton onclick={fit} title={m.fit_canvas()} aria-label={m.fit_canvas()}>{m.fit_canvas()}</ControlButton></Controls>
+    <Controls showZoom={false} showLock={false} showFitView={false} orientation="horizontal" position="bottom-left"><ControlButton onclick={() => flow.setZoom(viewport.zoom / 1.2)} title={m.zoom_out()} aria-label={m.zoom_out()}><Minus /></ControlButton><span class="zoom-readout">{Math.round(viewport.zoom * 100)}%</span><ControlButton onclick={() => flow.setZoom(viewport.zoom * 1.2)} title={m.zoom_in()} aria-label={m.zoom_in()}><Plus /></ControlButton><ControlButton onclick={fit} title={m.fit_canvas()} aria-label={m.fit_canvas()}><Maximize /></ControlButton></Controls>
   </SvelteFlow>
   <div class="host-column-labels" style={`transform:translate(${viewport.x}px,${viewport.y}px) scale(${viewport.zoom})`}>{#each hostIds as id, i}<span class:host-warning={hosts.find(h => h.id === id)?.connected === false} style={`left:${90 + i * 430}px`}>{agents.find(a => a.hostId === id)?.hostName}</span>{/each}</div>
   <div class="empty-hosts">{#each hosts.filter(h => h.connected && !agents.some(a => a.hostId === h.id)) as host}<button onclick={() => oncreate(host.id)}><strong>{host.name}</strong><span>{m.host_empty()}</span></button>{/each}</div>

@@ -30,9 +30,10 @@ test("create, delegate, read a Worker, insert a skill and close the tree through
   await page
     .getByRole("button", { name: "Send instructions through Orc" })
     .click();
-  await input.fill("$");
+  await input.fill("");
+  await input.press("$");
   await expect(page.getByRole("listbox", { name: "Skills" })).toBeVisible();
-  await input.press("Enter");
+  await page.getByRole("combobox", { name: "Search skills…" }).press("Tab");
   await expect(input).toHaveValue("$to-orc-impl ");
   await input.fill("/close");
   await input.press("Enter");
@@ -101,15 +102,16 @@ test("settings affect new sessions, Markdown stays safe and offline reload resto
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
   await page.screenshot({
     path: "../.scratch/flickgrove/settings.png",
     animations: "disabled",
   });
   await expect(
-    page.getByRole("checkbox", { name: "Fast", exact: true }),
+    page.getByRole("switch", { name: "Fast", exact: true }),
   ).toHaveCount(1);
   const orc = page.locator(".role-settings").first();
-  await page.getByRole("checkbox", { name: "Fast", exact: true }).check();
+  await page.getByRole("switch", { name: "Fast", exact: true }).check();
   await orc
     .getByRole("combobox", { name: "Model", exact: true })
     .selectOption("luna");
@@ -117,10 +119,10 @@ test("settings affect new sessions, Markdown stays safe and offline reload resto
     orc.getByRole("combobox", { name: "Reasoning effort", exact: true }),
   ).toHaveValue("low");
   await expect(
-    page.getByRole("checkbox", { name: "Fast", exact: true }),
+    page.getByRole("switch", { name: "Fast", exact: true }),
   ).not.toBeChecked();
   await expect(
-    page.getByRole("checkbox", { name: "Fast", exact: true }),
+    page.getByRole("switch", { name: "Fast", exact: true }),
   ).toBeDisabled();
   await page.getByRole("button", { name: "Save changes" }).click();
   await page
@@ -195,6 +197,25 @@ test("N opens the project chooser with typing focus in search", async ({
   await expect(
     page.getByRole("textbox", { name: "Message Orc" }),
   ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".navigation-focus")).toHaveCount(0);
+  await page.keyboard.press("f");
+  await page.locator(".node-open").first().click();
+  await expect(
+    page.getByRole("textbox", { name: "Message Orc" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".navigation-focus")).toHaveCount(0);
+  await page.keyboard.press("ArrowDown");
+  const navigation = page.locator(".navigation-focus .node-open");
+  await expect(navigation).toHaveCount(1);
+  const target = await navigation.getAttribute("data-agent-id");
+  await navigation.click();
+  await expect(
+    page.getByRole("textbox", { name: "Message Orc" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(navigation).toHaveAttribute("data-agent-id", target!);
 });
 
 test("zoom controls change the canvas and percentage while Fit all remains available", async ({
@@ -216,4 +237,58 @@ test("zoom controls change the canvas and percentage while Fit all remains avail
   await expect(
     page.getByRole("button", { name: "Fit all", exact: true }),
   ).toBeVisible();
+});
+
+test("Tab completes without moving focus, skill search preserves drafts, and close toast expires", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/");
+  await page.keyboard.press("n");
+  await expect(
+    page.getByRole("textbox", { name: "Search projects" }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "New session", exact: true })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await page.getByRole("button", { name: /Create on/ }).click();
+  const input = page.getByRole("textbox", { name: "Message Orc" });
+  await input.fill("Draft before skill ");
+  await input.press("Tab");
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("Draft before skill ");
+  await input.press("$");
+  const search = page.getByRole("combobox", { name: "Search skills…" });
+  await expect(search).toBeFocused();
+  await expect(input).toHaveValue("Draft before skill ");
+  await search.fill("no-such-skill");
+  await search.press("Tab");
+  await expect(search).toBeFocused();
+  await expect(input).toHaveValue("Draft before skill ");
+  await search.press("Escape");
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("Draft before skill ");
+  await input.press("$");
+  await search.fill("impl");
+  await search.press("Tab");
+  await expect(input).toHaveValue("Draft before skill $to-orc-impl ");
+  await expect(input).toBeFocused();
+  await input.fill("/cl");
+  await input.press("Tab");
+  await expect(input).toHaveValue("/close");
+  await expect(input).toBeFocused();
+  await expect(
+    page.getByRole("textbox", { name: "Message Orc" }),
+  ).toBeVisible();
+  await input.press("Enter");
+  await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Tree closed.", { exact: true })).toHaveCount(0, {
+    timeout: 6500,
+  });
+  expect(errors).toEqual([]);
 });

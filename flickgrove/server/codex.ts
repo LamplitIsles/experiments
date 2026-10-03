@@ -118,7 +118,8 @@ export class CodexRuntime implements Runtime {
         .filter((s) => s.enabled)
         .map((s) => ({
           name: s.name,
-          description:
+          description: s.description,
+          shortDescription:
             s.interface?.shortDescription ??
             s.shortDescription ??
             s.description,

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { X } from "@lucide/svelte";
+  import { Button } from "$lib/components/ui/button/index.js";
   import { onMount } from "svelte";
   import { api } from "./api";
   import type { WeeklyUsage } from "./contracts";
@@ -22,10 +24,10 @@
   <button class="weekly-button" aria-label={m.weekly_remaining()} aria-expanded={open} onclick={() => open = !open}>
     <svg viewBox="0 0 36 36" class:low={remaining !== null && remaining <= 20} class:unknown={remaining === null} aria-hidden="true"><circle class="ring-track" cx="18" cy="18" r="15"/><circle class="ring-value" cx="18" cy="18" r="15" pathLength="100" stroke-dasharray={`${remaining ?? 0} 100`}/></svg><strong>{remaining === null ? "—" : `${Math.round(remaining)}%`}</strong><span>{m.weekly()}</span>
   </button>
-  {#if open}<section class="weekly-popover" aria-label={m.weekly_remaining()}><header><h2>{m.weekly_remaining()}</h2><button class="btn btn-sm btn-square" aria-label={m.close()} onclick={() => open = false}>×</button></header>
+  {#if open}<section class="weekly-popover" aria-label={m.weekly_remaining()}><header><h2>{m.weekly_remaining()}</h2><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => open = false}><X /></Button></header>
     <div class="weekly-number" class:host-warning={remaining !== null && remaining <= 20}><svg viewBox="0 0 36 36" class:low={remaining !== null && remaining <= 20} class:unknown={remaining === null} aria-hidden="true"><circle class="ring-track" cx="18" cy="18" r="15"/><circle class="ring-value" cx="18" cy="18" r="15" pathLength="100" stroke-dasharray={`${remaining ?? 0} 100`}/></svg><div><strong>{remaining === null ? "—" : `${Math.round(remaining)}%`}</strong><span>{remaining === null ? m.weekly_unknown() : m.remaining_label()}</span></div></div>
     {#if remaining === null}<p>{m.weekly_unknown_help()}</p>{/if}
     <dl class="weekly-source">{#if value?.resetsAt && remaining !== null}<div><dt>{m.reset_label()}</dt><dd>{new Date(value.resetsAt * 1000).toLocaleString()}</dd></div>{/if}{#if value?.accountId}<div><dt>{m.account_label()}</dt><dd>{value.accountId}</dd></div>{/if}<div><dt>{m.source_label()}</dt><dd>{value?.source ?? "—"}</dd></div></dl>
-    {#if value}<p class="weekly-freshness">{m.usage_freshness({ time: new Date(value.fetchedAt).toLocaleTimeString() })}</p>{/if}<button class="btn btn-sm weekly-refresh" onclick={refresh} disabled={!connected}>{m.refresh_usage()}</button>
+    {#if value}<p class="weekly-freshness">{m.usage_freshness({ time: new Date(value.fetchedAt).toLocaleTimeString() })}</p>{/if}<Button class="weekly-refresh" variant="ghost" size="sm" onclick={refresh} disabled={!connected}>{m.refresh_usage()}</Button>
   </section>{/if}
 </div>

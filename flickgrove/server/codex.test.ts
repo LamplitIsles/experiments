@@ -35,7 +35,11 @@ test("the SDK adapter initializes isolated role configuration, discovers enabled
       },
     ]);
     expect(await runtime.skills(directory)).toEqual([
-      { name: "review-code", description: "Review code" },
+      {
+        name: "review-code",
+        description: "Review code and investigate correctness regressions",
+        shortDescription: "Review code",
+      },
     ]);
     const agent: RuntimeAgent = {
       id: "orc",

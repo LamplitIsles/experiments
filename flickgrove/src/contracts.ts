@@ -110,4 +110,5 @@ export interface Snapshot {
 export interface Skill {
   name: string;
   description: string;
+  shortDescription?: string;
 }

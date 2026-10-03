@@ -10,7 +10,11 @@
     "checkJs": false,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "types": ["bun-types", "vite/client"]
+    "types": ["bun-types", "vite/client"],
+    "paths": {
+      "$lib": ["./src/lib"],
+      "$lib/*": ["./src/lib/*"]
+    }
   },
   "include": [
     "src/**/*.ts",

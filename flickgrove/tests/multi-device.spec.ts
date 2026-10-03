@@ -150,9 +150,7 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await input.fill("/stop");
   await input.press("Enter");
   await input.press("Enter");
-  await expect(
-    page.getByRole("button", { name: "■ Stopping…" }),
-  ).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Stopping…" })).toBeDisabled();
   await capture(page, "controls-03");
   await request.post("/fixture/change", { data: { complete: "interrupted" } });
   await expect(
@@ -187,7 +185,7 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await page.getByRole("button", { name: "Expand Workers" }).first().click();
   await page.getByRole("button", { name: "Expand Workers" }).click();
   await request.post("/fixture/change", { data: { stopMode: "unknown" } });
-  await page.getByRole("button", { name: "■ Stop Orc", exact: true }).click();
+  await page.getByRole("button", { name: "Stop Orc", exact: true }).click();
   await expect(page.getByText(/Stop outcome unknown/)).toBeVisible();
   await capture(page, "controls-05");
   await request.post("/fixture/reset", { data: { mode: "idle" } });
@@ -393,10 +391,8 @@ test("mobile supplementary forms, Stop and quota stay operable within 390 pixels
   await capture(page, "mobile-controls");
   await page.keyboard.press("Escape");
   await expect(page.locator(".weekly-popover")).toHaveCount(0);
-  await page.getByRole("button", { name: "■ Stop Orc", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "■ Stopping…" }),
-  ).toBeDisabled();
+  await page.getByRole("button", { name: "Stop Orc", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Stopping…" })).toBeDisabled();
   await request.post("/fixture/change", { data: { complete: "interrupted" } });
   await expect(
     page.getByText("Orc stopped. Workers continue independently."),

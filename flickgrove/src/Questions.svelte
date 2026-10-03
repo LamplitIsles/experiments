@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { Textarea } from "$lib/components/ui/textarea/index.js";
+  import { ChevronLeft, ChevronRight } from "@lucide/svelte";
+  import { Button } from "$lib/components/ui/button/index.js";
   import { storagePrefix } from "./api";
   import { untrack } from "svelte";
   import type { Delivery, Question } from "./contracts";
@@ -43,7 +46,7 @@
   </details>
 {:else}
   <section class="question-card">
-    <div class="question-top"><span>{m.question_progress({ sent, total: questions.length, pending: questions.length - sent })}</span><button class="btn btn-sm" onclick={() => overview = !overview}>{overview ? m.back_to_question() : m.all_questions()}</button></div>
+    <div class="question-top"><span>{m.question_progress({ sent, total: questions.length, pending: questions.length - sent })}</span><Button variant="ghost" size="sm" onclick={() => overview = !overview}>{overview ? m.back_to_question() : m.all_questions()}</Button></div>
     {#if overview}
       <div class="question-overview">
         {#each questions as q, i}
@@ -58,18 +61,18 @@
         {:else}
           <fieldset class="question-options" aria-label={current.text}>
             {#each current.options as option}
-              <label class:chosen={draft.selected === option.label && !draft.text.trim()}><input type="radio" class="radio radio-xs radio-warning" name={`answer-${current.id}`} checked={draft.selected === option.label && !draft.text.trim()} onchange={() => setDraft({ selected: option.label, text: "" })} disabled={submitting} /><span>{option.label}</span></label>
+              <label class:chosen={draft.selected === option.label && !draft.text.trim()}><input type="radio" class="answer-radio" name={`answer-${current.id}`} checked={draft.selected === option.label && !draft.text.trim()} onchange={() => setDraft({ selected: option.label, text: "" })} disabled={submitting} /><span>{option.label}</span></label>
             {/each}
           </fieldset>
-          <textarea class="textarea" aria-label={m.your_answer()} placeholder={m.custom_answer()} value={draft.text} oninput={e => setDraft({ ...draft, text: e.currentTarget.value })} disabled={submitting} rows="2"></textarea>
+          <Textarea aria-label={m.your_answer()} placeholder={m.custom_answer()} value={draft.text} oninput={e => setDraft({ ...draft, text: e.currentTarget.value })} disabled={submitting} rows={2}></Textarea>
         {/if}
         {#if delivery?.error}<p class="inline-error" role="alert">{delivery.status === "uncertain" ? m.unknown_delivery() : delivery.error}</p>{/if}
       </div>
       <!-- Focusable navigation group owns contextual arrow handling. -->
       <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
       <div class="question-footer" role="group" aria-label={m.question_navigation()} tabindex="0" onkeydown={keydown}>
-        <div class="question-arrows"><button class="btn btn-sm btn-square" aria-label={m.previous_question()} disabled={index === 0} onclick={() => move(-1)}>←</button><button class="btn btn-sm btn-square" aria-label={m.next_question()} disabled={index === questions.length - 1} onclick={() => move(1)}>→</button></div>
-        <button class="btn btn-primary btn-sm" onclick={submit} disabled={!connected || submitting || current.state === "answered" || delivery?.status === "uncertain" || !(draft.text.trim() || draft.selected)}>{submitting ? m.sending() : current.state === "answered" ? m.answer_sent() : m.send_answer()}</button>
+        <div class="question-arrows"><Button variant="ghost" size="icon-sm" aria-label={m.previous_question()} disabled={index === 0} onclick={() => move(-1)}><ChevronLeft /></Button><Button variant="ghost" size="icon-sm" aria-label={m.next_question()} disabled={index === questions.length - 1} onclick={() => move(1)}><ChevronRight /></Button></div>
+        <Button variant="default" size="sm" onclick={submit} disabled={!connected || submitting || current.state === "answered" || delivery?.status === "uncertain" || !(draft.text.trim() || draft.selected)}>{submitting ? m.sending() : current.state === "answered" ? m.answer_sent() : m.send_answer()}</Button>
       </div>
       <div class="question-hint">{m.question_keyboard()}</div>
     {/if}

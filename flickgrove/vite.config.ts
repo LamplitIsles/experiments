@@ -1,3 +1,4 @@
+import { fileURLToPath, URL } from "node:url";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { defineConfig } from "vite";
@@ -5,6 +6,9 @@ import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwind from "@tailwindcss/vite";
 import { paraglideVitePlugin } from "@inlang/paraglide-js";
 export default defineConfig({
+  resolve: {
+    alias: { $lib: fileURLToPath(new URL("./src/lib", import.meta.url)) },
+  },
   plugins: [
     paraglideVitePlugin({
       project: "./project.inlang",

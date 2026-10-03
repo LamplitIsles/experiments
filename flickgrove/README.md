@@ -48,7 +48,7 @@ Stop the backend with Ctrl+C. On restart, active local sessions appear interrupt
 
 ## Conversation controls and usage
 
-Send ordinary instructions to Orc. `$` selects an enabled skill from the owning host's project; selecting inserts without sending. Models and effort are settings, not skill arguments. Session titles are generated from the first message in a separate lightweight-model thread. This application does not create, merge or deploy PRs itself.
+Send ordinary instructions to Orc. `$` opens a separate skill search over the owning host's project. Search matches skill names and full descriptions with Organon-style ranking; Tab or Enter inserts the selected name at the saved cursor position without sending. Escape cancels without changing the message draft. Models and effort are settings, not skill arguments. Session titles are generated from the first message in a separate lightweight-model thread. This application does not create, merge or deploy PRs itself.
 
 Workers are read-only in the browser. Orc can start, list, read, instruct and close only its own Workers through the host-local `flickgrove` MCP server. Workers report only to their parent. Native multi-agent spawning is disabled for these sessions. Worker async questions route to Orc; contextual replies resolve only explicit question IDs.
 
@@ -62,7 +62,7 @@ The upper-right weekly ring shows **remaining account quota**, for the selected 
 
 ## Browser and development
 
-Canvas shortcuts: arrows focus nodes, Enter opens detail, E expands/collapses Workers, N opens creation with project-search focus, F fits the canvas, Escape closes the top dialog/detail, and ? shows help. Zoom controls include a percentage and Fit all. Text editing, IME, slash/skill completion and question navigation take precedence.
+Canvas shortcuts: arrows focus nodes, Enter opens detail, E expands/collapses Workers, N opens creation with project-search focus, F fits the canvas, Escape closes the top dialog/detail, and ? shows help. Zoom controls include a percentage and Fit all. Text editing, IME, slash/skill completion and question navigation take precedence. Tab completes the current `/` or `$` candidate and never traverses toolbar or Send controls. With no candidate it keeps the current input target. Enter sends from the composer; Shift+Enter inserts a newline. Send remains clickable and Stop has its own control while Orc is working. Tree closure produces a three-second toast.
 
 Chrome notification permission is requested at first pointer interaction. Notifications cover idle transitions, errors and new questions while the page is open, suppress replay after reconnect, and open the corresponding Orc. Install the PWA through Chrome or the progressive install action. Its service worker caches the built shell/fonts, never API/SSE responses. Offline reload restores cached conversations and drafts with sending disabled. Secrets are not browser-cached.
 
@@ -80,3 +80,7 @@ bun run --cwd flickgrove test:browser
 Browser tests use installed Chrome with isolated profiles. All test state, Codex homes, credentials and project paths are temporary or synthetic. No test uses installed user credentials or changes the real project registry. Workspace/FakeRuntime, two-host HTTP, SDK fake wire and real stdio MCP seams verify ownership, answers, defaults, outages, Stop and usage without paid calls. The preview server in `tests/design-serve.ts` exposes fixture controls only in tests, never the production handler. The multi-device browser test captures all 29 mapped states at 1440×900 and 390×844 into `.scratch/flickgrove-multi-device/implementation/`.
 
 Implementation authority: FlickNote **spec #3133**, tickets **#3134–#3139**, building on #3109 and merged ZenCodex removal PR #20. [ADR: fixed Hub and execution ownership](docs/adr/0001-fixed-hub.md). English UI uses Paraglide; Markdown rejects raw HTML and unsafe links. Mobile supplementary management/Stop/weekly controls have no separate pixel board and follow the bounded Owner handoff.
+
+## UI foundation
+
+The frontend uses project-owned shadcn-svelte components (Bits UI), Lucide icons and a compact dark workbench theme. Read [DESIGN.md](DESIGN.md) before changing the component layer. The canvas keeps one restrained navigation marker for shortcut-driven node selection; ordinary buttons do not retain visible focus rings after pointer actions.

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { ChevronDown } from "@lucide/svelte";
+  import { Button } from "$lib/components/ui/button/index.js";
   import type { Host } from "./contracts";
   import * as m from "./paraglide/messages";
   let { hosts, value = $bindable("") }: { hosts: Host[]; value?: string } = $props();
@@ -16,6 +18,6 @@
 </script>
 <svelte:window onclick={e => { if (e.target instanceof Node && root && !root.contains(e.target)) open = false; }} />
 <div class="host-filter-control" bind:this={root}>
-  <button class="btn btn-sm host-filter" role="combobox" aria-label={m.host_filter()} aria-expanded={open} aria-haspopup="listbox" aria-controls="host-options" aria-activedescendant={open ? `host-option-${current}` : undefined} onclick={() => { open = !open; current = choices.findIndex(h => h.id === value); }} onkeydown={keydown}>{choices.find(h => h.id === value)?.name ?? m.all_hosts()} <span aria-hidden="true">⌄</span></button>
+  <Button class="host-filter" variant="ghost" size="sm" role="combobox" aria-label={m.host_filter()} aria-expanded={open} aria-haspopup="listbox" aria-controls="host-options" aria-activedescendant={open ? `host-option-${current}` : undefined} onclick={() => { open = !open; current = choices.findIndex(h => h.id === value); }} onkeydown={keydown}>{choices.find(h => h.id === value)?.name ?? m.all_hosts()} <ChevronDown aria-hidden="true" /></Button>
   {#if open}<div class="host-filter-menu" role="listbox" id="host-options" aria-label={m.host_filter()}>{#each choices as host, i}<button id={`host-option-${i}`} role="option" aria-selected={host.id === value} class:selected={i === current} onclick={() => select(host.id)}><span>{host.name}</span>{#if host.id}<small class:host-warning={!host.connected}>{host.connected ? m.connected_host() : m.disconnected_host()}</small>{/if}</button>{/each}</div>{/if}
 </div>

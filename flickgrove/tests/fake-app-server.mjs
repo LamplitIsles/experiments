@@ -778,7 +778,8 @@ async function handle(request) {
             skills: [
               {
                 name: "review-code",
-                description: "Review code",
+                description:
+                  "Review code and investigate correctness regressions",
                 shortDescription: "Review code",
                 interface: null,
                 dependencies: null,
