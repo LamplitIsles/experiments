@@ -1073,13 +1073,24 @@ test.each([false, true])(
   },
 );
 
-test("Orc title edits are validated, survive restart and never send a model message", async () => {
+test("Orc title edits update the runtime name, survive restart and never send a model message", async () => {
   const { app, runtime, directory, owner, worker } = await workerFixture();
   const inputs = runtime.inputs.length;
   expect((await app.rename(owner.id, "  Reader implementation  ")).title).toBe(
     "Reader implementation",
   );
   expect(runtime.inputs).toHaveLength(inputs);
+  expect(runtime.names.get(app.detail(owner.id).threadId!)).toBe(
+    "Reader implementation",
+  );
+  runtime.renameOverride = async () => {
+    throw new Error("Codex rename rejected");
+  };
+  await expect(app.rename(owner.id, "Rejected title")).rejects.toThrow(
+    "Codex rename rejected",
+  );
+  expect(app.detail(owner.id).title).toBe("Reader implementation");
+  runtime.renameOverride = undefined;
   await expect(app.rename(owner.id, " ")).rejects.toThrow();
   await expect(app.rename(owner.id, "x".repeat(121))).rejects.toThrow();
   await expect(app.rename(worker.id, "Rename Worker")).rejects.toThrow(
@@ -1088,10 +1099,100 @@ test("Orc title edits are validated, survive restart and never send a model mess
   app.dispose();
   const restarted = new Workspace({
     directory,
-    runtime: new FakeRuntime(),
+    runtime,
     projects: async () => fixtureProjects,
   });
   cleanups.push(() => restarted.dispose());
+  await Bun.sleep(0);
   expect(restarted.detail(owner.id).title).toBe("Reader implementation");
   expect(restarted.detail(owner.id).messages).toHaveLength(0);
+});
+
+test("restart reads canonical Orc names without resuming turns and preserves cache on read failure", async () => {
+  const { app, runtime, directory, owner, worker } = await workerFixture();
+  const threadId = app.detail(owner.id).threadId!;
+  await app.rename(owner.id, "Cached name");
+  runtime.names.set(threadId, "Renamed in Codex");
+  app.dispose();
+  const restored = new Workspace({
+    directory,
+    runtime,
+    projects: async () => fixtureProjects,
+  });
+  cleanups.push(() => restored.dispose());
+  const inputCount = runtime.inputs.length;
+  const open = runtime.open.bind(runtime);
+  let resumes = 0;
+  runtime.open = async (...args) => {
+    resumes++;
+    return open(...args);
+  };
+  await Bun.sleep(0);
+  expect(restored.detail(owner.id).title).toBe("Renamed in Codex");
+  expect(restored.detail(worker.id).title).toBe("Reader");
+  expect(runtime.inputs).toHaveLength(inputCount);
+  expect(resumes).toBe(0);
+  restored.dispose();
+  runtime.readTitle = async () => {
+    throw new Error("offline");
+  };
+  const offline = new Workspace({
+    directory,
+    runtime,
+    projects: async () => fixtureProjects,
+  });
+  cleanups.push(() => offline.dispose());
+  await Bun.sleep(0);
+  expect(offline.detail(owner.id).title).toBe("Renamed in Codex");
+  expect(offline.detail(owner.id).state).toBe("idle");
+});
+
+test("resuming an Orc refreshes its cached name but Worker task titles stay local", async () => {
+  const { app, runtime, directory, owner, worker } = await workerFixture();
+  await app.rename(owner.id, "Initial name");
+  app.dispose();
+  const restored = new Workspace({
+    directory,
+    runtime,
+    projects: async () => fixtureProjects,
+  });
+  cleanups.push(() => restored.dispose());
+  await Bun.sleep(0);
+  runtime.names.set(restored.detail(owner.id).threadId!, "External name");
+  runtime.names.set(restored.detail(worker.id).threadId!, "Codex Worker name");
+  await restored.send(owner.id, "Resume explicitly", "resume-name");
+  expect(restored.detail(owner.id).title).toBe("External name");
+  await restored.tool(runtime.agents.get(owner.id)!.token, "worker_send", {
+    workerId: worker.id,
+    message: "Resume Worker",
+  });
+  expect(restored.detail(worker.id).title).toBe("Reader");
+});
+
+test("a rejected rename after disconnect preserves the visible and persisted title", async () => {
+  const { app, runtime, directory } = fixture();
+  const owner = await app.createOrc("alpha");
+  await app.rename(owner.id, "Old visible name");
+  runtime.emit(owner.id, { type: "disconnected", error: "Connection lost" });
+  runtime.names.set(app.detail(owner.id).threadId!, "External canonical name");
+  runtime.renameOverride = async () => {
+    throw new Error("Rename rejected");
+  };
+  await expect(app.rename(owner.id, "Requested name")).rejects.toThrow(
+    "Rename rejected",
+  );
+  expect(app.detail(owner.id).title).toBe("Old visible name");
+  expect(runtime.inputs).toHaveLength(0);
+  app.dispose();
+  runtime.readTitle = async () => {
+    throw new Error("Offline");
+  };
+  const restored = new Workspace({
+    directory,
+    runtime,
+    projects: async () => fixtureProjects,
+  });
+  cleanups.push(() => restored.dispose());
+  await Bun.sleep(0);
+  expect(restored.detail(owner.id).title).toBe("Old visible name");
 });

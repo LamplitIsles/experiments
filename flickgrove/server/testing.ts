@@ -11,6 +11,11 @@ export const fixtureProjects = [
   { alias: "beta", name: "Beta", path: "/fixture/beta" },
 ];
 export class FakeRuntime implements Runtime {
+  readonly names = new Map<string, string>();
+  renameOverride?: (threadId: string, title: string) => Promise<void>;
+  async readTitle(threadId: string) {
+    return this.names.get(threadId) ?? null;
+  }
   readonly agents = new Map<string, RuntimeAgent>();
   readonly listeners = new Map<string, (e: RuntimeEvent) => void>();
   readonly inputs: { agentId: string; text: string; turnId?: string }[] = [];
@@ -65,6 +70,12 @@ export class FakeRuntime implements Runtime {
     this.listeners.set(agent.id, notify);
     return {
       threadId: agent.threadId ?? `thread-${agent.id}`,
+      threadName: await this.readTitle(agent.threadId ?? `thread-${agent.id}`),
+      rename: async (title) => {
+        const id = agent.threadId ?? `thread-${agent.id}`;
+        await this.renameOverride?.(id, title);
+        this.names.set(id, title);
+      },
       send: async (text, turnId) => {
         this.inputs.push({ agentId: agent.id, text, turnId });
         return this.sendOverride

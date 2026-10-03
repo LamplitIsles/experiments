@@ -91,6 +91,13 @@ export class CodexRuntime implements Runtime {
     this.catalogModels = models;
     return models;
   }
+  async readTitle(threadId: string) {
+    return (
+      await (
+        await this.getCatalog()
+      ).threadRead({ threadId, includeTurns: false })
+    ).thread.name;
+  }
   async weekly(): Promise<WeeklyUsage> {
     const result = await (
       await this.getCatalog()
@@ -132,6 +139,8 @@ export class CodexRuntime implements Runtime {
   ): Promise<RuntimeHandle> {
     const client = await this.client(agent.project.path, agent);
     let threadId = agent.threadId;
+    let threadName: string | null = null;
+    let titleGeneration: AbortController | undefined;
     const off = [
       client.onError((error) => {
         if (error instanceof AppServerConnectionClosedError) {
@@ -201,6 +210,7 @@ export class CodexRuntime implements Runtime {
             config: { model_reasoning_effort: agent.effort },
           });
       threadId = response.thread.id;
+      threadName = response.thread.name;
     } catch (error) {
       off.forEach((f) => f());
       await client.close();
@@ -210,6 +220,11 @@ export class CodexRuntime implements Runtime {
     const id = threadId!;
     return {
       threadId: id,
+      threadName,
+      rename: async (name) => {
+        titleGeneration?.abort();
+        await client.call("thread/name/set", { threadId: id, name });
+      },
       send: async (text, activeTurn) => {
         const input = [{ type: "text" as const, text, text_elements: [] }];
         try {
@@ -253,6 +268,8 @@ export class CodexRuntime implements Runtime {
         );
       },
       title: async (input) => {
+        const controller = new AbortController();
+        titleGeneration = controller;
         const models = this.catalogModels ?? (await this.models());
         const lightweight = models.find(
           (m) => m.id === "gpt-6-luna" && m.efforts.includes("low"),
@@ -264,6 +281,7 @@ export class CodexRuntime implements Runtime {
           input,
           lightweight?.id ?? agent.model,
           lightweight ? "low" : agent.effort,
+          controller.signal,
         );
         return (
           (await client.threadRead({ threadId: id, includeTurns: false }))

@@ -12,7 +12,7 @@ Skill search has its own query field, matches names/full descriptions with Organ
 
 Render incoming Worker reports as left-aligned, initially collapsed timeline cards, with sender and a short preview. Identify them by delivery source and reportingWorkerId joined to message ID, never by text prefixes. Expand to render full Markdown. Folded state stays in the component; no extra report copy is persisted. Keep delivery errors visible beside the affected operation.
 
-Orc titles edit in place from the detail heading. Enter/checkmark saves, Escape/Cancel cancels only the edit. Keep failed drafts visible and errors actionable; do not create a message or model turn for metadata edits. Worker headings remain read-only.
+Orc titles edit in place from the detail heading. Enter/checkmark saves, Escape/Cancel cancels only the edit. Keep failed drafts visible and errors actionable; do not create a message or model turn for metadata edits. Codex `thread.name` is authoritative for Orc titles; workspace titles are display caches, updated only after a successful name save and refreshed on startup/read and thread resume. Offline reads retain the cache. Worker headings remain read-only and retain their Orc-assigned task titles.
 
 Worker closure requested by Orc is durable and asynchronous: show Closing on the node and detail, with the current waiting reason in detail. Keep execution state separate, do not interrupt work, and retain delivery/question/unknown-outcome guards. Pending closure only accepts contextual answers to existing delegated questions. User `/close` remains guarded and explicit.
 

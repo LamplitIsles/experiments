@@ -50,7 +50,7 @@ Stop the backend with Ctrl+C. On restart, active local sessions appear interrupt
 
 Send ordinary instructions to Orc. `$` opens a separate skill search over the owning host's project. Search matches skill names and full descriptions with Organon-style ranking; Tab or Enter inserts the selected name at the saved cursor position without sending. Escape cancels without changing the message draft. Models and effort are settings, not skill arguments. Session titles are generated from the first message in a separate lightweight-model thread. This application does not create, merge or deploy PRs itself.
 
-Click an Orc title in its detail panel to edit it. Enter or the checkmark saves; Escape or Cancel discards the edit. The owning execution host stores the title, including remote hosts; changing it sends no model message. Worker titles remain managed by Orc.
+Click an Orc title in its detail panel to edit it. Enter or the checkmark saves; Escape or Cancel discards the edit. The owning execution host saves the canonical Codex thread name through `thread/name/set`, then updates its workspace display cache, including remote hosts. Failed saves retain the old title. Backend startup reads Orc names without resuming turns; explicit thread resume refreshes them again. Unreachable Codex reads retain the last cached title. Changing a title sends no model message. Worker titles remain managed by Orc.
 
 Workers are read-only in the browser. Orc can start, list, read, instruct and close only its own Workers through the host-local `flickgrove` MCP server. Workers report only to their parent. Native multi-agent spawning is disabled for these sessions. Worker async questions route to Orc; contextual replies resolve only explicit question IDs.
 

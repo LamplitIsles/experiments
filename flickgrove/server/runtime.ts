@@ -26,12 +26,15 @@ export interface RuntimeAgent extends Detail {
 }
 export interface RuntimeHandle {
   threadId: string;
+  threadName: string | null;
+  rename(title: string): Promise<void>;
   send(text: string, turnId?: string): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   title(input: string): Promise<string | undefined>;
   close(): Promise<void>;
 }
 export interface Runtime {
+  readTitle(threadId: string): Promise<string | null>;
   weekly(): Promise<WeeklyUsage>;
   models(): Promise<Model[]>;
   skills(cwd: string): Promise<Skill[]>;

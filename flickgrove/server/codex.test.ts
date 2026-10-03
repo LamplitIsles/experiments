@@ -108,12 +108,62 @@ test("the SDK adapter initializes isolated role configuration, discovers enabled
     });
     const title = await handle.title("Build a reader");
     expect(title).toBeTruthy();
+    const beforeRename = events.filter((e) => e.type === "working").length;
+    await handle.rename("Manually named in Grove");
+    expect(await runtime.readTitle(handle.threadId)).toBe(
+      "Manually named in Grove",
+    );
+    expect(events.filter((e) => e.type === "working")).toHaveLength(
+      beforeRename,
+    );
+    await writeFile(
+      join(directory, ".fake-app-server-control.json"),
+      JSON.stringify({ failRename: true }),
+    );
+    await expect(handle.rename("Rejected name")).rejects.toThrow(
+      "fixture rename rejected",
+    );
+    expect(await runtime.readTitle(handle.threadId)).toBe(
+      "Manually named in Grove",
+    );
+    await writeFile(
+      join(directory, ".fake-app-server-control.json"),
+      JSON.stringify({ holdTitle: true }),
+    );
+    const generating = handle.title("A competing generated name");
+    const cancelled = generating.then(
+      () => false,
+      () => true,
+    );
+    for (let i = 0; i < 100; i++) {
+      const log = await readFile(
+        join(directory, ".fake-app-server-requests.jsonl"),
+        "utf8",
+      );
+      if (
+        log
+          .split("\n")
+          .filter(
+            (line) =>
+              line.includes('"method":"turn/start"') &&
+              line.includes("title-thread-fake"),
+          ).length >= 2
+      )
+        break;
+      await Bun.sleep(10);
+      if (i === 99) throw new Error("Title generation did not start");
+    }
+    await handle.rename("Manual name wins");
+    expect(await cancelled).toBe(true);
+    await writeFile(join(directory, ".fake-app-server-control.json"), "{}");
+    expect(await runtime.readTitle(handle.threadId)).toBe("Manual name wins");
     await handle.close();
     const resumed = await runtime.open(
       { ...agent, threadId: handle.threadId },
       () => {},
     );
     expect(resumed.threadId).toBe(handle.threadId);
+    expect(resumed.threadName).toBe("Manual name wins");
     await resumed.close();
     const requests = (
       await readFile(join(directory, ".fake-app-server-requests.jsonl"), "utf8")

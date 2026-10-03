@@ -96,7 +96,7 @@ function threadRecord(cwd, model) {
     agentNickname: null,
     agentRole: null,
     gitInfo: null,
-    name: state.threadName ?? null,
+    name: readJson(statePath, state).threadName ?? null,
     threadSource: null,
     turns: [],
   };
@@ -904,6 +904,7 @@ async function handle(request) {
     case "thread/read":
       return { thread: threadRecord(root, "fixture-model") };
     case "thread/name/set":
+      if (control().failRename) rpcError(-32603, "fixture rename rejected");
       state.threadName = p.name;
       save();
       send({
@@ -953,19 +954,23 @@ async function handle(request) {
           delivery: null,
           questions: null,
         };
-        send({
-          method: "item/completed",
-          params: {
-            threadId: state.titleThreadId,
-            turnId: turn.id,
-            completedAtMs: Date.now(),
-            item,
-          },
-        });
-        send({
-          method: "turn/completed",
-          params: { threadId: state.titleThreadId, turn },
-        });
+        const completeTitle = () => {
+          if (control().holdTitle) return setTimeout(completeTitle, 10);
+          send({
+            method: "item/completed",
+            params: {
+              threadId: state.titleThreadId,
+              turnId: turn.id,
+              completedAtMs: Date.now(),
+              item,
+            },
+          });
+          send({
+            method: "turn/completed",
+            params: { threadId: state.titleThreadId, turn },
+          });
+        };
+        completeTitle();
         return { turn };
       }
       if (state.active)

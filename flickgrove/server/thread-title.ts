@@ -126,7 +126,6 @@ export async function nameThreadFromPrompt(
     config: isolatedConfig,
   });
   const temporaryId = started.thread.id as string;
-  signal?.throwIfAborted();
   const messages = new Map<string, string>();
   const completions = new Map<string, string>();
   let notify = Promise.withResolvers<void>();
@@ -202,9 +201,8 @@ export async function nameThreadFromPrompt(
     if (timer) clearTimeout(timer);
     offItem();
     offTurn();
-    if (!signal?.aborted)
-      try {
-        await client.call("thread/unsubscribe", { threadId: temporaryId });
-      } catch {}
+    try {
+      await client.call("thread/unsubscribe", { threadId: temporaryId });
+    } catch {}
   }
 }

@@ -57,6 +57,8 @@ function unit(
   );
   db.close();
   const runtime = new FakeRuntime();
+  for (const a of agents)
+    runtime.names.set(a.threadId ?? `thread-${a.id}`, a.title);
   runtime.models = async () => [
     {
       id: "gpt-6.1-sol",

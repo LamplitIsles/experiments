@@ -142,6 +142,7 @@ test("aborting an in-flight title request does not write a name or wait for comp
   await started.promise;
   controller.abort();
   await expect(naming).rejects.toBeDefined();
+  expect(client.calls.at(-1)?.method).toBe("thread/unsubscribe");
   expect(client.calls.some((call) => call.method === "thread/name/set")).toBe(
     false,
   );

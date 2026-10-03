@@ -77,6 +77,16 @@ export class Workspace {
     }
     this.save();
     this.advanceWorkerCloses();
+    for (const a of this.state.agents) {
+      if (a.role !== "orc" || a.closed || !a.threadId) continue;
+      void this.serialize(a.id, async () => {
+        const title = await this.options.runtime.readTitle(a.threadId!);
+        if (!this.disposed && !a.closed) {
+          a.title = title ?? "New session";
+          this.save();
+        }
+      }).catch(() => {});
+    }
   }
   private save() {
     if (this.disposed) return;
@@ -237,9 +247,14 @@ export class Workspace {
   async rename(id: string, title: string) {
     const a = this.agent(id);
     if (a.role !== "orc") throw new Error("Only Orc titles can be edited");
-    a.title = sessionTitle.parse(title);
-    this.save();
-    return this.detail(id);
+    const name = sessionTitle.parse(title);
+    return this.serialize(id, async () => {
+      const handle = await this.handle(a, false);
+      await handle.rename(name);
+      a.title = name;
+      this.save();
+      return this.detail(id);
+    });
   }
   async weekly(_hostId?: string) {
     try {
@@ -344,7 +359,7 @@ export class Workspace {
     }
     return this.publicAgent(a);
   }
-  private async handle(a: RuntimeAgent) {
+  private async handle(a: RuntimeAgent, refreshTitle = true) {
     let handle = this.handles.get(a.id);
     if (!handle) {
       let opening = this.opening.get(a.id);
@@ -370,6 +385,8 @@ export class Workspace {
       try {
         handle = await opening;
         a.threadId = handle.threadId;
+        if (refreshTitle && a.role === "orc")
+          a.title = handle.threadName ?? "New session";
         this.handles.set(a.id, handle);
         this.save();
       } finally {
