@@ -53,6 +53,11 @@ select:focus-visible {
   white-space: nowrap;
 }
 .app-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
   height: 60px;
   padding: 0 24px;
   display: flex;
@@ -66,8 +71,7 @@ select:focus-visible {
   font-weight: 650;
   letter-spacing: -0.5px;
 }
-.session-count,
-.host-summary {
+.session-count {
   color: var(--muted-foreground);
   font-size: 12px;
 }
@@ -78,7 +82,7 @@ select:focus-visible {
   margin-left: auto;
 }
 main {
-  height: calc(100dvh - 60px);
+  height: 100dvh;
   position: relative;
   display: flex;
   background: #242424;
@@ -269,7 +273,7 @@ main {
 }
 .host-column-labels span {
   position: absolute;
-  top: 56px;
+  top: 80px;
   color: var(--muted-foreground);
   white-space: nowrap;
   font-size: 13px;
@@ -347,7 +351,10 @@ main {
 .agent-detail {
   width: min(560px, 43vw);
   flex-shrink: 0;
-  margin: 12px 12px 12px 0;
+  position: relative;
+  z-index: 20;
+  min-height: 0;
+  margin: 8px 8px 8px 0;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
@@ -357,7 +364,7 @@ main {
 }
 .detail-heading {
   position: relative;
-  padding: 22px 24px 18px;
+  padding: 14px 20px 12px;
   border-bottom: 1px solid var(--border);
 }
 .detail-heading > button {
@@ -368,15 +375,15 @@ main {
 .role-project {
   font-size: 12px;
   color: var(--muted-foreground);
-  padding-right: 32px;
+  overflow-wrap: anywhere;
 }
 .detail-heading h1 {
   font-size: 21px;
   font-weight: 550;
   letter-spacing: -0.5px;
   line-height: 1.4;
-  margin: 12px 0;
-  padding-right: 20px;
+  margin: 10px 0 0;
+  padding-right: 0;
 }
 .editable-title {
   display: flex;
@@ -399,7 +406,7 @@ main {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin: 12px 0;
+  margin: 10px 0 0;
 }
 .title-editor input {
   font-size: 18px;
@@ -413,9 +420,21 @@ main {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
-  font-size: 12px;
+  gap: 8px;
+  font-size: 11px;
   color: var(--muted-foreground);
+}
+.detail-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding-right: 28px;
+}
+.detail-model {
+  color: #85858e;
+  font-size: 11px;
+  overflow-wrap: anywhere;
 }
 .model-note {
   margin-top: 12px;
@@ -1229,7 +1248,6 @@ pre {
   display: none;
 }
 @media (max-width: 1100px) {
-  .host-summary,
   .session-count {
     display: none;
   }
@@ -1254,24 +1272,15 @@ pre {
     padding: 0 8px;
     font-size: 12px;
   }
-  .desktop-new,
-  .desktop-help {
-    display: none !important;
-  }
   .weekly-button span {
     display: none;
   }
   .host-filter-control {
     order: 3;
   }
-  .host-summary {
-    display: block;
-    order: 4;
-    margin-left: auto;
-    font-size: 11px;
-  }
   main {
     height: calc(100dvh - 100px);
+    margin-top: 100px;
   }
   .canvas-region,
   .canvas-empty {
@@ -1335,6 +1344,7 @@ pre {
     display: none;
   }
   main.with-detail {
+    margin-top: 0;
     height: 100dvh;
   }
   .with-detail .mobile-sessions {
@@ -1353,10 +1363,8 @@ pre {
     align-items: center;
     padding: 12px 16px;
   }
-  .mobile-back > span {
+  .mobile-back .weekly-control {
     margin-left: auto;
-    font-size: 12px;
-    color: var(--muted-foreground);
   }
   .mobile-back .weekly-button {
     padding: 0;
@@ -1370,10 +1378,7 @@ pre {
   .detail-heading h1 {
     font-size: 20px;
   }
-  .detail-status .owner-badge,
-  .model-note {
-    display: none;
-  }
+
   .conversation {
     padding: 20px;
   }
@@ -1431,4 +1436,18 @@ pre {
   height: 1px;
   opacity: 0;
   pointer-events: none;
+}
+
+.settings-hosts {
+  margin-top: 24px;
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+}
+.settings-hosts > summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+}
+.settings-hosts .modal-help {
+  margin-top: 12px;
 }

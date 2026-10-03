@@ -43,11 +43,17 @@
   });
   const edges = $derived<Edge[]>(agents.filter(a => a.ownerId && expanded.includes(a.ownerId)).map(a => ({ id: `${a.ownerId}-${a.id}`, source: a.ownerId!, target: a.id, type: "smoothstep", selectable: false, style: "stroke: #515151; stroke-width: 1.25" })));
   export function fit() { void flow.fitView({ padding: .18, duration: 0 }); }
-  export function reveal(id: string) {
+  export function reveal(id: string, duration = 0) {
     const node = nodes.find(n => n.id === id);
-    const element = document.querySelector(`[data-agent-id="${id}"]`);
-    const bounds = element?.getBoundingClientRect(); const canvas = element?.closest(".canvas-region")?.getBoundingClientRect();
-    if (node && bounds && canvas && (bounds.top < canvas.top || bounds.bottom > canvas.bottom || bounds.left < canvas.left || bounds.right > canvas.right)) void flow.setCenter(node.position.x + 150, node.position.y + 83, { zoom: viewport.zoom, duration: 0 });
+    const canvas = document.querySelector(".canvas-region")?.getBoundingClientRect();
+    if (!node || !canvas) return;
+    const width = node.width ?? 300, height = node.height ?? 166;
+    const left = canvas.left + viewport.x + node.position.x * viewport.zoom;
+    const top = canvas.top + viewport.y + node.position.y * viewport.zoom;
+    const headerBottom = document.querySelector(".app-header")?.getBoundingClientRect().bottom ?? canvas.top;
+    if (top < Math.max(canvas.top, headerBottom) + 16 || top + height * viewport.zoom > canvas.bottom - 16 || left < canvas.left + 16 || left + width * viewport.zoom > canvas.right - 16) {
+      void flow.setCenter(node.position.x + width / 2, node.position.y + height / 2, { zoom: viewport.zoom, duration });
+    }
   }
   export function expandFocused() { const a = agents.find(a => a.id === focusedId || a.id === selectedId); if (a?.role === "orc") toggle(a.id); }
   export async function keydown(event: KeyboardEvent) {
@@ -62,7 +68,7 @@
       return event.key === "ArrowLeft" ? dx < -1 : event.key === "ArrowRight" ? dx > 1 : event.key === "ArrowUp" ? dy < -1 : dy > 1;
     }).sort((a, b) => Math.hypot(a.position.x - current.position.x, a.position.y - current.position.y) - Math.hypot(b.position.x - current.position.x, b.position.y - current.position.y));
     focusedId = (candidates[0] ?? current).id;
-    await tick(); document.querySelector<HTMLButtonElement>(`[data-agent-id="${focusedId}"]`)?.focus();
+    await tick(); reveal(focusedId, 180); document.querySelector<HTMLButtonElement>(`[data-agent-id="${focusedId}"]`)?.focus({ preventScroll: true });
   }
 </script>
 <!-- The spatial canvas is a keyboard navigation surface. -->

@@ -6,7 +6,7 @@
   import { NativeSelect } from "$lib/components/ui/native-select/index.js";
   import { Switch } from "$lib/components/ui/switch/index.js";
   import { Kbd } from "$lib/components/ui/kbd/index.js";
-  import { X, Keyboard, Plus, ChevronRight, Settings as SettingsIcon, Server } from "@lucide/svelte";
+  import { X, Plus, ChevronRight, Settings as SettingsIcon } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { storagePrefix } from "./api";
   import { onMount, tick } from "svelte";
@@ -26,7 +26,7 @@
   let projects = $state<Project[]>([]); let models = $state<Model[]>([]);
   let connected = $state(false); let loading = $state(true); let error = $state("");
   let now = $state(Date.now()); let canvas: { keydown(event: KeyboardEvent): Promise<void>; fit(): void; expandFocused(): void; reveal(id: string): void };
-  let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | "hosts" | null>(null);
+  let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | null>(null);
   let search = $state(""); let projectId = $state(""); let saving = $state(false);
   let settings = $state<Settings | null>(null); let sequence = 0;
   let install = $state<(Event & { prompt: () => Promise<void> }) | null>(null);
@@ -100,7 +100,7 @@
       notification.onclick = () => { window.focus(); void open(a.ownerId ?? a.id); notification.close(); };
     }
   }
-  async function show(kind: "new" | "settings" | "keys" | "hosts") {
+  async function show(kind: "new" | "settings" | "keys") {
     modal = kind; error = "";
     if (kind === "new") { search = ""; void chooseHost(hostFilter || snapshot.hubId || ""); }
     if (kind === "settings") {
@@ -203,8 +203,7 @@
 <Toaster theme="dark" position="bottom-center" />
 <header class="app-header" class:has-selection={!!selectedId}><strong>{m.product()}</strong><span class="session-count">{m.session_count({ count: roots.length })}</span>
   <HostFilter {hosts} bind:value={hostFilter} />
-  <span class="host-summary">{m.connected_count({ count: hosts.filter(h => h.connected).length })}{#if hosts.some(h => !h.connected)} · <span class="host-warning">{hosts.filter(h => !h.connected).map(h => h.name).join(", ")} {m.disconnected_host().toLowerCase()}</span>{/if}</span>
-  <div class="header-actions"><Weekly hostId={detail?.hostId ?? snapshot.hubId} {connected} /><Button class="desktop-new" variant="default" size="sm" disabled={!connected || loading} onclick={() => show("new")}><Plus aria-hidden="true" />{m.new_session()}</Button><Button variant="ghost" size="sm" disabled={!connected} onclick={() => show("hosts")}><Server />{m.hosts()}</Button><Button variant="ghost" size="sm" disabled={!connected || !models.length} onclick={() => show("settings")}><SettingsIcon />{m.settings()}</Button><Button class="desktop-help" variant="ghost" size="icon-sm" aria-label={m.shortcuts()} onclick={() => show("keys")}><Keyboard /></Button></div>
+  <div class="header-actions"><Weekly hostId={detail?.hostId ?? snapshot.hubId} {connected} /><Button variant="ghost" size="icon-sm" aria-label={m.settings()} disabled={!connected} onclick={() => show("settings")}><SettingsIcon /></Button></div>
 </header>
 <main class:with-detail={!!selectedId}>
   <SvelteFlowProvider><Canvas bind:this={canvas} agents={visibleAgents} {hosts} oncreate={createOnHost} {selectedId} {now} onopen={open} /></SvelteFlowProvider>
@@ -217,7 +216,7 @@
 </main>
 
 <Dialog.Root bind:open={modalOpen} onOpenChange={value => { if (!value) modal = null; }}>
-  <Dialog.Content showCloseButton={false} class={`grove-dialog ${modal === "hosts" ? "hosts-modal" : modal === "new" ? "new-modal" : modal === "settings" ? "settings-modal" : ""}`} onOpenAutoFocus={e => { e.preventDefault(); if (modal === "new") projectSearch?.focus(); }} onCloseAutoFocus={e => e.preventDefault()}><Button class="modal-close" variant="ghost" size="icon-sm" aria-label={m.close()} onclick={closeModal}><X /></Button>
+  <Dialog.Content showCloseButton={false} class={`grove-dialog ${modal === "new" ? "new-modal" : modal === "settings" ? "settings-modal" : ""}`} onOpenAutoFocus={e => { e.preventDefault(); if (modal === "new") projectSearch?.focus(); }} onCloseAutoFocus={e => e.preventDefault()}><Button class="modal-close" variant="ghost" size="icon-sm" aria-label={m.close()} onclick={closeModal}><X /></Button>
     {#if modal === "new"}
       <Dialog.Title>{m.new_session()}</Dialog.Title><p class="modal-help">{m.host_project_help()}</p>
       <p class="form-section-label">{m.execution_host()}</p><div class="host-choices" aria-label={m.execution_host()}>{#each hosts as host}<button class:selected={createHost === host.id} disabled={!host.connected} onclick={() => chooseHost(host.id)}><strong>{host.name}</strong><span>{host.connected ? m.connected_host() : m.disconnected_host()}</span></button>{/each}</div>
@@ -234,8 +233,7 @@
       <Dialog.Title>{m.settings()}</Dialog.Title><p class="modal-help">{m.settings_help()}</p>
       {#if settings}{#each ["orc", "worker"] as role}{@const key = role as "orc" | "worker"}<section class="role-settings"><h3>{key === "orc" ? m.orc() : m.worker()}</h3><div class="model-fields"><label>{m.model()}<NativeSelect class="model-select" bind:value={settings[key].model} onchange={() => { if (settings) settings[key].effort = models.find(model => model.id === settings![key].model)?.defaultEffort ?? ""; if (settings && !models.find(model => model.id === settings![key].model)?.fastTier) settings.fast = false; }}>{#each models as model}<option value={model.id}>{model.name}</option>{/each}</NativeSelect></label><label>{m.effort()}<NativeSelect class="model-select" bind:value={settings[key].effort}>{#each models.find(model => model.id === settings![key].model)?.efforts ?? [] as effort}<option value={effort}>{effort}</option>{/each}</NativeSelect></label></div></section>{/each}<label class="fast-setting"><span><strong>{m.fast_mode()}</strong><small>{fastAvailable ? m.fast_help() : m.fast_unavailable()}</small></span><Switch aria-label={m.fast_mode()} bind:checked={settings.fast} disabled={!fastAvailable} /></label>{/if}
       <p class="settings-scope">{m.settings_scope()}</p><div class="modal-action">{#if install}<button class="install-link" onclick={() => install?.prompt()}>{m.install_app()}</button>{/if}<Button variant="default" size="sm" disabled={!settings || !connected || saving} onclick={saveSettings}>{saving ? m.sending() : m.save_changes()}</Button></div>
-    {:else if modal === "hosts"}
-      <Hosts {hosts} sessionCount={roots.length} onadopt={value => adopt(value, true)} />
+      <details class="settings-hosts"><summary>{m.hosts()}</summary><Hosts {hosts} sessionCount={roots.length} onadopt={value => adopt(value, true)} /></details>
     {:else if modal === "keys"}
       <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["F", m.key_fit()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()], ["← →", m.key_questions()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
     {/if}

@@ -1,4 +1,24 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+async function newSession(page: Page) {
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Settings", exact: true }),
+  ).toBeEnabled();
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement)
+      document.activeElement.blur();
+  });
+  await page.keyboard.press("n");
+}
+async function openSettings(page: Page) {
+  if (await page.locator(".agent-detail").count()) {
+    if (await page.getByRole("button", { name: "Close detail" }).isVisible())
+      await page.getByRole("button", { name: "Close detail" }).click();
+    else await page.getByRole("button", { name: "‹ Sessions" }).click();
+  }
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+}
+
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 test.use({ baseURL: "http://127.0.0.1:14319", colorScheme: "dark" });
@@ -9,6 +29,7 @@ async function selected(page: import("@playwright/test").Page) {
   await page
     .getByRole("button", { name: "Open Streaming voice input Orc" })
     .click();
+  await expect(page.locator(".agent-detail")).toBeVisible();
 }
 async function capture(page: import("@playwright/test").Page, file: string) {
   await page.evaluate(() => document.fonts.ready);
@@ -47,7 +68,8 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await capture(page, "multi-10");
   await page.getByRole("combobox", { name: "Host filter" }).click();
   await page.getByRole("option", { name: "All hosts" }).click();
-  await page.getByRole("button", { name: "Hosts", exact: true }).click();
+  await openSettings(page);
+  await page.locator(".settings-hosts > summary").click();
   await capture(page, "multi-03");
   await page.getByRole("button", { name: "Add host", exact: true }).click();
   await page
@@ -77,7 +99,7 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await request.post("/fixture/reset", { data: {} });
   await page.evaluate(() => localStorage.clear());
   await selected(page);
-  await page.getByRole("button", { name: "New session", exact: true }).click();
+  await newSession(page);
   await expect(
     page.getByRole("textbox", { name: "Search projects" }),
   ).toBeFocused();
@@ -94,7 +116,7 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await request.post("/fixture/reset", { data: {} });
   await page.evaluate(() => localStorage.clear());
   await selected(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await expect(
     page
       .getByRole("dialog")
@@ -122,7 +144,7 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await selected(page);
   await page.getByRole("button", { name: "Close detail" }).click();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator(".host-summary")).toHaveText("2 connected");
+  await expect(page.locator(".host-summary")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: /NUC.*Streaming voice input/ }),
   ).toContainText("2 open Workers · 1 working");
@@ -167,6 +189,7 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await selected(page);
   await page.getByRole("button", { name: "Expand Workers" }).first().click();
   await page.getByRole("button", { name: "Expand Workers" }).click();
+  await page.getByRole("button", { name: "Close detail" }).click();
   await page
     .getByRole("button", { name: "Weekly remaining", exact: true })
     .click();
@@ -316,7 +339,8 @@ test("mobile supplementary forms, Stop and quota stay operable within 390 pixels
   await request.post("/fixture/reset", { data: {} });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
-  await page.getByRole("button", { name: "Hosts", exact: true }).click();
+  await openSettings(page);
+  await page.locator(".settings-hosts > summary").click();
   await page.getByRole("button", { name: "Add host", exact: true }).click();
   await page
     .getByRole("textbox", { name: "Name", exact: true })
@@ -338,7 +362,7 @@ test("mobile supplementary forms, Stop and quota stay operable within 390 pixels
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(390);
   await page.locator(".modal-close").click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await expect(
     page
       .getByRole("dialog")
@@ -349,7 +373,7 @@ test("mobile supplementary forms, Stop and quota stay operable within 390 pixels
     page.getByRole("button", { name: "Save changes", exact: true }),
   ).toBeVisible();
   await page.locator(".modal-close").click();
-  await page.getByRole("button", { name: "New session", exact: true }).click();
+  await newSession(page);
   await page
     .getByRole("button", { name: "Neil’s Mac Connected", exact: true })
     .click();
@@ -400,4 +424,104 @@ test("mobile supplementary forms, Stop and quota stay operable within 390 pixels
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(390);
+});
+
+test("compact detail uses the full height and keeps metadata above the title", async ({
+  page,
+  request,
+}) => {
+  await request.post("/fixture/reset", { data: {} });
+  await selected(page);
+  const detail = page.locator(".agent-detail");
+  const panel = await detail.boundingBox();
+  expect(panel!.y).toBeLessThanOrEqual(8);
+  expect(panel!.height).toBeGreaterThanOrEqual(880);
+  const meta = page.locator(".detail-meta");
+  await expect(meta).toContainText("NUC");
+  await expect(meta).toContainText("Working");
+  await expect(meta).toContainText("gpt-6.1-sol");
+  const bounds = await meta.boundingBox();
+  const title = await detail.locator("h1").boundingBox();
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(title!.y);
+  expect(
+    (await page.locator(".detail-heading").boundingBox())!.height,
+  ).toBeLessThan(115);
+  await expect(
+    page
+      .locator(".app-header")
+      .getByRole("button", { name: "New session", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Shortcuts", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.locator(".host-summary")).toHaveCount(0);
+  await capture(page, "compact-detail-desktop");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(meta).toContainText("gpt-6.1-sol");
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(390);
+  await capture(page, "compact-detail-mobile");
+  await page.getByRole("button", { name: "‹ Sessions" }).click();
+  await openSettings(page);
+  await page.locator(".settings-hosts > summary").click();
+  await expect(
+    page.getByRole("button", { name: "Edit host Neil’s Mac" }),
+  ).toBeVisible();
+  await capture(page, "compact-settings-hosts");
+});
+
+test("arrow navigation pans an offscreen session into view without changing zoom", async ({
+  page,
+  request,
+}) => {
+  await request.post("/fixture/reset", { data: {} });
+  await page.goto("/");
+  const snapshot = await (await request.get("/api/snapshot")).json();
+  const roots = snapshot.agents.filter(
+    (a: { role: string }) => a.role === "orc",
+  );
+  await page.evaluate(
+    (ids: string[]) => {
+      const prefix = `flickgrove/${location.origin}`;
+      localStorage.removeItem(`${prefix}/selected`);
+      localStorage.setItem(`${prefix}/host-filter`, "");
+      localStorage.setItem(`${prefix}/expanded`, "[]");
+      localStorage.setItem(
+        `${prefix}/viewport`,
+        JSON.stringify({ x: 0, y: 0, zoom: 1 }),
+      );
+      localStorage.setItem(
+        `${prefix}/positions`,
+        JSON.stringify(
+          Object.fromEntries(
+            ids.map((id, i) => [id, { x: 90, y: 136 + i * 1300 }]),
+          ),
+        ),
+      );
+    },
+    roots.map((a: { id: string }) => a.id),
+  );
+  await page.reload();
+  await expect(page.locator(".node-open").first()).toBeVisible();
+  await page.keyboard.press("ArrowDown");
+  const target = page.locator(".navigation-focus .node-open");
+  await expect(target).toHaveAttribute("data-agent-id", roots[1].id);
+  await expect
+    .poll(async () => {
+      const node = await target.boundingBox();
+      const canvas = await page.locator(".canvas-region").boundingBox();
+      return (
+        !!node &&
+        !!canvas &&
+        node.y >= 60 &&
+        node.y + node.height <= canvas.y + canvas.height &&
+        node.x >= canvas.x &&
+        node.x + node.width <= canvas.x + canvas.width
+      );
+    })
+    .toBe(true);
+  await expect(page.locator(".zoom-readout")).toHaveText("100%");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".agent-detail h1")).toContainText(roots[1].title);
 });
