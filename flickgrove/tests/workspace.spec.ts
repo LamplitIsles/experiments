@@ -253,6 +253,10 @@ test("N focuses creation, I focuses Composer, and list navigation survives detai
   await expect(
     page.getByRole("button", { name: "Alpha", exact: true }),
   ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Beta", exact: true }),
+  ).toHaveClass(/selected/);
+  await expect(page.getByRole("button", { name: /Create on/ })).toBeEnabled();
   await page.keyboard.press("Enter");
   await expect(
     page.getByRole("textbox", { name: "Message Orc" }),
