@@ -28,6 +28,30 @@ runtime.sendOverride = async (id, text) => {
           message: "Build a reader",
         });
         result = "The reader is ready.";
+      } else if (text === "Start a long Worker") {
+        await app.tool(agent.token, "worker_start", {
+          project: "alpha",
+          title: "Long Reader",
+          spec: "fixture",
+          message: "Wait for explicit completion",
+        });
+        result = "Long Worker started.";
+      } else if (
+        agent.role === "worker" &&
+        text.endsWith("\n\nWait for explicit completion")
+      ) {
+        return;
+      } else if (text === "Finish the long Worker") {
+        const worker = app.snapshot().agents.find((a) => a.ownerId === id)!;
+        await app.tool(runtime.agents.get(worker.id)!.token, "worker_report", {
+          message: "Long Worker final report",
+        });
+        runtime.emit(worker.id, {
+          type: "completed",
+          turnId: app.detail(worker.id).turnId!,
+          status: "completed",
+        });
+        result = "Long Worker finished.";
       } else if (text === "Request Worker report") {
         const worker = app.snapshot().agents.find((a) => a.ownerId === id)!;
         await app.tool(runtime.agents.get(worker.id)!.token, "worker_report", {

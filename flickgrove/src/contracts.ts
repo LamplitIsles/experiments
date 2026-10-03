@@ -56,6 +56,10 @@ export interface Delivery {
   at: number;
 }
 export interface Agent {
+  closeRequest?: {
+    turnEnded: boolean;
+    reason: string;
+  };
   hostId?: string;
   hostName?: string;
   stop?: {

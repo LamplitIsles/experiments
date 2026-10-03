@@ -374,3 +374,60 @@ test("Tab completes without moving focus, skill search preserves drafts, and clo
   });
   expect(errors).toEqual([]);
 });
+
+test("Orc closure of a running Worker shows Closing and automatically removes it after the final report", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page
+    .getByRole("button", { name: "New session", exact: true })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await page.getByRole("button", { name: /Create on/ }).click();
+  const input = page.getByRole("textbox", { name: "Message Orc" });
+  await input.fill("Start a long Worker");
+  await input.press("Enter");
+  await expect(
+    page.getByText("Long Worker started.", { exact: true }),
+  ).toBeVisible();
+  await input.fill("Close the workers");
+  await input.press("Enter");
+  await expect(
+    page.getByText("Workers are closed.", { exact: true }),
+  ).toBeVisible();
+  await page
+    .locator(".agent-node.active")
+    .getByRole("button", { name: "Expand Workers" })
+    .click();
+  await page.getByRole("button", { name: "Open Long Reader Worker" }).click();
+  await expect(page.locator(".detail-status")).toContainText("Closing");
+  await expect(
+    page.getByText("Waiting for current work to finish", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "../.scratch/flickgrove-shadcn/worker-closing.png",
+    animations: "disabled",
+  });
+  await page.locator(".owner-link").click();
+  await input.fill("Finish the long Worker");
+  await input.press("Enter");
+  await expect(
+    page.getByText("Long Worker finished.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Open Long Reader Worker" }),
+  ).toHaveCount(0);
+  const report = page
+    .locator(".worker-report")
+    .filter({ hasText: "Long Worker final report" });
+  await expect(report).toHaveCount(1);
+  await report.locator("summary").click();
+  await expect(report.locator(".report-content")).toContainText(
+    "Long Worker final report",
+  );
+  await input.fill("/close");
+  await input.press("Enter");
+  await input.press("Enter");
+  await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
+});
