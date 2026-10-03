@@ -1,12 +1,15 @@
 // Isolated synthetic preview: production components and real Hub/HTTP/Workspace,
 // with only test-owned state and FakeRuntime. No installed project/provider access.
+import type { ServerWebSocket } from "bun";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Workspace } from "../server/workspace";
 import { HostService } from "../server/hosts";
-import { createHandler } from "../server/http";
+import { createHandler, createUpgrade } from "../server/http";
+import { groveWebsocket, type SocketData } from "../server/chord-socket";
+import { DeliveryRejected } from "../server/runtime";
 import { FakeRuntime } from "../server/testing";
 import type { Detail, WeeklyUsage } from "../src/contracts";
 const directory = mkdtempSync(join(tmpdir(), "grove-design-preview-"));
@@ -29,34 +32,43 @@ const defaults = {
 };
 let usage: number | null = 72;
 let stopMode = "pending";
+let sendMode = "accepted";
+let sendGate = Promise.withResolvers<void>();
 let peerDrop = false;
 let freshNoWorkers = false;
 let longConversations = false;
+const browserSockets = new Set<ServerWebSocket<SocketData>>();
 let units: ReturnType<typeof unit>[] = [];
 let current: ReturnType<typeof unit>;
 let peer: ReturnType<typeof unit>;
 let empty: ReturnType<typeof unit>;
 let emptyOrigin = "";
+let peerOrigin = "";
+const peerOriginForFixture = () => peerOrigin;
 function unit(
   name: string,
   hub: boolean,
   agents: Detail[],
   origin: () => string,
+  restoredDirectory?: string,
 ) {
-  const stateDirectory = join(directory, crypto.randomUUID());
-  mkdirSync(stateDirectory, { mode: 0o700 });
-  const db = new Database(join(stateDirectory, "workspace.sqlite"));
-  db.exec(
-    "CREATE TABLE workspace (id INTEGER PRIMARY KEY,value TEXT NOT NULL)",
-  );
-  db.query("INSERT INTO workspace VALUES(1,?)").run(
-    JSON.stringify({
-      agents: agents.map((a) => ({ ...a, token: `fixture-${a.id}` })),
-      settings: defaults,
-      revision: 0,
-    }),
-  );
-  db.close();
+  const stateDirectory =
+    restoredDirectory ?? join(directory, crypto.randomUUID());
+  if (!restoredDirectory) {
+    mkdirSync(stateDirectory, { mode: 0o700 });
+    const db = new Database(join(stateDirectory, "workspace.sqlite"));
+    db.exec(
+      "CREATE TABLE workspace (id INTEGER PRIMARY KEY,value TEXT NOT NULL)",
+    );
+    db.query("INSERT INTO workspace VALUES(1,?)").run(
+      JSON.stringify({
+        agents: agents.map((a) => ({ ...a, token: `fixture-${a.id}` })),
+        settings: defaults,
+        revision: 0,
+      }),
+    );
+    db.close();
+  }
   const runtime = new FakeRuntime();
   for (const a of agents)
     runtime.names.set(a.threadId ?? `thread-${a.id}`, a.title);
@@ -92,6 +104,14 @@ function unit(
     accountId: name === "NUC" ? "fixture-nuc-account" : "fixture-mac-account",
     ...(usage === null ? {} : { resetsAt: 1791252000 }),
   });
+  runtime.sendOverride = async (_id, _text, turnId) => {
+    if (sendMode === "held") await sendGate.promise;
+    if (sendMode === "rejected")
+      throw new DeliveryRejected("Synthetic rejection");
+    if (sendMode === "uncertain")
+      throw new Error("Synthetic native outcome unknown");
+    return turnId ?? crypto.randomUUID();
+  };
   runtime.interruptOverride = async () => {
     if (stopMode === "unknown") throw new Error("fixture uncertain acceptance");
   };
@@ -105,8 +125,7 @@ function unit(
     hub,
     name,
     origin,
-    pollMs: 150,
-    timeoutMs: 250,
+    timeoutMs: 2000,
   });
   const handler = createHandler(app, {
     service,
@@ -183,6 +202,9 @@ function agent(
   };
 }
 async function reset(mode = "working") {
+  for (const socket of browserSockets)
+    socket.close(1001, "Synthetic fixture reset");
+  browserSockets.clear();
   for (const unit of units) {
     unit.service.dispose();
     unit.server?.stop(true);
@@ -194,6 +216,9 @@ async function reset(mode = "working") {
   peerDrop = false;
   usage = 72;
   stopMode = "pending";
+  sendMode = "accepted";
+  sendGate.resolve();
+  sendGate = Promise.withResolvers<void>();
   const workers = !["no-workers", "idle"].includes(mode);
   current = unit(
     "NUC",
@@ -223,7 +248,7 @@ async function reset(mode = "working") {
     () => "http://127.0.0.1:14319",
   );
   units.push(current);
-  let peerOrigin = "";
+  peerOrigin = "";
   peer = unit(
     "Neil’s Mac",
     false,
@@ -239,10 +264,16 @@ async function reset(mode = "working") {
   peer.server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: (req) =>
-      peerDrop
-        ? new Response("Synthetic host outage", { status: 503 })
-        : peer.handler(req),
+    websocket: groveWebsocket,
+    fetch: (req, server) => {
+      if (peerDrop)
+        return new Response("Synthetic host outage", { status: 503 });
+      const result = createUpgrade(peer.app, {
+        service: peer.service,
+        origin: () => peerOrigin,
+      })(req, server);
+      return result === true ? undefined : (result ?? peer.handler(req));
+    },
   });
   peerOrigin = `http://127.0.0.1:${peer.server.port}`;
   empty = unit("Workstation", false, [], () => emptyOrigin);
@@ -250,7 +281,14 @@ async function reset(mode = "working") {
   empty.server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: (req) => empty.handler(req),
+    websocket: groveWebsocket,
+    fetch: (req, server) => {
+      const result = createUpgrade(empty.app, {
+        service: empty.service,
+        origin: () => emptyOrigin,
+      })(req, server);
+      return result === true ? undefined : (result ?? empty.handler(req));
+    },
   });
   emptyOrigin = `http://127.0.0.1:${empty.server.port}`;
   await current.service.register({
@@ -278,14 +316,29 @@ async function reset(mode = "working") {
       message: "Implement reader",
     });
   }
-  await current.service.refresh();
 }
 await reset();
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: 14319,
   idleTimeout: 0,
-  fetch: async (request) => {
+  websocket: {
+    ...groveWebsocket,
+    open(socket) {
+      browserSockets.add(socket);
+      groveWebsocket.open(socket);
+    },
+    close(socket) {
+      browserSockets.delete(socket);
+      groveWebsocket.close(socket);
+    },
+  },
+  fetch: async (request, server) => {
+    const upgraded = createUpgrade(current.app, {
+      service: current.service,
+      origin: () => "http://127.0.0.1:14319",
+    })(request, server);
+    if (upgraded) return upgraded === true ? undefined : upgraded;
     const url = new URL(request.url);
     if (url.pathname === "/fixture/reset" && request.method === "POST") {
       const body = (await request.json()) as { mode?: string };
@@ -298,17 +351,37 @@ const server = Bun.serve({
         peer: peer.service.identity.id,
         emptyUrl: emptyOrigin,
         emptyToken: empty.service.credential,
+        inputs: current.runtime.inputs,
       });
     if (url.pathname === "/fixture/change" && request.method === "POST") {
       const body = (await request.json()) as {
         outage?: boolean;
         usage?: number | null;
         stopMode?: string;
+        sendMode?: string;
         complete?: string;
         question?: boolean;
         restartHub?: boolean;
         append?: { agentId: string; text: string };
       };
+      if (body.restartHub) {
+        const prior = current;
+        const inputs = [...prior.runtime.inputs];
+        for (const socket of browserSockets)
+          socket.close(1001, "Synthetic Hub restart");
+        prior.service.dispose();
+        prior.app.dispose();
+        current = unit(
+          "NUC",
+          true,
+          [],
+          () => "http://127.0.0.1:14319",
+          prior.stateDirectory,
+        );
+        current.runtime.inputs.push(...inputs);
+        units = units.filter((u) => u !== prior);
+        units.push(current);
+      }
       if (body.append) {
         const id = body.append.agentId;
         const turnId = current.app.detail(id).turnId ?? crypto.randomUUID();
@@ -328,9 +401,33 @@ const server = Bun.serve({
           status: "completed",
         });
       }
-      if (body.outage !== undefined) peerDrop = body.outage;
+      if (body.outage !== undefined) {
+        peerDrop = body.outage;
+        if (peerDrop) peer.server?.stop(true);
+        else {
+          peer.server = Bun.serve({
+            hostname: "127.0.0.1",
+            port: Number(new URL(peerOriginForFixture()).port),
+            websocket: groveWebsocket,
+            fetch: (req, server) => {
+              const result = createUpgrade(peer.app, {
+                service: peer.service,
+                origin: () => peerOriginForFixture(),
+              })(req, server);
+              return result === true
+                ? undefined
+                : (result ?? peer.handler(req));
+            },
+          });
+        }
+      }
       if (body.usage !== undefined) usage = body.usage;
       if (body.stopMode) stopMode = body.stopMode;
+      if (body.sendMode) {
+        sendMode = body.sendMode;
+        if (sendMode !== "held") sendGate.resolve();
+        else sendGate = Promise.withResolvers<void>();
+      }
       if (body.complete) {
         const turnId = current.app.detail("orc").turnId!;
         current.runtime.emit("orc", {
@@ -360,7 +457,7 @@ const server = Bun.serve({
           },
         });
       }
-      await current.service.refresh();
+
       return Response.json({ ok: true });
     }
     return current.handler(request);

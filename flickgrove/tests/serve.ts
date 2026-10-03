@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { Workspace } from "../server/workspace";
 import { HostService } from "../server/hosts";
-import { createHandler } from "../server/http";
+import { createHandler, createUpgrade } from "../server/http";
+import { groveWebsocket } from "../server/chord-socket";
 import { FakeRuntime, fixtureProjects } from "../server/testing";
 const directory = mkdtempSync(join(tmpdir(), "flickgrove-browser-"));
 const runtime = new FakeRuntime();
@@ -161,7 +162,13 @@ const server = Bun.serve({
   hostname: "127.0.0.1",
   port: 14318,
   idleTimeout: 0,
-  async fetch(request) {
+  websocket: groveWebsocket,
+  async fetch(request, server) {
+    const upgraded = createUpgrade(app, {
+      service,
+      origin: () => "http://127.0.0.1:14318",
+    })(request, server);
+    if (upgraded) return upgraded === true ? undefined : upgraded;
     if (
       request.method === "POST" &&
       new URL(request.url).pathname === "/fixture/history-continuation"

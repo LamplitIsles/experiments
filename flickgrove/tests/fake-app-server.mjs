@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   appendFileSync,
   existsSync,
@@ -38,7 +39,7 @@ function readJson(path, fallback) {
   }
 }
 function save() {
-  writeFileSync(statePath, JSON.stringify(state));
+  writeFileSync(statePath, JSON.stringify(database));
 }
 function send(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -96,7 +97,7 @@ function threadRecord(cwd, model) {
     agentNickname: null,
     agentRole: null,
     gitInfo: null,
-    name: readJson(statePath, state).threadName ?? null,
+    name: state.threadName ?? null,
     threadSource: null,
     turns: [],
   };
@@ -224,14 +225,38 @@ function turnView(turn, itemsView) {
   return { ...turn, items: [...turn.items], itemsView: view };
 }
 
-const state = readJson(statePath, {
+// Each request and its timers retain their thread context, as the native
+// multi-thread app-server does. Only this test-owned database is persisted.
+const database = readJson(statePath, {
+  threads: {},
+  nextThread: 1,
+  nextTitle: 1,
+});
+for (const thread of Object.values(database.threads)) {
+  thread.active = null;
+  thread.loaded = false;
+}
+const contexts = new AsyncLocalStorage();
+const empty = {
   threadId: "thread-fake",
   next: 1,
   turns: [],
   active: null,
   trusted: false,
-});
-state.threadId ??= "thread-fake";
+};
+function threadState(id) {
+  return (database.threads[id] ??= { ...empty, threadId: id, turns: [] });
+}
+const state = new Proxy(
+  {},
+  {
+    get: (_, key) => (contexts.getStore() ?? empty)[key],
+    set: (_, key, value) => {
+      (contexts.getStore() ?? empty)[key] = value;
+      return true;
+    },
+  },
+);
 
 function createNativeImage(kind, number) {
   const path = join(nativeRoot, `${kind}-${number}.png`);
@@ -393,7 +418,7 @@ async function runTurn(turn) {
       id: `answer-${state.next++}`,
       text: items.length
         ? `已完成${text.includes("edit") ? "编辑" : "创作"}。`
-        : `fixture reply ${state.next}`,
+        : `fixture reply ${state.threadId} ${state.next}`,
       phase: "final_answer",
       memoryCitation: null,
       delivery: null,
@@ -469,6 +494,21 @@ function startTurn(input, clientUserMessageId) {
         item: turn.items[0],
       },
     });
+  if (control().nativeRequests) {
+    for (const id of [state.threadId, "foreign-thread"])
+      send({
+        id: `native-${id}`,
+        method: "item/tool/call",
+        params: {
+          threadId: id,
+          turnId: turn.id,
+          callId: `call-${id}`,
+          namespace: null,
+          tool: "fixture-native",
+          arguments: {},
+        },
+      });
+  }
   void runTurn(turn);
   return turn;
 }
@@ -814,8 +854,12 @@ async function handle(request) {
         overriddenMetadata: null,
       };
     case "thread/start": {
+      state.cwd = p.cwd;
+      state.config = p.config;
+      state.developerInstructions = p.developerInstructions;
+      state.loaded = true;
       if (p.ephemeral) {
-        state.titleThreadId = "title-thread-fake";
+        state.titleThreadId = state.threadId;
         save();
         return {
           thread: {
@@ -838,7 +882,6 @@ async function handle(request) {
           multiAgentMode: "explicitRequestOnly",
         };
       }
-      state.threadId = "thread-fake";
       state.threadName = null;
       save();
       return {
@@ -893,6 +936,11 @@ async function handle(request) {
         runImportedStartupHook();
         save();
       }
+      state.cwd = p.cwd;
+      state.config = p.config;
+      state.developerInstructions = p.developerInstructions;
+      state.loaded = true;
+      save();
       return {
         thread: {
           ...threadRecord(p.cwd, p.model ?? "fixture-model"),
@@ -923,7 +971,7 @@ async function handle(request) {
               (!p.cwd || s.thread.cwd === p.cwd),
           )
           .map((s) => ({
-            ...threadRecord(root, "fixture-model"),
+            ...threadRecord(state.cwd ?? root, "fixture-model"),
             ...s.thread,
           })),
         p,
@@ -931,7 +979,7 @@ async function handle(request) {
     case "thread/read":
       return {
         thread: {
-          ...threadRecord(root, "fixture-model"),
+          ...threadRecord(state.cwd ?? root, "fixture-model"),
           ...control().historyThreads?.find((s) => s.thread.id === p.threadId)
             ?.thread,
         },
@@ -943,7 +991,7 @@ async function handle(request) {
       if (controlPath) writeFileSync(controlPath, JSON.stringify(c));
       return {
         thread: {
-          ...threadRecord(root, "fixture-model"),
+          ...threadRecord(state.cwd ?? root, "fixture-model"),
           ...session?.thread,
         },
       };
@@ -958,7 +1006,19 @@ async function handle(request) {
       });
       return {};
     case "thread/unsubscribe":
-      return {};
+      if (control().failUnsubscribeThreads?.includes(p.threadId))
+        rpcError(-32603, "fixture unsubscribe failed");
+      state.loaded = false;
+      save();
+      send({ method: "thread/closed", params: { threadId: state.threadId } });
+      return { status: "unsubscribed" };
+    case "thread/loaded/list":
+      return {
+        data: Object.values(database.threads)
+          .filter((s) => s.loaded)
+          .map((s) => s.threadId),
+        nextCursor: null,
+      };
     case "thread/turns/list": {
       if (process.env.FAKE_HISTORY_ERROR) {
         const error = new Error(process.env.FAKE_HISTORY_ERROR);
@@ -1087,20 +1147,35 @@ lines.on("line", async (line) => {
   const request = JSON.parse(line);
   log(request);
   if (request.id !== undefined && request.method === "item/tool/call") return;
-  if (request.id === undefined) return;
-  try {
-    const result = await handle(request);
-    if (process.env.FAKE_DROP_RESPONSE_METHOD === request.method) return;
-    send({ id: request.id, result });
-  } catch (error) {
-    const code = typeof error?.code === "number" ? error.code : -32603;
-    send({
-      id: request.id,
-      error: {
-        code,
-        message: error instanceof Error ? error.message : String(error),
-        ...(error?.data !== undefined ? { data: error.data } : {}),
-      },
-    });
+  if (request.id === undefined || !request.method) return;
+  let id = request.params?.threadId;
+  if (request.method === "thread/start") {
+    if (request.params?.ephemeral)
+      id = `title-thread-fake-${database.nextTitle++}`;
+    else {
+      const number = database.nextThread++;
+      id = number === 1 ? "thread-fake" : `thread-fake-${number}`;
+    }
   }
+  await contexts.run(id ? threadState(id) : empty, async () => {
+    try {
+      const result = await handle(request);
+      if (
+        process.env.FAKE_DROP_RESPONSE_METHOD === request.method ||
+        (control().dropTurnResponse && request.method === "turn/start")
+      )
+        return;
+      send({ id: request.id, result });
+    } catch (error) {
+      const code = typeof error?.code === "number" ? error.code : -32603;
+      send({
+        id: request.id,
+        error: {
+          code,
+          message: error instanceof Error ? error.message : String(error),
+          ...(error?.data !== undefined ? { data: error.data } : {}),
+        },
+      });
+    }
+  });
 });

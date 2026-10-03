@@ -44,6 +44,7 @@ export class FakeRuntime implements Runtime {
     };
   }
   readonly names = new Map<string, string>();
+  closeOverride?: (id: string) => Promise<void>;
   renameOverride?: (threadId: string, title: string) => Promise<void>;
   async readTitle(threadId: string) {
     return this.names.get(threadId) ?? null;
@@ -143,6 +144,7 @@ export class FakeRuntime implements Runtime {
       },
       title: async () => undefined,
       close: async () => {
+        await this.closeOverride?.(agent.id);
         this.listeners.delete(agent.id);
       },
     };

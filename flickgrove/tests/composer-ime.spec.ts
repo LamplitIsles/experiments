@@ -15,17 +15,16 @@ test("IME confirmation keeps the draft; a subsequent ordinary Enter sends", asyn
     .click();
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("中文草稿");
-  // Count sends at the browser fetch boundary, including synchronous calls
-  // made by the key handler, without accessing any real backend or model.
+  // Count actual Chord calls without touching a model or installed state.
   await page.evaluate(() => {
-    const fetch = window.fetch;
+    const send = WebSocket.prototype.send;
     const state = window as typeof window & { imeSends: number };
     state.imeSends = 0;
-    window.fetch = Object.assign((...args: Parameters<typeof window.fetch>) => {
-      if (String(args[0]).endsWith("/messages") && args[1]?.method === "POST")
+    WebSocket.prototype.send = function (data) {
+      if (typeof data === "string" && JSON.parse(data).call?.member === "send")
         state.imeSends++;
-      return fetch(...args);
-    }, fetch);
+      return send.call(this, data);
+    };
   });
   const sends = () =>
     page.evaluate(

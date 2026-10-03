@@ -6,7 +6,8 @@ import { CodexRuntime } from "./codex";
 import { Workspace } from "./workspace";
 import { registeredProjects } from "./projects";
 import { HostService } from "./hosts";
-import { createHandler } from "./http";
+import { createHandler, createUpgrade } from "./http";
+import { groveWebsocket } from "./chord-socket";
 
 const { values } = parseArgs({
   args: Bun.argv.slice(2),
@@ -48,17 +49,24 @@ const service = new HostService(app, {
   name: values.name,
   origin: () => origin,
 });
+const httpOptions = {
+  origin: () => origin,
+  localOrigin: () => localOrigin,
+  service,
+  assets: fileURLToPath(new URL("../dist", import.meta.url)),
+};
+const handler = createHandler(app, httpOptions);
+const upgrade = createUpgrade(app, httpOptions);
 const server = Bun.serve({
   hostname: values.listen,
   port,
   idleTimeout: 0,
   maxRequestBodySize: 1024 * 1024,
-  fetch: createHandler(app, {
-    origin: () => origin,
-    localOrigin: () => localOrigin,
-    service,
-    assets: fileURLToPath(new URL("../dist", import.meta.url)),
-  }),
+  websocket: groveWebsocket,
+  fetch(request, server) {
+    const result = upgrade(request, server);
+    return result === true ? undefined : (result ?? handler(request));
+  },
 });
 console.log(
   values.hub

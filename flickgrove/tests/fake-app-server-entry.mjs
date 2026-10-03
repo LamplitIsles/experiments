@@ -3,7 +3,10 @@
 // CFL supplies `--listen stdio://` to the configured direct app-server.
 // Keep the protocol fake in its own module while making this test-owned entry
 // point behave like a Codex executable.
-import { writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
+
+if (process.env.FAKE_SERVER_PROCESS_LOG)
+  appendFileSync(process.env.FAKE_SERVER_PROCESS_LOG, `${process.pid}\n`);
 
 if (process.env.FAKE_SERVER_ARGS)
   writeFileSync(

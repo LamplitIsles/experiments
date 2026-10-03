@@ -88,9 +88,6 @@
   "unknown_delivery": "Delivery could not be confirmed. Check the conversation before sending again.",
   "more_details": "Details",
   "close": "Close",
-  "reconcile_help": "Check the conversation before confirming whether this message arrived.",
-  "confirm_delivered": "Confirm delivered",
-  "confirm_not_delivered": "Confirm not delivered",
   "fast_mode": "Fast",
   "fast_help": "Faster responses for all new sessions, increased usage.",
   "fast_unavailable": "Unavailable for the selected models.",
@@ -181,5 +178,8 @@
   "open_existing_session": "Open session",
   "restore_resume": "Restore & resume",
   "resume_session": "Resume session",
-  "session_resumed": "Session opened."
+  "session_resumed": "Session opened.",
+  "lookup_help": "The host has not confirmed receipt. Check again after reconnecting; this message will not be sent again automatically.",
+  "check_delivery": "Check receipt",
+  "restore_message": "Restore to draft"
 }

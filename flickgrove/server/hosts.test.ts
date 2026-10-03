@@ -1,3 +1,10 @@
+async function until(check: () => boolean) {
+  const end = Date.now() + 4000;
+  while (!check()) {
+    if (Date.now() > end) throw new Error("Condition timed out");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -5,7 +12,9 @@ import { tmpdir } from "node:os";
 import { Workspace } from "./workspace";
 import { FakeRuntime, fixtureProjects } from "./testing";
 import { HostService, qualify } from "./hosts";
-import { createHandler } from "./http";
+import { createHandler, createUpgrade } from "./http";
+import { groveWebsocket } from "./chord-socket";
+import { callRoute } from "./socket-testing";
 import type { Detail, Snapshot } from "../src/contracts";
 const cleanup: (() => void)[] = [];
 afterEach(() => {
@@ -111,19 +120,65 @@ function fixture(hub: boolean, collision = false) {
     hub,
     name: hub ? "NUC" : "Mac",
     origin: () => origin,
-    pollMs: 60000,
+
     timeoutMs: 150,
   });
   const handler = createHandler(app, { service, origin: () => origin });
   let drop = false;
   let loseResponse: string | null = null;
-  let requestCount = 0;
-  const server = Bun.serve({
+  const responseIds = new Set<string>();
+  const serverOptions = {
+    websocket: {
+      ...groveWebsocket,
+      open(socket: Parameters<typeof groveWebsocket.open>[0]) {
+        const proxy = new Proxy(socket, {
+          get(target, key) {
+            if (key === "send")
+              return (raw: string) => {
+                const frame = JSON.parse(raw);
+                if (frame.type === "result" && responseIds.has(frame.id)) {
+                  responseIds.delete(frame.id);
+                  target.close();
+                  return 1;
+                }
+                return target.send(raw);
+              };
+            const value = Reflect.get(target, key);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        groveWebsocket.open(proxy);
+      },
+      message(
+        socket: Parameters<typeof groveWebsocket.message>[0],
+        raw: string | Buffer,
+      ) {
+        if (typeof raw === "string") {
+          const frame = JSON.parse(raw);
+          if (
+            loseResponse &&
+            frame.call?.member ===
+              (loseResponse.includes("agents") ? "createOrc" : "send")
+          ) {
+            responseIds.add(frame.id);
+            loseResponse = null;
+          }
+        }
+        groveWebsocket.message(socket, raw);
+      },
+    },
     hostname: "127.0.0.1",
     port: 0,
-    fetch: async (req) => {
+    fetch: async (
+      req: Request,
+      server: Parameters<ReturnType<typeof createUpgrade>>[1],
+    ) => {
       if (drop) throw new Error("fixture transport outage");
-      if (req.method !== "GET" && req.url.includes("/messages")) requestCount++;
+      const upgraded = createUpgrade(app, { service, origin: () => origin })(
+        req,
+        server,
+      );
+      if (upgraded) return upgraded === true ? undefined : upgraded;
       const result = await handler(req);
       if (
         loseResponse &&
@@ -134,7 +189,8 @@ function fixture(hub: boolean, collision = false) {
       return result;
     },
     error: () => new Response("unavailable", { status: 503 }),
-  });
+  };
+  let server = Bun.serve(serverOptions);
   origin = `http://127.0.0.1:${server.port}`;
   cleanup.push(() => {
     service.dispose();
@@ -148,6 +204,12 @@ function fixture(hub: boolean, collision = false) {
     token?: string,
     method = "POST",
   ) {
+    if (
+      body !== undefined &&
+      path.startsWith("/api/") &&
+      !path.startsWith("/api/mcp/")
+    )
+      return callRoute(origin, path, body);
     return fetch(origin + path, {
       method: body === undefined ? "GET" : method,
       headers: {
@@ -168,11 +230,17 @@ function fixture(hub: boolean, collision = false) {
     handler,
     setDrop: (value: boolean) => {
       drop = value;
+      if (value) server.stop(true);
+      else
+        server = Bun.serve({
+          ...serverOptions,
+          port: Number(new URL(origin).port),
+        });
     },
     loseResponse: (path = "/messages") => {
       loseResponse = path;
     },
-    count: () => requestCount,
+    count: () => runtime.inputs.length,
   };
 }
 test("execution role is private, identity durable, browser origin and independent MCP authorization stay enforced", async () => {
@@ -345,7 +413,13 @@ test("two-host collision routing, shared defaults, simultaneous answers, outage 
     400,
   );
   peer.setDrop(true);
-  await hub.service.refresh();
+  await until(
+    () =>
+      hub.service
+        .snapshot()
+        .hosts?.find((h) => h.id === peer.service.identity.id)?.connected ===
+      false,
+  );
   expect(
     hub.service.snapshot().hosts?.find((h) => h.id === peer.service.identity.id)
       ?.connected,
@@ -369,7 +443,13 @@ test("two-host collision routing, shared defaults, simultaneous answers, outage 
   ).toBe("pending");
   const before = peer.count();
   peer.setDrop(false);
-  await hub.service.refresh();
+  await until(
+    () =>
+      hub.service
+        .snapshot()
+        .hosts?.find((h) => h.id === peer.service.identity.id)?.connected ===
+      true,
+  );
   expect(peer.count()).toBe(before);
   expect(peer.app.snapshot().settings?.worker.effort).toBe("high");
   expect(
@@ -402,7 +482,6 @@ test("unknown mutation response is not replayed; rejected close preserves connec
     "one",
   )) as Detail;
   expect(result.deliveries[0].status).toBe("uncertain");
-  await hub.service.refresh();
   expect(peer.runtime.inputs).toHaveLength(1);
   await expect(hub.service.closeTree(agent.id)).rejects.toThrow(
     "unconfirmed delivery",
@@ -426,7 +505,7 @@ test("unknown mutation response is not replayed; rejected close preserves connec
   ).rejects.toThrow("synchronize");
 });
 
-test("accepted peer mutation with a lost HTTP response refreshes authority without transport replay", async () => {
+test("accepted peer mutation with a lost socket response refreshes authority without transport replay", async () => {
   const hub = fixture(true);
   const peer = fixture(false);
   await hub.service.register({
@@ -440,7 +519,13 @@ test("accepted peer mutation with a lost HTTP response refreshes authority witho
     hub.service.send(agent.id, "Accepted once", "accepted-once"),
   ).rejects.toThrow("Outcome unknown");
   expect(peer.runtime.inputs).toHaveLength(1);
-  await hub.service.refresh();
+  await until(
+    () =>
+      hub.service
+        .snapshot()
+        .hosts?.find((h) => h.id === peer.service.identity.id)?.connected ===
+      true,
+  );
   const detail = await hub.service.detail(agent.id);
   expect(detail.messages.filter((m) => m.id === "accepted-once")).toHaveLength(
     1,
@@ -448,7 +533,7 @@ test("accepted peer mutation with a lost HTTP response refreshes authority witho
   expect(peer.count()).toBe(1);
 });
 
-test("accepted remote creation with a lost response is unknown and never recreated on refresh", async () => {
+test("accepted remote creation with a lost response is unknown and never recreated on reconnect", async () => {
   const hub = fixture(true);
   const peer = fixture(false);
   await hub.service.register({
@@ -465,7 +550,13 @@ test("accepted remote creation with a lost response is unknown and never recreat
     hub.service.snapshot().hosts?.find((h) => h.id === peer.service.identity.id)
       ?.connected,
   ).toBe(false);
-  await hub.service.refresh();
+  await until(
+    () =>
+      hub.service
+        .snapshot()
+        .hosts?.find((h) => h.id === peer.service.identity.id)?.connected ===
+      true,
+  );
   expect(peer.app.snapshot().agents).toHaveLength(1);
   expect(hub.service.snapshot().agents).toHaveLength(1);
 });
@@ -555,4 +646,47 @@ test("dedicated Close reaches the execution owner, preserves guards and never se
       )
     ).status,
   ).toBe(401);
+});
+
+test("slow native admission times out then reconnects for receipt lookup without replay or host interference", async () => {
+  const hub = fixture(true),
+    peer = fixture(false),
+    other = fixture(false);
+  for (const host of [peer, other])
+    await hub.service.register({
+      name: "Synthetic peer",
+      url: host.origin,
+      credential: host.service.credential,
+    });
+  const a = await hub.service.createOrc("alpha", peer.service.identity.id);
+  const b = await hub.service.createOrc("beta", other.service.identity.id);
+  const held = Promise.withResolvers<string>();
+  peer.runtime.sendOverride = () => held.promise;
+  await expect(
+    hub.service.send(a.id, "Held native input", "slow-once"),
+  ).rejects.toThrow("Outcome unknown");
+  expect(peer.count()).toBe(1);
+  await hub.service.send(b.id, "Independent host", "other-once");
+  expect(other.count()).toBe(1);
+  await until(
+    () =>
+      hub.service
+        .snapshot()
+        .hosts?.find((h) => h.id === peer.service.identity.id)?.connected ===
+      true,
+  );
+  expect(await hub.service.lookup(a.id, "slow-once")).toMatchObject({
+    state: "pending",
+  });
+  held.resolve("native-slow-turn");
+  await until(
+    () => peer.app.detail(a.id.split(":")[1]).deliveries[0]?.status === "sent",
+  );
+  expect(await hub.service.lookup(a.id, "slow-once")).toMatchObject({
+    state: "accepted",
+    operationId: "slow-once",
+  });
+  expect(peer.count()).toBe(1);
+  expect(peer.runtime.interruptions).toHaveLength(0);
+  expect(other.count()).toBe(1);
 });

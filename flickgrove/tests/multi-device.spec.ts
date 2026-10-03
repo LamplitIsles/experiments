@@ -114,7 +114,7 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
     .click();
   await request.post("/fixture/change", { data: { outage: true } });
   await expect(
-    page.getByRole("textbox", { name: "Message Orc" }),
+    page.getByRole("button", { name: "Send message", exact: true }),
   ).toBeDisabled();
   await capture(page, "multi-08");
   await request.post("/fixture/change", { data: { outage: false } });
@@ -130,13 +130,15 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await expect(
     page
       .getByRole("button", { name: "Open Streaming voice input Orc" })
-      .locator(".."),
-  ).toContainText("2 open Workers1 working");
+      .locator("..")
+      .locator(".worker-disclosure"),
+  ).toHaveAttribute("title", "2 open Workers · 1 working");
   await expect(
     page
       .getByRole("button", { name: "Open Reader performance Orc" })
-      .locator(".."),
-  ).toContainText("1 open Workers1 working");
+      .locator("..")
+      .locator(".worker-disclosure"),
+  ).toHaveAttribute("title", "1 open Workers · 1 working");
   await capture(page, "multi-13");
   await page
     .getByRole("button", { name: "Open Streaming voice input Orc" })
@@ -245,14 +247,6 @@ test("two access devices keep independent view/drafts while answers and outages 
       left.getByRole("radio", { name: "Recommended choice" }).check(),
       right.getByRole("radio", { name: "Recommended choice" }).check(),
     ]);
-    let arrivals = 0;
-    const release = Promise.withResolvers<void>();
-    for (const page of [left, right])
-      await page.route("**/api/agents/*/answer", async (route) => {
-        if (++arrivals === 2) release.resolve();
-        await release.promise;
-        await route.continue();
-      });
     await Promise.all([
       left.getByRole("button", { name: "Send answer", exact: true }).click(),
       right.getByRole("button", { name: "Send answer", exact: true }).click(),
@@ -280,9 +274,12 @@ test("two access devices keep independent view/drafts while answers and outages 
     await right
       .getByRole("button", { name: "Open Reader performance Orc" })
       .click();
+    await expect(
+      right.getByRole("heading", { name: "Reader performance", exact: true }),
+    ).toBeVisible();
     await request.post("/fixture/change", { data: { outage: true } });
     await expect(
-      right.getByRole("textbox", { name: "Message Orc" }),
+      right.getByRole("button", { name: "Send message", exact: true }),
     ).toBeDisabled();
     await expect(
       left.getByRole("textbox", { name: "Message Orc" }),
@@ -293,7 +290,7 @@ test("two access devices keep independent view/drafts while answers and outages 
       right.getByRole("heading", { name: "Reader performance", exact: true }),
     ).toBeVisible();
     await expect(
-      right.getByRole("textbox", { name: "Message Orc" }),
+      right.getByRole("button", { name: "Send message", exact: true }),
     ).toBeDisabled();
     await request.post("/fixture/change", { data: { outage: false } });
     await expect(

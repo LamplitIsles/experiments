@@ -2,6 +2,7 @@ import {
   CodexAppServerClient,
   AppServerRpcError,
   AppServerConnectionClosedError,
+  AppServerServerRequestError,
 } from "@jaminzhou/codex-app-server-client";
 import type {
   ReasoningEffort,
@@ -65,8 +66,9 @@ function historySession(thread: v2.Thread, archived: boolean): HistorySession {
 }
 
 export class CodexRuntime implements Runtime {
-  private readonly clients = new Set<CodexAppServerClient>();
-  private catalog?: Promise<CodexAppServerClient>;
+  private managed?: Promise<CodexAppServerClient>;
+  private readonly threads = new Map<string, CodexAppServerClient>();
+  private readonly openingThreads = new Set<string>();
   private catalogModels?: Model[];
   constructor(
     private readonly options: {
@@ -77,53 +79,52 @@ export class CodexRuntime implements Runtime {
     },
   ) {}
 
-  private async client(cwd: string, agent?: RuntimeAgent) {
-    const configOverrides: string[] = [];
-    if (agent) {
-      const script = fileURLToPath(new URL("./mcp.ts", import.meta.url));
-      configOverrides.push(
-        `mcp_servers.flickgrove.command=${JSON.stringify(process.execPath)}`,
-        `mcp_servers.flickgrove.args=${JSON.stringify([script])}`,
-        `mcp_servers.flickgrove.env.FLICKGROVE_ORIGIN=${JSON.stringify(this.options.origin())}`,
-        `mcp_servers.flickgrove.env.FLICKGROVE_AGENT_TOKEN=${JSON.stringify(agent.token)}`,
-        "features.multi_agent=true",
-        "features.multi_agent_v2=true",
-      );
-    }
+  // The promise is assigned before connecting so concurrent agents and catalog
+  // reads share one Grove-owned process. It never attaches to a system daemon.
+  private getCatalog(): Promise<CodexAppServerClient> {
+    if (this.managed) return this.managed;
     const client = new CodexAppServerClient({
-      cwd,
+      cwd: this.options.cwd,
       codexPath: this.options.codexPath ?? "codex",
-      configOverrides,
       clientInfo: { name: "flickgrove", title: "FlickGrove", version: "0.1.0" },
       capabilities: { experimentalApi: true, requestAttestation: false },
       protocolValidation: "strict",
       env: this.options.env,
     });
-    this.clients.add(client);
-    try {
-      await client.connect();
-      return client;
-    } catch (error) {
-      this.clients.delete(client);
-      await client.close();
-      throw error;
-    }
-  }
-  private getCatalog() {
-    return (this.catalog ??= this.client(this.options.cwd)
-      .then((client) => {
-        client.onError((error) => {
-          if (error instanceof AppServerConnectionClosedError) {
-            this.clients.delete(client);
-            this.catalog = undefined;
-          }
-        });
-        return client;
-      })
-      .catch((error) => {
-        this.catalog = undefined;
+    const connecting = client
+      .connect()
+      .then(() => client)
+      .catch(async (error) => {
+        if (this.managed === connecting) this.managed = undefined;
+        await client.close();
         throw error;
-      }));
+      });
+    this.managed = connecting;
+    client.onError((error) => {
+      if (!(error instanceof AppServerConnectionClosedError)) return;
+      if (this.managed === connecting) this.managed = undefined;
+      for (const [id, owner] of this.threads)
+        if (owner === client) this.threads.delete(id);
+    });
+    client.onServerRequest((request) => {
+      const params = request.params;
+      const threadId =
+        params && typeof params === "object" && !Array.isArray(params)
+          ? (params as Record<string, unknown>).threadId
+          : undefined;
+      if (typeof threadId !== "string" || this.threads.get(threadId) !== client)
+        throw new AppServerServerRequestError(
+          "Request has no owned Grove thread",
+          -32602,
+        );
+      // Grove's questions arrive through async agent messages/MCP. There is no
+      // synchronous native approval/tool responder; do not fabricate consumption.
+      throw new AppServerServerRequestError(
+        `Unsupported native request: ${request.method}`,
+        -32601,
+      );
+    });
+    return connecting;
   }
   async models(): Promise<Model[]> {
     const client = await this.getCatalog();
@@ -324,15 +325,26 @@ export class CodexRuntime implements Runtime {
     agent: RuntimeAgent,
     notify: (event: RuntimeEvent) => void,
   ): Promise<RuntimeHandle> {
-    const client = await this.client(agent.project.path, agent);
+    const client = await this.getCatalog();
+    if (
+      agent.threadId &&
+      (this.threads.has(agent.threadId) ||
+        this.openingThreads.has(agent.threadId))
+    )
+      throw new Error("This session already has an active Grove handle.");
+    if (agent.threadId) this.openingThreads.add(agent.threadId);
+    let closed = false;
     let threadId = agent.threadId;
     let threadName: string | null = null;
     let titleGeneration: AbortController | undefined;
+    const dispatch = (event: RuntimeEvent) => {
+      if (!closed) notify(event);
+    };
     const off = [
       client.onError((error) => {
         if (error instanceof AppServerConnectionClosedError) {
-          this.clients.delete(client);
-          notify({
+          titleGeneration?.abort();
+          dispatch({
             type: "disconnected",
             error:
               "App-server disconnected. Send a message to resume the thread.",
@@ -341,12 +353,12 @@ export class CodexRuntime implements Runtime {
       }),
       client.onNotification("turn/started", (p) => {
         if (p.threadId === threadId)
-          notify({ type: "working", turnId: p.turn.id });
+          dispatch({ type: "working", turnId: p.turn.id });
       }),
       client.onNotification("item/completed", (p) => {
         if (p.threadId !== threadId || p.item.type !== "agentMessage") return;
         const item = p.item;
-        notify({
+        dispatch({
           type: "item",
           turnId: p.turnId,
           item: {
@@ -364,7 +376,7 @@ export class CodexRuntime implements Runtime {
       }),
       client.onNotification("turn/completed", (p) => {
         if (p.threadId === threadId)
-          notify({
+          dispatch({
             type: "completed",
             turnId: p.turn.id,
             status: p.turn.status,
@@ -373,7 +385,7 @@ export class CodexRuntime implements Runtime {
       }),
       client.onNotification("error", (p) => {
         if (p.threadId === threadId && !p.willRetry)
-          notify({ type: "error", error: p.error.message });
+          dispatch({ type: "error", error: p.error.message });
       }),
     ];
     const roleInstructions =
@@ -389,6 +401,21 @@ export class CodexRuntime implements Runtime {
       approvalPolicy: "never" as const,
       sandbox: "danger-full-access" as const,
       developerInstructions: roleInstructions,
+      config: {
+        ...(agent.inheritSettings
+          ? {}
+          : { model_reasoning_effort: agent.effort }),
+        "features.multi_agent": true,
+        "features.multi_agent_v2": true,
+        "mcp_servers.flickgrove": {
+          command: process.execPath,
+          args: [fileURLToPath(new URL("./mcp.ts", import.meta.url))],
+          env: {
+            FLICKGROVE_ORIGIN: this.options.origin(),
+            FLICKGROVE_AGENT_TOKEN: agent.token,
+          },
+        },
+      },
     };
     let historyCursor: string | undefined;
     let resumedSettings: {
@@ -408,9 +435,9 @@ export class CodexRuntime implements Runtime {
         : await client.threadStart({
             ...params,
             historyMode: "paginated",
-            config: { model_reasoning_effort: agent.effort },
           });
       threadId = response.thread.id;
+      this.threads.set(threadId, client);
       threadName = response.thread.name;
       if (
         "itemsBackwardsCursor" in response &&
@@ -432,8 +459,10 @@ export class CodexRuntime implements Runtime {
       };
     } catch (error) {
       off.forEach((f) => f());
-      await client.close();
-      this.clients.delete(client);
+      if (threadId && this.threads.get(threadId) === client) {
+        this.threads.delete(threadId);
+        await client.call("thread/unsubscribe", { threadId }).catch(() => {});
+      }
       if (
         error instanceof AppServerRpcError &&
         /already has an active writer/i.test(error.message)
@@ -442,6 +471,8 @@ export class CodexRuntime implements Runtime {
           "This session is in use by another Codex instance. Close it there, then retry.",
         );
       throw error;
+    } finally {
+      if (agent.threadId) this.openingThreads.delete(agent.threadId);
     }
     const id = threadId!;
     return {
@@ -517,15 +548,23 @@ export class CodexRuntime implements Runtime {
         );
       },
       close: async () => {
+        if (closed) return;
+        titleGeneration?.abort();
+        // Native unsubscribe releases this thread's subscription and lets Codex
+        // unload it. Other threads keep their client, turns and notifications.
+        if (this.threads.get(id) === client) {
+          await client.call("thread/unsubscribe", { threadId: id });
+          this.threads.delete(id);
+        }
+        closed = true;
         off.forEach((f) => f());
-        await client.close();
-        this.clients.delete(client);
       },
     };
   }
   async close() {
-    await Promise.allSettled([...this.clients].map((client) => client.close()));
-    this.clients.clear();
-    this.catalog = undefined;
+    const managed = this.managed;
+    this.managed = undefined;
+    this.threads.clear();
+    if (managed) await managed.then((client) => client.close()).catch(() => {});
   }
 }

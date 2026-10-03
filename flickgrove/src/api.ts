@@ -1,9 +1,20 @@
+import type { GroveClient } from "./chord-client";
+import { routeCall } from "./chord-contract";
+let client: GroveClient | undefined;
+export function setClient(value: GroveClient | undefined) {
+  client = value;
+}
 export const storagePrefix = `flickgrove/${location.origin}`;
 export async function api<T>(
   path: string,
   body?: unknown,
   method = "POST",
 ): Promise<T> {
+  if (body !== undefined) {
+    if (!client) throw new Error("Connection offline. Outcome unknown.");
+    const call = routeCall(path, body);
+    return client.call<T>(call.member, call.input);
+  }
   const response = await fetch(`/api${path}`, {
     method: body === undefined ? "GET" : method,
     headers: { "Content-Type": "application/json" },

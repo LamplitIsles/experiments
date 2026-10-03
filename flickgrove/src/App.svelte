@@ -12,7 +12,10 @@
   import { storagePrefix } from "./api";
   import { onMount, tick } from "svelte";
   import type { Agent, Detail, HistorySession, Model, Project, Settings, Skill, Snapshot } from "./contracts";
-  import { api, editable } from "./api";
+  import { api, editable, setClient } from "./api";
+  import { openGrove, type GroveClient } from "./chord-client";
+  import { receiptSchema, type Receipt } from "./chord-contract";
+  import { addOutgoing, observeOutgoing, outgoing, withOutgoing, acceptReceipt, unknownOutgoing } from "./outgoing.svelte";
   import HostFilter from "./HostFilter.svelte";
   import Hosts from "./Hosts.svelte";
   import Weekly from "./Weekly.svelte";
@@ -21,6 +24,7 @@
   import SessionHistory from "./SessionHistory.svelte";
   import * as m from "./paraglide/messages";
 
+  let client: GroveClient | undefined;
   let snapshot = $state<Snapshot>({ agents: [], settings: null, revision: 0 });
   let selectedId = $state<string | null>(localStorage.getItem(`${storagePrefix}/selected`));
   let detail = $state<Detail | null>(null); let skills = $state<Skill[]>([]);
@@ -33,6 +37,7 @@
   let install = $state<(Event & { prompt: () => Promise<void> }) | null>(null);
   let hostFilter = $state(localStorage.getItem(`${storagePrefix}/host-filter`) ?? "");
   let createHost = $state(""); let catalogSequence = 0;
+  const shownDetail = $derived(detail ? withOutgoing(detail) : null);
   const hosts = $derived(snapshot.hosts ?? []);
   const selectedHost = $derived(hosts.find(h => h.id === detail?.hostId));
   const hostConnected = $derived(connected && (!selectedHost || selectedHost.connected));
@@ -52,7 +57,7 @@
   function closeDetail() { void back(); }
   $effect(() => {
     const id = navigation.details.at(-1) ?? null;
-    if (id !== selectedId) { ++sequence; selectedId = id; detail = null; skills = []; error = ""; if (id) void restoreDetail(id); else localStorage.removeItem(`${storagePrefix}/selected`); }
+    if (id !== selectedId) { ++sequence; selectedId = id; detail = null; skills = []; error = ""; if (id) void restoreDetail(id); else { localStorage.removeItem(`${storagePrefix}/selected`); void client?.call("select", {ids:[]}).catch(() => {}); } }
   });
   $effect(() => {
     const kind = navigation.surfaces.find(s => s === "new" || s === "settings" || s === "keys") ?? null;
@@ -62,7 +67,7 @@
     const seq = ++sequence;
     try {
       const result = await api<Detail>(`/agents/${id}`);
-      if (selectedId === id && seq === sequence) { detail = result; localStorage.setItem(`${storagePrefix}/detail/${id}`, JSON.stringify(result)); }
+      if (selectedId === id && seq === sequence) { observeOutgoing(result); detail = result; localStorage.setItem(`${storagePrefix}/detail/${id}`, JSON.stringify(result)); }
     } catch (e) { if (selectedId === id && seq === sequence && connected) error = e instanceof Error ? e.message : m.load_failure(); }
   }
   function open(id: string, fromDetail = false) { openConversation(id, fromDetail, snapshot.agents.find(a => a.id === id)?.ownerId); }
@@ -70,7 +75,7 @@
     error = ""; selectedId = id; localStorage.setItem(`${storagePrefix}/selected`, id);
     const cached = localStorage.getItem(`${storagePrefix}/detail/${id}`); detail = cached ? JSON.parse(cached) : null; skills = [];
     if (connected) {
-      await refreshDetail(id);
+      void client?.call('select', {ids:[id]}).catch(e => { if(selectedId === id) error = e instanceof Error ? e.message : m.load_failure(); });
       if (snapshot.agents.find(a => a.id === id)?.role === "orc" && hosts.find(h => h.id === snapshot.agents.find(a => a.id === id)?.hostId)?.connected) {
         try { const list = await api<Skill[]>(`/agents/${id}/skills`); if (selectedId === id) skills = list; }
         catch (e) { if (selectedId === id) error = e instanceof Error ? e.message : m.load_failure(); }
@@ -85,13 +90,13 @@
     value = { ...value, agents: [...value.agents, ...retained], hosts: value.hosts?.map(h => !h.connected && !h.lastSeen ? { ...h, lastSeen: snapshot.hosts?.find(old => old.id === h.id)?.lastSeen } : h) };
     snapshot = value; localStorage.setItem(`${storagePrefix}/snapshot`, JSON.stringify(value));
     validateNavigation(new Set(value.agents.map(a => a.id)));
-    if (selectedId && value.agents.some(a => a.id === selectedId)) void refreshDetail(selectedId);
+
   }
   async function load() {
     loading = true; error = "";
     try {
       const [state, registered, catalog] = await Promise.all([api<Snapshot>("/snapshot"), api<Project[]>("/projects"), api<Model[]>("/models")]);
-      connected = true; projects = registered; models = catalog; adopt(state, true);
+      projects = registered; models = catalog; if(!connected) adopt(state, true);
       if (selectedId) await restoreDetail(selectedId);
     } catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { loading = false; }
@@ -144,13 +149,34 @@
     catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { saving = false; }
   }
-  async function send(text: string, requestId: string) {
-    if (!selectedId || !hostConnected) return false; error = ""; const id = selectedId;
+  async function lookup(agentId: string, operationId: string) {
+    if(!client || !connected || hosts.find(h => h.id === agentId.split(':')[0])?.connected === false) return;
+    try { acceptReceipt(agentId, receiptSchema.parse(await client.call<Receipt>('lookup',{id:agentId,operationId}))); }
+    catch(e) { unknownOutgoing(agentId,operationId,e instanceof Error?e.message:m.load_failure()); }
+  }
+  async function retryDelivery(operationId: string) {
+    if (!selectedId || !hostConnected || !client) return;
+    try { await client.call("retryDelivery", {id:selectedId,deliveryId:operationId}); }
+    catch(e) { error = e instanceof Error ? e.message : m.load_failure(); }
+  }
+  async function reconcilePending() {
+    for(const pending of outgoing.entries) if(pending.status === 'uncertain') void lookup(pending.agentId,pending.id);
+  }
+  async function send(text: string, operationId: string) {
+    if (!selectedId || !hostConnected || !client) return false;
+    const id = selectedId; const connection = client;
+    addOutgoing(id,text,operationId);
     try {
-      const result = await api<Detail>(`/agents/${id}/messages`, { text, requestId });
-      if (selectedId === id) detail = result;
-      return result.deliveries.find(d => d.id === requestId)?.status === "sent";
-    } catch (e) { error = e instanceof Error ? e.message : m.load_failure(); return false; }
+      const result = await connection.call<Detail>('send',{id,text,operationId});
+      observeOutgoing(result);
+      // Only replicated detail updates may replace visible state; RPC replies may be older.
+      const delivery = result.deliveries.find(d => d.id === operationId);
+      if(!delivery) unknownOutgoing(id,operationId,m.unknown_delivery());
+    } catch(e) {
+      unknownOutgoing(id,operationId,e instanceof Error?e.message:m.load_failure());
+    }
+    void lookup(id,operationId);
+    return true;
   }
   let closingId = $state<string | null>(null);
   let closeError = $state<{ id: string; reason: string } | null>(null);
@@ -187,12 +213,6 @@
     try { const result = await api<Detail>(`/agents/${id}/answer`, { questionId, answer: text }); if (selectedId === id) detail = result; return result.questions.find(q => q.id === questionId)?.state === "answered"; }
     catch (e) { error = e instanceof Error ? e.message : m.load_failure(); return false; }
   }
-  async function reconcile(deliveryId: string, accepted: boolean) {
-    if (!selectedId || !hostConnected) return;
-    const id = selectedId;
-    try { const result = await api<Detail>(`/agents/${id}/reconcile`, { deliveryId, accepted }); if (selectedId === id) detail = result; }
-    catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
-  }
   function keydown(event: KeyboardEvent) {
     if (event.defaultPrevented || event.isComposing) return;
     if (event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && event.code === "KeyX") {
@@ -220,17 +240,43 @@
     const cachedDetail = selectedId && localStorage.getItem(`${storagePrefix}/detail/${selectedId}`); if (cachedDetail) detail = JSON.parse(cachedDetail);
     const cleanupNavigation = initializeNavigation(selectedId);
     void load();
-    const events = new EventSource("/api/events"); let baseline = true;
-    events.onopen = () => { connected = true; baseline = true; };
-    events.onmessage = event => { const next = JSON.parse(event.data) as Snapshot; if (!baseline) notifications(snapshot, next); adopt(next, baseline); baseline = false; };
-    events.onerror = () => { connected = false; };
+    let disposed = false; let generation = 0; let reconnect: ReturnType<typeof setTimeout> | undefined;
+    const connect = async () => {
+      const gen = ++generation; let baseline = true;
+      const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/socket`);
+      const offline = () => {
+        if(disposed || gen !== generation) return;
+        connected = false; client = undefined; setClient(undefined);
+        for(const pending of outgoing.entries) if(pending.status === 'sending') unknownOutgoing(pending.agentId,pending.id,m.unknown_delivery());
+        clearTimeout(reconnect); reconnect = setTimeout(() => { void connect(); },1000);
+      };
+      try {
+        const next = await openGrove(socket, value => {
+          if(disposed || gen !== generation) return;
+          connected = true;
+          if(!baseline) notifications(snapshot,value.snapshot);
+          const wasAvailable = selectedId && snapshot.hosts?.find(h => h.id === snapshot.agents.find(a => a.id === selectedId)?.hostId)?.connected;
+          adopt(value.snapshot,baseline); baseline = false;
+          const nowAvailable = selectedId && value.snapshot.hosts?.find(h => h.id === value.snapshot.agents.find(a => a.id === selectedId)?.hostId)?.connected;
+          if(selectedId && !wasAvailable && nowAvailable && client) void client.call("select",{ids:[selectedId]}).catch(() => {});
+          const incoming = selectedId && value.details[selectedId];
+          if(incoming) { observeOutgoing(incoming);detail = incoming;localStorage.setItem(`${storagePrefix}/detail/${incoming.id}`,JSON.stringify(incoming)); }
+          void reconcilePending();
+        },offline);
+        if(disposed || gen !== generation) {next.close();return;}
+        client = next; setClient(next); connected = true;
+        if(selectedId) await restoreDetail(selectedId);
+        void reconcilePending();
+      } catch { offline(); }
+    };
+    void connect();
     const timer = setInterval(() => now = Date.now(), 1000);
     const permission = () => { if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission().catch(() => {}); };
     const completionTab = (e: KeyboardEvent) => { if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey) e.preventDefault(); };
     window.addEventListener("keydown", completionTab, true);
     const installer = (e: Event) => { e.preventDefault(); install = e as Event & { prompt: () => Promise<void> }; };
     window.addEventListener("pointerdown", permission, { once: true }); window.addEventListener("keydown", permission, { once: true }); window.addEventListener("keydown", keydown); window.addEventListener("beforeinstallprompt", installer);
-    return () => { cleanupNavigation(); window.removeEventListener("keydown", completionTab, true); events.close(); clearInterval(timer); window.removeEventListener("pointerdown", permission); window.removeEventListener("keydown", permission); window.removeEventListener("keydown", keydown); window.removeEventListener("beforeinstallprompt", installer); };
+    return () => { cleanupNavigation(); window.removeEventListener("keydown", completionTab, true); disposed = true; ++generation; clearTimeout(reconnect); client?.close(); setClient(undefined); clearInterval(timer); window.removeEventListener("pointerdown", permission); window.removeEventListener("keydown", permission); window.removeEventListener("keydown", keydown); window.removeEventListener("beforeinstallprompt", installer); };
   });
 </script>
 
@@ -244,7 +290,7 @@
   {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !detail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
   {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
   {#if error && !modal && !detail}<div class="app-error" role="alert"><span>{error}</span><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => error = ""}><X /></Button></div>{/if}
-  {#if detail && selectedId}{#key detail.id}<AgentDetail {detail} {owner} {skills} {now} connected={hostConnected} onstop={stop} onrename={rename} onrefresh={load} actionError={error} closeError={closeError?.id === detail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answer} onreconcile={reconcile} />{/key}{/if}
+  {#if detail && selectedId}{#key detail.id}<AgentDetail detail={shownDetail!} {owner} {skills} {now} connected={hostConnected} onstop={stop} onrename={rename} onrefresh={load} actionError={error} closeError={closeError?.id === detail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answer} onretry={retryDelivery} onlookup={operationId => selectedId ? lookup(selectedId,operationId) : Promise.resolve()} />{/key}{/if}
 </main>
 
 <Dialog.Root open={modalOpen} onOpenChange={value => { if (!value && modal) void closeModal(); }}>

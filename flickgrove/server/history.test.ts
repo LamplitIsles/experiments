@@ -286,25 +286,38 @@ test("existing Orc history overlays captured turns across pages and retains exte
   }
 });
 
-test("a failed handle close cannot be reused to report a successful restore", async () => {
+test("a failed native release preserves the active writer until Close is retried", async () => {
   const { app, runtime } = fixture();
   const open = runtime.open.bind(runtime);
+  let fail = true,
+    opens = 0;
   runtime.open = async (...args) => {
+    opens++;
     const handle = await open(...args);
     return {
       ...handle,
       close: async () => {
-        runtime.lockedThreads.add(handle.threadId);
-        throw new Error("Writer shutdown unconfirmed");
+        if (fail) throw new Error("Writer shutdown unconfirmed");
+        await handle.close();
       },
     };
   };
   const orc = await app.createOrc("alpha");
   await expect(app.closeTree(orc.id)).rejects.toThrow("shutdown unconfirmed");
-  await expect(
-    app.resumeHistory("alpha", orc.threadId!, false),
-  ).rejects.toThrow("another Codex instance");
+  expect((await app.resumeHistory("alpha", orc.threadId!, false)).id).toBe(
+    orc.id,
+  );
+  expect(opens).toBe(1);
+  expect(app.snapshot().agents).toHaveLength(1);
+  expect(runtime.listeners.has(orc.id)).toBe(true);
+  fail = false;
+  await app.closeTree(orc.id);
   expect(app.snapshot().agents).toHaveLength(0);
+  expect((await app.resumeHistory("alpha", orc.threadId!, false)).id).toBe(
+    orc.id,
+  );
+  expect(opens).toBe(2);
+  expect(runtime.inputs).toHaveLength(0);
 });
 
 test("directory aliases can search, preview and resume, but a different directory is rejected", async () => {

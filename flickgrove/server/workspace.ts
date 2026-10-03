@@ -39,6 +39,8 @@ export class Workspace {
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly opening = new Map<string, Promise<RuntimeHandle>>();
   private readonly completedTurns = new Set<string>();
+  private readonly closingWorkers = new Set<string>();
+  private readonly failedWorkerCloses = new Set<string>();
   private disposed = false;
   constructor(
     private readonly options: {
@@ -434,8 +436,8 @@ export class Workspace {
         throw new Error("Session does not belong to this project directory");
       if (existing?.role === "worker")
         throw new Error("Continue this Worker through its original Orc");
-      if (existing && !existing.closed) return this.publicAgent(existing);
       const restore = async () => {
+        if (existing && !existing.closed) return this.publicAgent(existing);
         const session = await this.historySession(alias, threadId);
         if (session.role === "worker")
           throw new Error("Continue this Worker through its original Orc");
@@ -685,6 +687,7 @@ export class Workspace {
           at: d.at,
         });
       d.status = "sent";
+      d.turnId = turnId;
       for (const q of a.questions)
         if (questionIds.includes(q.id)) q.state = "answered";
       this.save();
@@ -721,12 +724,57 @@ export class Workspace {
     }
     return this.detail(a.id);
   }
-  send(id: string, text: string, requestId: string) {
-    return this.serialize(id, () => {
+  retryDelivery(id: string, deliveryId: string) {
+    return this.serialize(id, async () => {
       const a = this.agent(id);
-      if (a.state === "stopping")
-        throw new Error("Wait for the observed turn outcome before sending");
+      const d = a.deliveries.find((d) => d.id === deliveryId);
+      if (!d || d.source === "user" || d.status !== "failed")
+        throw new Error("Only a rejected report or answer can be retried");
+      return this.deliver(a, d.text, d.id, d.source, d.questionIds);
+    });
+  }
+  lookup(id: string, operationId: string) {
+    const a = this.state.agents.find((a) => a.id === id);
+    if (!a) throw new Error("Agent not found");
+    const d = a.deliveries.find((d) => d.id === operationId);
+    return {
+      operationId,
+      state: !d
+        ? ("missing" as const)
+        : d.status === "sent"
+          ? ("accepted" as const)
+          : d.status === "failed"
+            ? ("rejected" as const)
+            : d.status === "uncertain"
+              ? ("uncertain" as const)
+              : ("pending" as const),
+      turnId: d?.turnId ?? null,
+      error: d?.error ?? null,
+    };
+  }
+  send(id: string, text: string, requestId: string) {
+    return this.serialize(id, async () => {
+      const a = this.agent(id);
       if (a.role !== "orc") throw new Error("Send instructions through Orc");
+      const previous = a.deliveries.find((d) => d.id === requestId);
+      if (previous) {
+        if (previous.text !== text || previous.source !== "user")
+          throw new Error("Operation ID is bound to different content");
+        return this.detail(id);
+      }
+      if (a.state === "stopping") {
+        a.deliveries.push({
+          id: requestId,
+          text,
+          source: "user",
+          status: "failed",
+          questionIds: [],
+          at: Date.now(),
+          error: "Wait for the observed turn outcome before sending",
+        });
+        this.save();
+        return this.detail(id);
+      }
       return this.deliver(a, text, requestId, "user");
     });
   }
@@ -742,11 +790,11 @@ export class Workspace {
           `Ask Orc to close its Workers first: ${workers.map((w) => w.title).join(", ")}`,
         );
       this.assertIdle(a);
+      const handle = this.handles.get(id);
+      await handle?.close();
+      this.handles.delete(id);
       a.closed = true;
       this.save();
-      const handle = this.handles.get(id);
-      this.handles.delete(id);
-      await handle?.close();
       return { closed: true as const, id };
     });
   }
@@ -776,32 +824,6 @@ export class Workspace {
         this.save();
       }
       return { ...result, questions: structuredClone(a.questions) };
-    });
-  }
-  reconcile(id: string, deliveryId: string, accepted: boolean) {
-    return this.serialize(id, async () => {
-      const a = this.agent(id);
-      const d = a.deliveries.find((d) => d.id === deliveryId);
-      if (!d || d.status !== "uncertain")
-        throw new Error("Unconfirmed delivery not found");
-      d.status = accepted ? "sent" : "failed";
-      d.error = accepted
-        ? undefined
-        : "You confirmed this message was not delivered. It can be retried.";
-      if (accepted) {
-        if (!a.messages.some((m) => m.id === d.id))
-          a.messages.push({ id: d.id, role: "user", text: d.text, at: d.at });
-        for (const q of a.questions)
-          if (d.questionIds.includes(q.id)) {
-            q.state = "answered";
-            q.answer =
-              d.source === "question"
-                ? d.text.slice(d.text.indexOf("\nAnswer: ") + 9)
-                : d.text;
-          }
-      }
-      this.save();
-      return this.detail(id);
     });
   }
   skills(id: string) {
@@ -921,8 +943,9 @@ export class Workspace {
           reason: "Waiting for current work to finish",
         };
         if (input.confirmInterrupted) w.turnEnded = true;
+        this.failedWorkerCloses.delete(w.id);
         this.save();
-        this.advanceWorkerCloses();
+        await this.advanceWorkerCloses();
         return {
           closed: w.closed,
           closing: !w.closed,
@@ -960,11 +983,19 @@ export class Workspace {
       this.deliver(this.agent(owner.id), text, requestId, "worker"),
     );
   }
-  private advanceWorkerCloses() {
+  private async advanceWorkerCloses() {
     if (this.disposed) return;
     let changed = false;
+    const releases: Promise<void>[] = [];
     for (const w of this.state.agents) {
-      if (w.role !== "worker" || w.closed || !w.closeRequest) continue;
+      if (
+        w.role !== "worker" ||
+        w.closed ||
+        !w.closeRequest ||
+        this.closingWorkers.has(w.id) ||
+        this.failedWorkerCloses.has(w.id)
+      )
+        continue;
       let reason: string | undefined;
       if (this.queues.has(w.id) || this.opening.has(w.id))
         reason = "Waiting for in-flight Worker operations";
@@ -982,7 +1013,7 @@ export class Workspace {
           )
       )
         reason =
-          "Waiting for report delivery to Orc; retry or reconcile unconfirmed reports";
+          "Waiting for report delivery to Orc; retry rejected reports or inspect unconfirmed delivery";
       else if (w.questions.some((q) => q.state !== "answered"))
         reason = "Waiting for answers to delegated questions";
       else if (
@@ -1001,13 +1032,27 @@ export class Workspace {
         }
         continue;
       }
-      w.closed = true;
-      changed = true;
-      const handle = this.handles.get(w.id);
-      this.handles.delete(w.id);
-      void handle?.close().catch(() => {});
+      this.closingWorkers.add(w.id);
+      releases.push(
+        (async () => {
+          try {
+            await this.handles.get(w.id)?.close();
+            if (this.disposed) return;
+            this.handles.delete(w.id);
+            w.closed = true;
+          } catch (error) {
+            if (this.disposed) return;
+            this.failedWorkerCloses.add(w.id);
+            w.closeRequest!.reason = `Native thread release failed: ${String(error)}. Retry Worker close.`;
+          } finally {
+            this.closingWorkers.delete(w.id);
+            this.save();
+          }
+        })(),
+      );
     }
     if (changed) this.save();
+    await Promise.all(releases);
   }
   private assertIdle(a: RuntimeAgent) {
     if (

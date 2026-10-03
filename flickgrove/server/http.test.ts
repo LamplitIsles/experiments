@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Workspace } from "./workspace";
 import { HostService } from "./hosts";
-import { createHandler } from "./http";
+import { createHandler, createUpgrade } from "./http";
+import { groveWebsocket } from "./chord-socket";
+import { callRoute } from "./socket-testing";
 import { FakeRuntime, fixtureProjects } from "./testing";
 
 let dispose: () => void;
@@ -30,18 +32,39 @@ test("local API creates a session, preserves work across visits and rejects fore
     service,
     origin: () => "http://127.0.0.1:4321",
   });
+  let address = "";
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    websocket: groveWebsocket,
+    fetch: (req, server) => {
+      const upgraded = createUpgrade(app, { service, origin: () => address })(
+        req,
+        server,
+      );
+      return upgraded === true ? undefined : (upgraded ?? fetch(req));
+    },
+  });
+  address = `http://127.0.0.1:${server.port}`;
+  const previousDispose = dispose;
+  dispose = () => {
+    server.stop(true);
+    previousDispose();
+  };
   const request = (
     path: string,
     body?: unknown,
     origin = "http://127.0.0.1:4321",
   ) =>
-    fetch(
-      new Request(`http://127.0.0.1:4321${path}`, {
-        method: body ? "POST" : "GET",
-        headers: { origin, "Content-Type": "application/json" },
-        ...(body ? { body: JSON.stringify(body) } : {}),
-      }),
-    );
+    body && origin === "http://127.0.0.1:4321"
+      ? callRoute(address, path, body)
+      : fetch(
+          new Request(`http://127.0.0.1:4321${path}`, {
+            method: body ? "POST" : "GET",
+            headers: { origin, "Content-Type": "application/json" },
+            ...(body ? { body: JSON.stringify(body) } : {}),
+          }),
+        );
   expect(
     (await request("/api/agents", { project: "alpha" }, "https://evil.example"))
       .status,
@@ -51,7 +74,7 @@ test("local API creates a session, preserves work across visits and rejects fore
   const agent = (await response.json()) as { id: string };
   await request(`/api/agents/${agent.id}/messages`, {
     text: "Build a reader",
-    requestId: "first",
+    operationId: "first",
   });
   const secondVisit = (await (await request("/api/snapshot")).json()) as {
     agents: { state: string; token?: string }[];

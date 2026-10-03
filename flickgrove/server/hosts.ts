@@ -17,6 +17,25 @@ import type {
 } from "../src/contracts";
 import type { Workspace } from "./workspace";
 
+import {
+  openGrove,
+  RequestRejected,
+  type GroveClient,
+} from "../src/chord-client";
+import {
+  routeCall,
+  detailSchema,
+  receiptSchema,
+  type View,
+} from "../src/chord-contract";
+
+type Link = {
+  client?: GroveClient;
+  socket?: WebSocket;
+  connecting?: Promise<void>;
+  timer?: ReturnType<typeof setTimeout>;
+  generation: number;
+};
 type Peer = { id: string; name: string; url: string; credential: string };
 type PrivateState = {
   id: string;
@@ -25,7 +44,7 @@ type PrivateState = {
   defaults: Settings | null;
 };
 type Cache = { host: Host; snapshot?: Snapshot; details: Map<string, Detail> };
-class PeerRejected extends Error {}
+
 export const qualify = (host: string, id: string) => `${host}:${id}`;
 function qualified<T extends Agent>(host: Host, a: T): T {
   // Whitelist public fields at the execution boundary, including when a peer
@@ -80,8 +99,9 @@ export class HostService {
   private configuring: Promise<unknown> = Promise.resolve();
   private initializing?: Promise<void>;
   private readonly syncing = new Map<string, Promise<void>>();
-  private refreshing?: Promise<void>;
-  private timer?: ReturnType<typeof setInterval>;
+  private readonly links = new Map<string, Link>();
+  private readonly observed = new Map<string, number>();
+  private disposed = false;
   constructor(
     readonly workspace: Workspace,
     readonly options: {
@@ -90,7 +110,6 @@ export class HostService {
       name?: string;
       origin: () => string;
       timeoutMs?: number;
-      pollMs?: number;
     },
   ) {
     mkdirSync(options.directory, { recursive: true, mode: 0o700 });
@@ -113,11 +132,8 @@ export class HostService {
     if (options.hub) {
       for (const peer of this.state.peers)
         this.caches.set(peer.id, this.empty(peer));
-      this.timer = setInterval(
-        () => void this.refresh(),
-        options.pollMs ?? 3000,
-      );
-      void this.refresh();
+      for (const peer of this.state.peers)
+        void this.connect(peer).catch(() => {});
     }
   }
   private persist() {
@@ -192,36 +208,140 @@ export class HostService {
     peer: Peer,
     path: string,
     body?: unknown,
-    method = "POST",
+    _method = "POST",
   ): Promise<T> {
-    const response = await fetch(`${peer.url}/execution${path}`, {
-      method: body === undefined ? "GET" : method,
-      redirect: "error",
-      signal: AbortSignal.timeout(this.options.timeoutMs ?? 4000),
+    await this.connect(peer);
+    const client = this.links.get(peer.id)?.client;
+    if (!client) throw new Error("Execution host unavailable");
+    const call = routeCall(path, body);
+    return client.call<T>(call.member, call.input);
+  }
+  private connect(peer: Peer): Promise<void> {
+    let link = this.links.get(peer.id);
+    if (!link) {
+      link = { generation: 0 };
+      this.links.set(peer.id, link);
+    }
+    if (link.client) return Promise.resolve();
+    if (link.connecting) return link.connecting;
+    clearTimeout(link.timer);
+    const current = link;
+    const generation = ++current.generation;
+    const url = new URL("/execution/socket", peer.url);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    const socket = new (WebSocket as unknown as {
+      new (url: URL, options: { headers: Record<string, string> }): WebSocket;
+    })(url, {
       headers: {
         Authorization: `Bearer ${peer.credential}`,
-        "Content-Type": "application/json",
+        "Grove-Host": peer.id,
       },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      if (response.status >= 500) throw new Error("Execution host unavailable");
-      throw new PeerRejected(
-        response.status === 401
-          ? "Host authorization failed"
-          : (body.error ?? "Execution host rejected the request"),
+    current.socket = socket;
+    const offline = () => {
+      if (this.disposed || generation !== current.generation) return;
+      current.client = undefined;
+      const cache = this.caches.get(peer.id);
+      if (cache) {
+        cache.host.connected = false;
+        cache.host.error = "Host disconnected. Reconnecting automatically.";
+        this.publish();
+      }
+      current.timer = setTimeout(() => {
+        void this.connect(peer).catch(() => {});
+      }, 1000);
+    };
+    let latest: View | undefined;
+    current.connecting = (async () => {
+      const client = await openGrove(
+        socket,
+        (value) => {
+          if (generation !== current.generation || this.disposed) return;
+          latest = value;
+          if (current.client) this.adoptPeer(peer, value);
+        },
+        offline,
+        this.options.timeoutMs ?? 4000,
       );
-    }
-    return (await response.json()) as T;
+      const identity = await client.call<{ id: string; role: string }>(
+        "identity",
+        {},
+      );
+      if (identity.id !== peer.id || identity.role !== "execution") {
+        client.close();
+        throw new Error("Host identity changed or invalid execution role");
+      }
+      if (generation !== current.generation || this.disposed) {
+        client.close();
+        return;
+      }
+      current.client = client;
+      if (latest) this.adoptPeer(peer, latest);
+      await this.selectPeer(peer);
+      const cache = this.caches.get(peer.id);
+      if (cache) void this.sync(peer, cache).then(() => this.publish());
+    })()
+      .catch((error) => {
+        socket.close();
+        offline();
+        throw error;
+      })
+      .finally(() => {
+        current.connecting = undefined;
+      });
+    return current.connecting;
   }
-  private async verify(peer: Peer) {
-    const identity = await this.request<{ id: string; role: string }>(
-      peer,
-      "/identity",
+  private adoptPeer(peer: Peer, value: View) {
+    const cache = this.caches.get(peer.id);
+    if (!cache) return;
+    cache.snapshot = value.snapshot;
+    for (const [id, detail] of Object.entries(value.details))
+      cache.details.set(id, detail);
+    for (const id of cache.details.keys())
+      if (!value.snapshot.agents.some((a) => a.id === id))
+        cache.details.delete(id);
+    cache.host.connected = true;
+    cache.host.lastSeen = Date.now();
+    cache.host.error = undefined;
+    this.publish();
+  }
+  private selectPeer(peer: Peer) {
+    const ids = [...this.observed.keys()]
+      .filter((id) => id.startsWith(peer.id + ":"))
+      .map((id) => id.slice(peer.id.length + 1));
+    return (
+      this.links.get(peer.id)?.client?.call("select", { ids }) ??
+      Promise.resolve()
     );
+  }
+  observe(ids: string[]) {
+    for (const id of ids)
+      this.observed.set(id, (this.observed.get(id) ?? 0) + 1);
+    const peers = this.state.peers.filter((p) =>
+      ids.some((id) => id.startsWith(p.id + ":")),
+    );
+    for (const peer of peers) void this.selectPeer(peer).catch(() => {});
+    let closed = false;
+    return () => {
+      if (closed) return;
+      closed = true;
+      for (const id of ids) {
+        const count = this.observed.get(id)! - 1;
+        if (count) this.observed.set(id, count);
+        else this.observed.delete(id);
+      }
+      for (const peer of peers) void this.selectPeer(peer).catch(() => {});
+    };
+  }
+
+  private async verify(peer: Peer) {
+    const response = await fetch(`${peer.url}/execution/identity`, {
+      redirect: "error",
+      signal: AbortSignal.timeout(this.options.timeoutMs ?? 4000),
+      headers: { Authorization: `Bearer ${peer.credential}` },
+    });
+    if (!response.ok) throw new Error("Host authorization failed");
+    const identity = (await response.json()) as { id: string; role: string };
     if (!identity.id || identity.id.includes(":"))
       throw new Error("Invalid service identity");
     if (identity.role !== "execution")
@@ -236,7 +356,15 @@ export class HostService {
       );
     return identity.id;
   }
-  async register(input: {
+  register(input: {
+    id?: string;
+    name: string;
+    url: string;
+    credential: string;
+  }) {
+    return this.configure(() => this.registerHost(input));
+  }
+  private async registerHost(input: {
     id?: string;
     name: string;
     url: string;
@@ -257,21 +385,44 @@ export class HostService {
     peer.id = await this.verify(peer);
     if (!existing && this.state.peers.some((p) => p.id === peer.id))
       throw new Error("This host is already registered");
-    const snapshot = await this.request<Snapshot>(peer, "/snapshot");
-    if (!existing && this.state.peers.some((p) => p.id === peer.id))
-      throw new Error("This host is already registered");
-    if (existing) Object.assign(existing, peer);
-    else this.state.peers.push(peer);
-    const cache = this.caches.get(peer.id) ?? this.empty(peer);
+
+    const previousCache = this.caches.get(peer.id);
+    const cache = this.empty(peer);
     cache.host = {
       ...cache.host,
       name: peer.name,
       url: peer.url,
-      connected: true,
-      lastSeen: Date.now(),
+      connected: false,
+      lastSeen: previousCache?.host.lastSeen,
     };
-    cache.snapshot = snapshot;
+
     this.caches.set(peer.id, cache);
+    const oldLink = this.links.get(peer.id);
+    if (oldLink) {
+      ++oldLink.generation;
+      clearTimeout(oldLink.timer);
+      oldLink.client?.close();
+      oldLink.socket?.close();
+      this.links.delete(peer.id);
+    }
+    try {
+      await this.connect(peer);
+    } catch (error) {
+      const failed = this.links.get(peer.id);
+      if (failed) {
+        ++failed.generation;
+        clearTimeout(failed.timer);
+        failed.client?.close();
+        failed.socket?.close();
+        this.links.delete(peer.id);
+      }
+      if (previousCache) this.caches.set(peer.id, previousCache);
+      else this.caches.delete(peer.id);
+      if (existing) void this.connect(existing).catch(() => {});
+      throw error;
+    }
+    if (existing) Object.assign(existing, peer);
+    else this.state.peers.push(peer);
     this.persist();
     await this.sync(peer, cache);
     this.publish();
@@ -325,48 +476,6 @@ export class HostService {
     })().finally(() => {
       this.initializing = undefined;
     }));
-  }
-  refresh(): Promise<void> {
-    return (this.refreshing ??= this.refreshPeers().finally(() => {
-      this.refreshing = undefined;
-    }));
-  }
-  private async refreshPeers() {
-    await Promise.all(
-      this.state.peers.map(async (peer) => {
-        const cache = this.caches.get(peer.id)!;
-        try {
-          await this.verify(peer);
-          if (cache.host.defaults !== "synced" || !cache.host.connected)
-            await this.sync(peer, cache);
-          const snapshot = await this.request<Snapshot>(peer, "/snapshot");
-          // Only refresh viewed conversations. These are display data, never authority or replay state.
-          const details = await Promise.all(
-            [...cache.details.keys()]
-              .filter((id) => snapshot.agents.some((a) => a.id === id))
-              .map(
-                async (id) =>
-                  [
-                    id,
-                    await this.request<Detail>(
-                      peer,
-                      `/agents/${encodeURIComponent(id)}`,
-                    ),
-                  ] as const,
-              ),
-          );
-          cache.snapshot = snapshot;
-          cache.details = new Map(details);
-          cache.host.connected = true;
-          cache.host.lastSeen = Date.now();
-          cache.host.error = undefined;
-        } catch {
-          cache.host.connected = false;
-          cache.host.error = "Host disconnected. Reconnecting automatically.";
-        }
-      }),
-    );
-    this.publish();
   }
   private host(id?: string) {
     if (!id || id === this.identity.id) return null;
@@ -500,10 +609,10 @@ export class HostService {
         threadId,
         archived,
       });
-      await this.refresh();
+
       return qualified(c.host, agent);
     } catch (error) {
-      if (error instanceof PeerRejected) throw error;
+      if (error instanceof RequestRejected) throw error;
       throw this.unknown(c);
     }
   }
@@ -550,10 +659,10 @@ export class HostService {
     }
     try {
       const a = await this.request<Agent>(p, "/agents", { project: alias });
-      await this.refresh();
+
       return qualified(c.host, a);
     } catch (error) {
-      if (error instanceof PeerRejected) throw error;
+      if (error instanceof RequestRejected) throw error;
       throw this.unknown(c);
     }
   }
@@ -567,10 +676,14 @@ export class HostService {
         throw new Error("Conversation unavailable until this host reconnects");
       return qualified(c.host, detail);
     }
+    const cached = c.details.get(r.id);
+    if (this.observed.has(id) && cached) return qualified(c.host, cached);
     try {
-      const detail = await this.request<Detail>(
-        r.peer,
-        `/agents/${encodeURIComponent(r.id)}`,
+      const detail = detailSchema.parse(
+        await this.request<Detail>(
+          r.peer,
+          `/agents/${encodeURIComponent(r.id)}`,
+        ),
       );
       c.details.set(r.id, detail);
       return qualified(c.host, detail);
@@ -610,10 +723,10 @@ export class HostService {
         `/agents/${encodeURIComponent(r.id)}/${action}`,
         body,
       );
-      await this.refresh();
+
       return this.result(c.host, result);
     } catch (error) {
-      if (error instanceof PeerRejected) throw error;
+      if (error instanceof RequestRejected) throw error;
       throw this.unknown(c);
     }
   }
@@ -629,9 +742,9 @@ export class HostService {
       ? qualified(host, result as Detail)
       : result;
   }
-  send(id: string, text: string, requestId: string) {
-    return this.mutate(id, "messages", { text, requestId }, (id) =>
-      this.workspace.send(id, text, requestId),
+  send(id: string, text: string, operationId: string) {
+    return this.mutate(id, "messages", { text, operationId }, (id) =>
+      this.workspace.send(id, text, operationId),
     );
   }
   closeTree(id: string) {
@@ -647,9 +760,22 @@ export class HostService {
       this.workspace.answer(id, questionId, answer),
     );
   }
-  reconcile(id: string, deliveryId: string, accepted: boolean) {
-    return this.mutate(id, "reconcile", { deliveryId, accepted }, (id) =>
-      this.workspace.reconcile(id, deliveryId, accepted),
+  retryDelivery(id: string, deliveryId: string) {
+    const r = this.route(id);
+    if (!r.peer) return this.workspace.retryDelivery(r.id, deliveryId);
+    this.available(r.peer);
+    return this.links
+      .get(r.peer.id)!
+      .client!.call("retryDelivery", { id: r.id, deliveryId });
+  }
+  async lookup(id: string, operationId: string) {
+    const r = this.route(id);
+    if (!r.peer) return this.workspace.lookup(r.id, operationId);
+    this.available(r.peer);
+    return receiptSchema.parse(
+      await this.request(r.peer, `/agents/${encodeURIComponent(r.id)}/lookup`, {
+        operationId,
+      }),
     );
   }
   stop(id: string, turnId: string) {
@@ -683,7 +809,14 @@ export class HostService {
     }
   }
   dispose() {
-    clearInterval(this.timer);
+    this.disposed = true;
+    for (const link of this.links.values()) {
+      ++link.generation;
+      clearTimeout(link.timer);
+      link.client?.close();
+      link.socket?.close();
+    }
+    this.links.clear();
     this.unsubscribe();
     this.subscribers.clear();
   }

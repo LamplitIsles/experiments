@@ -255,31 +255,43 @@ for (const surface of ["weekly", "title"]) {
   });
 }
 
-test("a late detail response cannot reopen a dismissed conversation", async ({
+test("a late detail update cannot reopen a dismissed conversation", async ({
   page,
   request,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await request.post("http://127.0.0.1:14319/fixture/reset", { data: {} });
+  let hold = false;
+  let queued: (string | Buffer)[] = [];
+  let release = () => {};
+  await page.routeWebSocket("**/api/socket", (ws) => {
+    const server = ws.connectToServer();
+    server.onMessage((raw) => {
+      if (hold && JSON.parse(String(raw)).type === "update") queued.push(raw);
+      else ws.send(raw);
+    });
+    release = () => {
+      hold = false;
+      for (const raw of queued) ws.send(raw);
+      queued = [];
+    };
+  });
   await page.goto("http://127.0.0.1:14319/");
   await expect(page.locator(".session-open").first()).toBeVisible();
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => (release = resolve));
-  let arrived!: () => void;
-  const started = new Promise<void>((resolve) => (arrived = resolve));
-  await page.route("**/api/agents/*", async (route) => {
-    const response = await route.fetch();
-    arrived();
-    await gate;
-    await route.fulfill({ response });
-  });
   await page.locator(".session-open").first().click();
-  await started;
+
   await expect(
     page.getByRole("button", { name: "‹ Sessions", exact: true }),
   ).toBeVisible();
+  await expect(page.locator(".agent-detail")).toBeVisible();
+  hold = true;
+  await request.post("http://127.0.0.1:14319/fixture/change", {
+    data: { append: { agentId: "orc", text: "Synthetic late detail" } },
+  });
+  await expect.poll(() => queued.length).toBeGreaterThan(0);
   await page.goBack();
   release();
+
   await expect(page.locator(".agent-detail")).toHaveCount(0);
   await expect(page.locator(".session-list")).toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
