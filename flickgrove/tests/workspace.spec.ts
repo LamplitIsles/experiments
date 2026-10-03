@@ -1,13 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { newSession, openSettings } from "./browser-actions";
 
 test("Worker reports stay in the timeline as one folded incoming card, including after Worker closure", async ({
   page,
 }) => {
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "New session", exact: true })
-    .first()
-    .click();
+  await newSession(page);
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
   await page.getByRole("button", { name: /Create on/ }).click();
   const input = page.getByRole("textbox", { name: "Message Orc" });
@@ -75,10 +73,7 @@ test("create, delegate, read a Worker, insert a skill and close the tree through
 }) => {
   await page.goto("/");
   await expect(page.getByText("FlickGrove", { exact: true })).toBeVisible();
-  await page
-    .getByRole("button", { name: "New session", exact: true })
-    .first()
-    .click();
+  await newSession(page);
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
   await page.getByRole("button", { name: /Create on/ }).click();
   const input = page.getByRole("textbox", { name: "Message Orc" });
@@ -124,10 +119,7 @@ test("multiple questions preserve drafts, contextual arrow navigation and explic
   page,
 }) => {
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "New session", exact: true })
-    .first()
-    .click();
+  await newSession(page);
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
   await page.getByRole("button", { name: /Create on/ }).click();
   const input = page.getByRole("textbox", { name: "Message Orc" });
@@ -174,7 +166,7 @@ test("settings affect new sessions, Markdown stays safe and offline reload resto
   context,
 }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.screenshot({
     path: "../.scratch/flickgrove/settings.png",
@@ -198,13 +190,10 @@ test("settings affect new sessions, Markdown stays safe and offline reload resto
     page.getByRole("switch", { name: "Fast", exact: true }),
   ).toBeDisabled();
   await page.getByRole("button", { name: "Save changes" }).click();
-  await page
-    .getByRole("button", { name: "New session", exact: true })
-    .first()
-    .click();
+  await newSession(page);
   await page.getByRole("button", { name: "Beta", exact: true }).click();
   await page.getByRole("button", { name: /Create on/ }).click();
-  await expect(page.locator(".model-note")).toHaveText("luna / low");
+  await expect(page.locator(".detail-model")).toHaveText("luna / low");
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Show Markdown");
   await input.press("Enter");
@@ -256,7 +245,7 @@ test("N focuses creation, I focuses Composer, and canvas navigation survives det
 }) => {
   await page.goto("/");
   await expect(
-    page.getByRole("button", { name: "New session", exact: true }).first(),
+    page.getByRole("button", { name: "Settings", exact: true }),
   ).toBeEnabled();
   await page.locator("body").click({ position: { x: 100, y: 70 } });
   await page.keyboard.press("n");
@@ -333,10 +322,7 @@ test("Tab completes without moving focus, skill search preserves drafts, and clo
   ).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "New session", exact: true })
-    .first()
-    .click();
+  await newSession(page);
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
   await page.getByRole("button", { name: /Create on/ }).click();
   const input = page.getByRole("textbox", { name: "Message Orc" });
@@ -379,10 +365,7 @@ test("Orc closure of a running Worker shows Closing and automatically removes it
   page,
 }) => {
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "New session", exact: true })
-    .first()
-    .click();
+  await newSession(page);
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
   await page.getByRole("button", { name: /Create on/ }).click();
   const input = page.getByRole("textbox", { name: "Message Orc" });
@@ -436,10 +419,7 @@ test("Orc titles edit in place, cancel safely, retain failed drafts and persist 
   page,
 }) => {
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "New session", exact: true })
-    .first()
-    .click();
+  await newSession(page);
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
   await page.getByRole("button", { name: /Create on/ }).click();
   await page.getByRole("button", { name: "Edit title", exact: true }).click();
