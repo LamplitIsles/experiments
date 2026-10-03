@@ -68,6 +68,7 @@ function historySession(thread: v2.Thread, archived: boolean): HistorySession {
 export class CodexRuntime implements Runtime {
   private managed?: Promise<CodexAppServerClient>;
   private readonly threads = new Map<string, CodexAppServerClient>();
+  private readonly openingThreads = new Set<string>();
   private catalogModels?: Model[];
   constructor(
     private readonly options: {
@@ -325,8 +326,13 @@ export class CodexRuntime implements Runtime {
     notify: (event: RuntimeEvent) => void,
   ): Promise<RuntimeHandle> {
     const client = await this.getCatalog();
-    if (agent.threadId && this.threads.has(agent.threadId))
+    if (
+      agent.threadId &&
+      (this.threads.has(agent.threadId) ||
+        this.openingThreads.has(agent.threadId))
+    )
       throw new Error("This session already has an active Grove handle.");
+    if (agent.threadId) this.openingThreads.add(agent.threadId);
     let closed = false;
     let threadId = agent.threadId;
     let threadName: string | null = null;
@@ -465,6 +471,8 @@ export class CodexRuntime implements Runtime {
           "This session is in use by another Codex instance. Close it there, then retry.",
         );
       throw error;
+    } finally {
+      if (agent.threadId) this.openingThreads.delete(agent.threadId);
     }
     const id = threadId!;
     return {

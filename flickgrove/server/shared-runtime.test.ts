@@ -45,7 +45,7 @@ test("one managed process isolates concurrent threads, native requests, Stop/Clo
     token: `${id}-token`,
     project: { alias: id, name: id, path: join(directory, id) },
     title: id,
-    model: "fixture-model",
+    model: role === "orc" ? "fixture-model" : "fixture-worker-model",
     effort: role === "orc" ? "medium" : "low",
     serviceTier: role === "orc" ? "priority" : "default",
     state: "idle",
@@ -108,9 +108,13 @@ test("one managed process isolates concurrent threads, native requests, Stop/Clo
     await runtime.history(directory);
     await runtime.skills(a.project.path);
     expect(await processes()).toHaveLength(1);
-    const restored = await runtime.open({ ...a, threadId: ah.threadId }, (e) =>
+    const reopening = runtime.open({ ...a, threadId: ah.threadId }, (e) =>
       ae.push(e),
     );
+    await expect(
+      runtime.open({ ...a, threadId: ah.threadId }, () => {}),
+    ).rejects.toThrow("active Grove handle");
+    const restored = await reopening;
     expect(restored.threadId).toBe(ah.threadId);
     const configCalls = (await requests()).filter(
       (r) =>
@@ -124,6 +128,7 @@ test("one managed process isolates concurrent threads, native requests, Stop/Clo
       ).toBe(owned.token);
       expect(r.params.config.model_reasoning_effort).toBe(owned.effort);
       expect(r.params.serviceTier).toBe(owned.serviceTier);
+      expect(r.params.model).toBe(owned.model);
       expect(r.params.developerInstructions).toContain(
         owned.role === "orc" ? "Orchestrator (Orc)" : "You are a Worker",
       );
