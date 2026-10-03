@@ -1,3 +1,4 @@
+import fuzzysort from "fuzzysort";
 import type { Skill } from "./contracts";
 
 export function tokens(value: string): string[] {
@@ -24,6 +25,11 @@ export function searchSkills(skills: Skill[], query: string): Skill[] {
       const partial = unique.filter((t) =>
         [...names].some((n) => n.includes(t)),
       );
+      const fuzzy = unique.flatMap((t) => {
+        const result = fuzzysort.single(t, skill.name);
+        return result ? [result.score] : [];
+      });
+      const fuzzyMatch = unique.length > 0 && fuzzy.length === unique.length;
       return {
         skill,
         rank: [
@@ -33,8 +39,10 @@ export function searchSkills(skills: Skill[], query: string): Skill[] {
           unique.filter((t) => names.has(t)).length,
           unique.filter((t) => description.has(t)).length,
           partial.length,
+          Number(fuzzyMatch),
+          fuzzyMatch ? fuzzy.reduce((total, score) => total + score, 0) : 0,
         ],
-        matches: matches.length + partial.length,
+        matches: matches.length + partial.length + Number(fuzzyMatch),
       };
     })
     .filter((r) => !q.length || r.matches > 0);

@@ -1,6 +1,41 @@
 import { describe, expect, test } from "bun:test";
 import { searchSkills, tokens } from "../src/skill-search";
 describe("skill search", () => {
+  test("matches skipped name characters and ranks stronger matches first", () => {
+    const skill = {
+      name: "grill-with-docs",
+      description: "Interview a design",
+    };
+    for (const query of ["grdo", "GRDO", "grilldocs"])
+      expect(searchSkills([skill], query)).toEqual([skill]);
+    expect(searchSkills([skill], "odrg")).toEqual([]);
+    const exact = { name: "grdo", description: "Exact name" };
+    const continuous = { name: "grdo-helper", description: "Continuous name" };
+    expect(searchSkills([skill, continuous, exact], "grdo")).toEqual([
+      exact,
+      continuous,
+      skill,
+    ]);
+  });
+  test("keeps fuzzy matching on names and uses library quality to rank", () => {
+    const compact = { name: "grill-docs", description: "Interview a design" };
+    const spaced = {
+      name: "grill-with-docs",
+      description: "Interview a design",
+    };
+    const descriptionOnly = {
+      name: "research",
+      description: "grill-with-docs",
+    };
+    expect(searchSkills([spaced, compact, descriptionOnly], "grdo")).toEqual([
+      compact,
+      spaced,
+    ]);
+    expect(searchSkills([spaced], "grdo unrelated")).toEqual([]);
+    expect(searchSkills([descriptionOnly], "grill docs")).toEqual([
+      descriptionOnly,
+    ]);
+  });
   test("matches incomplete joined names across separators", () => {
     const skill = {
       name: "to-orc-impl",
