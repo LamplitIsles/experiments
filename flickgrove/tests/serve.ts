@@ -28,6 +28,13 @@ runtime.sendOverride = async (id, text) => {
           message: "Build a reader",
         });
         result = "The reader is ready.";
+      } else if (text === "Request Worker report") {
+        const worker = app.snapshot().agents.find((a) => a.ownerId === id)!;
+        await app.tool(runtime.agents.get(worker.id)!.token, "worker_report", {
+          message:
+            "Implementation complete.\n\n**Full diagnostic details.**\n\nThe report preserves its complete content.",
+        });
+        result = "Report received.";
       } else if (text === "Close the workers") {
         for (const worker of app
           .snapshot()

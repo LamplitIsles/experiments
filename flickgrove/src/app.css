@@ -421,6 +421,69 @@ main {
 .assistant-message {
   margin-bottom: 28px;
 }
+.worker-report {
+  margin: 0 32px 20px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #242427;
+}
+.worker-report summary {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.worker-report summary::-webkit-details-marker {
+  display: none;
+}
+.report-chevron {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--muted-foreground);
+}
+.worker-report[open] .report-chevron {
+  transform: rotate(90deg);
+}
+.report-summary {
+  flex: 1;
+  min-width: 0;
+}
+.report-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.report-heading strong {
+  font-size: 12px;
+  font-weight: 550;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.report-heading > span {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.report-preview {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.worker-report[open] .report-preview {
+  display: none;
+}
+.report-content {
+  border-top: 1px solid var(--border);
+  padding: 16px;
+}
 .message-role {
   font-size: 11px;
   color: var(--muted-foreground);

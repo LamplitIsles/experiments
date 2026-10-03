@@ -7,6 +7,7 @@
   import { elapsed } from "./api";
   import Weekly from "./Weekly.svelte";
   import Markdown from "./Markdown.svelte";
+  import WorkerReport from "./WorkerReport.svelte";
   import Composer from "./Composer.svelte";
   import Questions from "./Questions.svelte";
   import * as m from "./paraglide/messages";
@@ -14,6 +15,7 @@
   let transcript: HTMLDivElement; let follow = $state(true);
   $effect(() => { const _count = detail.messages.length; if (follow) void tick().then(() => { if (transcript) transcript.scrollTop = transcript.scrollHeight; }); });
   const pending = $derived(detail.questions.filter(q => q.state !== "answered"));
+  const reports = $derived(new Map(detail.deliveries.filter(d => d.source === "worker" && d.reportingWorkerId).map(d => [d.id, d])));
 </script>
 <aside class="agent-detail" aria-label={detail.title}>
   <div class="mobile-back"><Button variant="ghost" size="sm" onclick={onclose}>{m.back_sessions()}</Button><span>{detail.hostName}</span><Weekly hostId={detail.hostId} {connected} /></div><header class="detail-heading"><div class="role-project">{detail.role === "orc" ? m.orc() : m.worker()} / {detail.project.alias}</div><Button variant="ghost" size="icon-sm" aria-label={m.close_detail()} onclick={onclose}><X /></Button><h1>{detail.title}</h1><div class="detail-status">{#if detail.hostName}<span class="owner-badge">{detail.hostName}</span>{/if}<span class:working={detail.state === "working"} class:failed={detail.state === "error"}><i></i>{detail.stop?.status === "unknown" ? m.stop_unconfirmed() : detail.state === "stopping" ? m.stopping() : detail.state === "working" ? m.working() + " " + elapsed(detail.workingSince, now) : detail.state === "error" ? m.failed() : m.idle()}</span>{#if pending.length}<Badge variant="outline" class="border-amber-500/30 text-amber-200">{m.needs_input()}</Badge>{/if}</div><div class="model-note">{detail.model} / {detail.effort}{#if detail.serviceTier === "priority"} / {m.fast_mode()}{/if}</div></header>
@@ -23,7 +25,9 @@
     {#if owner}<button class="owner-link" onclick={() => onopen(owner.id)}>{m.assigned_by({ title: owner.title })}</button>{/if}
     {#if !detail.messages.length && !detail.questions.length}<div class="first-message"><h2>{m.first_heading()}</h2><p>{m.first_help({ project: detail.project.alias })}</p></div>{/if}
     {#each detail.messages as message (message.id)}
-      <div class:user-message={message.role === "user"} class:assistant-message={message.role === "assistant"}><div class="message-role">{message.role === "assistant" ? detail.role === "orc" ? m.orc() : m.worker() : ""}</div><Markdown text={message.text} /></div>
+      {@const report = reports.get(message.id)}
+      {#if report}<WorkerReport text={message.text} sender={workers.find(w => w.id === report.reportingWorkerId)?.title} />
+      {:else}<div class:user-message={message.role === "user"} class:assistant-message={message.role === "assistant"}><div class="message-role">{message.role === "assistant" ? detail.role === "orc" ? m.orc() : m.worker() : ""}</div><Markdown text={message.text} /></div>{/if}
     {/each}
     {#if detail.role === "orc" && detail.questions.length}<Questions agentId={detail.id} questions={detail.questions} deliveries={detail.deliveries} connected={connected && detail.state !== "stopping"} {onanswer} />
     {:else if detail.questions.length}<div class="delegated-questions">{#each detail.questions as q}<div><p>{q.text}</p><span>{q.state === "answered" ? m.sent() : m.delegated()}</span></div>{/each}</div>{/if}

@@ -1,5 +1,75 @@
 import { expect, test } from "@playwright/test";
 
+test("Worker reports stay in the timeline as one folded incoming card, including after Worker closure", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page
+    .getByRole("button", { name: "New session", exact: true })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await page.getByRole("button", { name: /Create on/ }).click();
+  const input = page.getByRole("textbox", { name: "Message Orc" });
+  await input.fill("Build a reader");
+  await input.press("Enter");
+  await expect(
+    page.getByText("The reader is ready.", { exact: true }),
+  ).toBeVisible();
+  await input.fill("Request Worker report");
+  await input.press("Enter");
+  const report = page.locator(".worker-report");
+  await expect(report).toHaveCount(1);
+  await expect(report.locator("summary")).toHaveAccessibleName(
+    "Worker report · Reader",
+  );
+  await expect(report).not.toHaveAttribute("open");
+  await expect(
+    report.getByText("Full diagnostic details.", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page
+      .locator(".user-message")
+      .filter({ hasText: "Full diagnostic details." }),
+  ).toHaveCount(0);
+  await report.locator("summary").click();
+  await expect(
+    report.getByText("Full diagnostic details.", { exact: true }),
+  ).toBeVisible();
+  await report.locator("summary").click();
+  await expect(
+    report.getByText("Full diagnostic details.", { exact: true }),
+  ).toHaveCount(0);
+  await input.fill("Worker “Reader” reports:\n\nThis was typed by the user.");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(
+    page
+      .locator(".user-message")
+      .filter({ hasText: "This was typed by the user." }),
+  ).toHaveCount(1);
+  await expect(report).toHaveCount(1);
+  await input.fill("Close the workers");
+  await input.press("Enter");
+  await expect(
+    page.getByText("Workers are closed.", { exact: true }),
+  ).toBeVisible();
+  await expect(report.locator("summary")).toContainText("Reader");
+  await report.locator("summary").click();
+  await expect(
+    report.getByText("The report preserves its complete content.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "../.scratch/flickgrove-shadcn/worker-report.png",
+    animations: "disabled",
+  });
+  await input.fill("/close");
+  await input.press("Enter");
+  await input.press("Enter");
+  await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
+});
+
 test("create, delegate, read a Worker, insert a skill and close the tree through Orc", async ({
   page,
 }) => {
