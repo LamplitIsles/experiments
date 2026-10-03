@@ -30,6 +30,30 @@ export interface Message {
   text: string;
   at: number;
 }
+export interface HistorySession {
+  threadId: string;
+  title: string;
+  preview: string;
+  cwd: string;
+  updatedAt: number;
+  source: string;
+  archived: boolean;
+  role: Role | "session";
+  agentId?: string;
+  ownerThreadId?: string;
+  ownerProject?: string;
+  closed?: boolean;
+  model?: string;
+  effort?: string;
+}
+export interface HistoryPage {
+  sessions: HistorySession[];
+  nextCursor: string | null;
+}
+export interface HistoryMessages {
+  messages: Message[];
+  nextCursor: string | null;
+}
 export interface QuestionOption {
   label: string;
   description?: string;
@@ -56,6 +80,8 @@ export interface Delivery {
   at: number;
 }
 export interface Agent {
+  historyCursor?: string;
+  historyMessageCount?: number;
   closeRequest?: {
     reason: string;
   };

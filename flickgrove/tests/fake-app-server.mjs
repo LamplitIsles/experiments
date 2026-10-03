@@ -863,6 +863,8 @@ async function handle(request) {
       };
     }
     case "thread/resume": {
+      if (control().lockedThreads?.includes(p.threadId))
+        rpcError(-32600, `thread ${p.threadId} already has an active writer`);
       if (typeof p.path === "string" && p.path) loadRollout(p.path);
       if (control().missingRollout)
         rpcError(
@@ -874,6 +876,14 @@ async function handle(request) {
           Number(control().resumeError.code),
           String(control().resumeError.message),
         );
+      if (
+        control().historyThreads?.find((s) => s.thread.id === p.threadId)
+          ?.archived
+      )
+        rpcError(
+          -32600,
+          `session ${p.threadId} is archived. Unarchive it first.`,
+        );
       if (control().failResume) rpcError(-32603, "fixture resume rejected");
       if (Array.isArray(p.history)) {
         if (!p.history.length)
@@ -884,7 +894,12 @@ async function handle(request) {
         save();
       }
       return {
-        thread: threadRecord(p.cwd, p.model ?? "fixture-model"),
+        thread: {
+          ...threadRecord(p.cwd, p.model ?? "fixture-model"),
+          ...control().historyThreads?.find((s) => s.thread.id === p.threadId)
+            ?.thread,
+        },
+        itemsBackwardsCursor: control().itemsBackwardsCursor ?? null,
         model: p.model ?? "fixture-model",
         modelProvider: "fixture",
         serviceTier: null,
@@ -900,9 +915,39 @@ async function handle(request) {
       };
     }
     case "thread/list":
-      return page([], p);
+      return page(
+        (control().historyThreads ?? [])
+          .filter(
+            (s) =>
+              !!s.archived === !!p.archived &&
+              (!p.cwd || s.thread.cwd === p.cwd),
+          )
+          .map((s) => ({
+            ...threadRecord(root, "fixture-model"),
+            ...s.thread,
+          })),
+        p,
+      );
     case "thread/read":
-      return { thread: threadRecord(root, "fixture-model") };
+      return {
+        thread: {
+          ...threadRecord(root, "fixture-model"),
+          ...control().historyThreads?.find((s) => s.thread.id === p.threadId)
+            ?.thread,
+        },
+      };
+    case "thread/unarchive": {
+      const c = control();
+      const session = c.historyThreads?.find((s) => s.thread.id === p.threadId);
+      if (session) session.archived = false;
+      if (controlPath) writeFileSync(controlPath, JSON.stringify(c));
+      return {
+        thread: {
+          ...threadRecord(root, "fixture-model"),
+          ...session?.thread,
+        },
+      };
+    }
     case "thread/name/set":
       if (control().failRename) rpcError(-32603, "fixture rename rejected");
       state.threadName = p.name;
@@ -926,6 +971,7 @@ async function handle(request) {
       return page(turns, p);
     }
     case "thread/items/list": {
+      if (control().historyItems) return page(control().historyItems, p);
       const turns = p.turnId
         ? state.turns.filter((turn) => turn.id === p.turnId)
         : state.turns;

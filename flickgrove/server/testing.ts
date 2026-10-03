@@ -1,4 +1,9 @@
-import type { Model, WeeklyUsage } from "../src/contracts";
+import type {
+  Model,
+  WeeklyUsage,
+  HistorySession,
+  Message,
+} from "../src/contracts";
 import type {
   Runtime,
   RuntimeAgent,
@@ -11,6 +16,33 @@ export const fixtureProjects = [
   { alias: "beta", name: "Beta", path: "/fixture/beta" },
 ];
 export class FakeRuntime implements Runtime {
+  readonly historySessions = new Map<string, HistorySession>();
+  readonly historyItems = new Map<string, Message[]>();
+  readonly lockedThreads = new Set<string>();
+  async history(cwd: string, cursor?: string) {
+    const matches = [...this.historySessions.values()].filter(
+      (s) => s.cwd === cwd,
+    );
+    const offset = Number(cursor ?? 0);
+    return {
+      sessions: matches.slice(offset, offset + 30),
+      nextCursor: matches.length > offset + 30 ? String(offset + 30) : null,
+    };
+  }
+  async historyThread(threadId: string) {
+    const session = this.historySessions.get(threadId);
+    if (!session) throw new Error("Thread not found");
+    return { ...session };
+  }
+  async historyMessages(threadId: string, cursor?: string) {
+    const items = this.historyItems.get(threadId) ?? [];
+    const end = cursor ? Number(cursor) : items.length;
+    const start = Math.max(0, end - 30);
+    return {
+      messages: items.slice(start, end),
+      nextCursor: start ? String(start) : null,
+    };
+  }
   readonly names = new Map<string, string>();
   renameOverride?: (threadId: string, title: string) => Promise<void>;
   async readTitle(threadId: string) {
@@ -66,11 +98,33 @@ export class FakeRuntime implements Runtime {
     agent: RuntimeAgent,
     notify: (e: RuntimeEvent) => void,
   ): Promise<RuntimeHandle> {
+    if (agent.threadId && this.lockedThreads.has(agent.threadId))
+      throw new Error(
+        "This session is in use by another Codex instance. Close it there, then retry.",
+      );
+    const threadId = agent.threadId ?? `thread-${agent.id}`;
+    if (!this.historySessions.has(threadId))
+      this.historySessions.set(threadId, {
+        threadId,
+        title: agent.title,
+        preview: "",
+        cwd: agent.project.path,
+        role: agent.role,
+        source: "appServer",
+        archived: false,
+        updatedAt: Date.now(),
+      });
     this.agents.set(agent.id, structuredClone(agent));
     this.listeners.set(agent.id, notify);
     return {
       threadId: agent.threadId ?? `thread-${agent.id}`,
       threadName: await this.readTitle(agent.threadId ?? `thread-${agent.id}`),
+      historyCursor: this.historyItems.get(threadId)?.length
+        ? String(this.historyItems.get(threadId)!.length)
+        : undefined,
+      model: agent.model || "sol",
+      effort: agent.effort || "medium",
+      serviceTier: agent.serviceTier,
       rename: async (title) => {
         const id = agent.threadId ?? `thread-${agent.id}`;
         await this.renameOverride?.(id, title);

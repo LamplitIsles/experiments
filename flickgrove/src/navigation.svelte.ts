@@ -1,5 +1,7 @@
 export type Surface =
   | "new"
+  | "history"
+  | "history-preview"
   | "settings"
   | "keys"
   | "skill"

@@ -6,18 +6,19 @@
   import { NativeSelect } from "$lib/components/ui/native-select/index.js";
   import { Switch } from "$lib/components/ui/switch/index.js";
   import { Kbd } from "$lib/components/ui/kbd/index.js";
-  import { X, Plus, Settings as SettingsIcon } from "@lucide/svelte";
+  import { X, Plus, History, Settings as SettingsIcon } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { navigation, initializeNavigation, openConversation, setSurface, back, validateNavigation } from "./navigation.svelte";
   import { storagePrefix } from "./api";
   import { onMount, tick } from "svelte";
-  import type { Agent, Detail, Model, Project, Settings, Skill, Snapshot } from "./contracts";
+  import type { Agent, Detail, HistorySession, Model, Project, Settings, Skill, Snapshot } from "./contracts";
   import { api, editable } from "./api";
   import HostFilter from "./HostFilter.svelte";
   import Hosts from "./Hosts.svelte";
   import Weekly from "./Weekly.svelte";
   import SessionList from "./SessionList.svelte";
   import AgentDetail from "./AgentDetail.svelte";
+  import SessionHistory from "./SessionHistory.svelte";
   import * as m from "./paraglide/messages";
 
   let snapshot = $state<Snapshot>({ agents: [], settings: null, revision: 0 });
@@ -121,7 +122,15 @@
     if (kind === "settings" && settings) { settings.fast = !!settings.fast; }
     await tick(); if (modal === kind && kind === "new") projectSearch?.focus();
   }
-  function closeModal() { return back(); }
+  async function closeModal() { const kind = modal; do { await back(); } while (kind && navigation.surfaces.includes(kind)); }
+  async function resumeHistory(session: HistorySession, project: string) {
+    const agent = await api<Agent>(`/history/resume?host=${encodeURIComponent(createHost)}`, { project, threadId: session.threadId, archived: session.archived });
+    adopt(await api<Snapshot>("/snapshot"));
+    focusCreatedId = agent.id;
+    await openConversation(agent.id);
+    await sessionList?.reveal(agent.id);
+    toast.success(m.session_resumed(), { duration: 3000 });
+  }
   $effect(() => { if (detail?.id === focusCreatedId && focusCreatedId) { focusCreatedId = null; void tick().then(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus()); } });
   async function create() {
     if (!projectId || saving || !connected) return; saving = true;
@@ -241,7 +250,11 @@
 <Dialog.Root open={modalOpen} onOpenChange={value => { if (!value && modal) void closeModal(); }}>
   <Dialog.Content showCloseButton={false} class={`grove-dialog ${modal === "new" ? "new-modal" : modal === "settings" ? "settings-modal" : ""}`} onOpenAutoFocus={e => { e.preventDefault(); if (modal === "new") projectSearch?.focus(); }} onCloseAutoFocus={e => e.preventDefault()}><Button class="modal-close" variant="ghost" size="icon-sm" aria-label={m.close()} onclick={closeModal}><X /></Button>
     {#if modal === "new"}
-      <Dialog.Title>{m.new_session()}</Dialog.Title><p class="modal-help">{m.host_project_help()}</p>
+      <Dialog.Title>{navigation.surfaces.includes("history") ? m.open_session() : m.new_session()}</Dialog.Title>
+      {#if navigation.surfaces.includes("history") && projects.find(p => p.alias === projectId)}
+        {#key createHost + ":" + projectId}<SessionHistory hostId={createHost} hostName={hosts.find(h => h.id === createHost)?.name ?? ""} project={projects.find(p => p.alias === projectId)!} connected={connected && !!hosts.find(h => h.id === createHost)?.connected} onresume={resumeHistory} />{/key}
+      {:else}
+      <p class="modal-help">{m.host_project_help()}</p>
       <p class="form-section-label">{m.execution_host()}</p><div class="host-choices" aria-label={m.execution_host()}>{#each hosts as host}<button class:selected={createHost === host.id} disabled={!host.connected} onclick={() => chooseHost(host.id)}><strong>{host.name}</strong><span>{host.connected ? m.connected_host() : m.disconnected_host()}</span></button>{/each}</div>
       <p class="form-section-label">{m.project_label()}</p><Input bind:ref={projectSearch} class="project-search" aria-label={m.search_projects()} placeholder={m.search_projects()} bind:value={search} onkeydown={e => {
         if (e.isComposing) return;
@@ -251,7 +264,8 @@
       <div class="project-list">{#each filteredProjects as project}<button class:selected={project.alias === projectId} onclick={() => projectId = project.alias} aria-label={project.name}><strong>{project.name}</strong>{#if project.name !== project.alias}<span>{project.path}</span>{/if}</button>{:else}<p>{m.no_projects()}</p>{/each}</div>
       {#if snapshot.settings}<p class="defaults-note">{m.new_defaults({ model: snapshot.settings.orc.model, effort: snapshot.settings.orc.effort, tier: snapshot.settings.fast ? m.fast_mode() : "Default" })}</p>{/if}
       <p class="project-keyboard">{m.project_keyboard()}</p>
-      <div class="modal-action"><Button variant="ghost" size="sm" onclick={closeModal}>{m.cancel()}</Button><Button variant="default" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !filteredProjects.some(p => p.alias === projectId)} onclick={create}>{saving ? m.sending() : m.create_host({ host: hosts.find(h => h.id === createHost)?.name ?? "" })}</Button></div>
+      <div class="modal-action"><Button variant="ghost" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !projectId} onclick={() => setSurface("history", true)}><History />{m.find_history()}</Button><Button variant="default" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !filteredProjects.some(p => p.alias === projectId)} onclick={create}>{saving ? m.sending() : m.create_host({ host: hosts.find(h => h.id === createHost)?.name ?? "" })}</Button></div>
+      {/if}
     {:else if modal === "settings"}
       <Dialog.Title>{m.settings()}</Dialog.Title><p class="modal-help">{m.settings_help()}</p>
       {#if settings}{#each ["orc", "worker"] as role}{@const key = role as "orc" | "worker"}<section class="role-settings"><h3>{key === "orc" ? m.orc() : m.worker()}</h3><div class="model-fields"><label>{m.model()}<NativeSelect class="model-select" bind:value={settings[key].model} onchange={() => { if (settings) settings[key].effort = models.find(model => model.id === settings![key].model)?.defaultEffort ?? ""; if (settings && !models.find(model => model.id === settings![key].model)?.fastTier) settings.fast = false; }}>{#each models as model}<option value={model.id}>{model.name}</option>{/each}</NativeSelect></label><label>{m.effort()}<NativeSelect class="model-select" bind:value={settings[key].effort}>{#each models.find(model => model.id === settings![key].model)?.efforts ?? [] as effort}<option value={effort}>{effort}</option>{/each}</NativeSelect></label></div></section>{/each}<label class="fast-setting"><span><strong>{m.fast_mode()}</strong><small>{fastAvailable ? m.fast_help() : m.fast_unavailable()}</small></span><Switch aria-label={m.fast_mode()} bind:checked={settings.fast} disabled={!fastAvailable} /></label>{/if}

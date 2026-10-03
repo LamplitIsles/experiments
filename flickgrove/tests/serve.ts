@@ -7,6 +7,45 @@ import { createHandler } from "../server/http";
 import { FakeRuntime, fixtureProjects } from "../server/testing";
 const directory = mkdtempSync(join(tmpdir(), "flickgrove-browser-"));
 const runtime = new FakeRuntime();
+for (const [threadId, title, preview, archived] of [
+  [
+    "history-reader",
+    "Previous reader task",
+    "Investigate slow scrolling",
+    false,
+  ],
+  ["history-archived", "Archived reader task", "Earlier archived work", true],
+  [
+    "history-locked",
+    "Session open in CLI",
+    "Another instance owns this session",
+    false,
+  ],
+] as const) {
+  runtime.historySessions.set(threadId, {
+    threadId,
+    title,
+    preview,
+    cwd: fixtureProjects[0].path,
+    role: "session",
+    archived,
+    source: "cli",
+    updatedAt: 1000,
+    model: "sol",
+    effort: "medium",
+  });
+  runtime.names.set(threadId, title);
+  runtime.historyItems.set(threadId, [
+    { id: threadId + "-user", role: "user", text: preview, at: 1 },
+    {
+      id: threadId + "-assistant",
+      role: "assistant",
+      text: "Previous result preserved in Codex.",
+      at: 2,
+    },
+  ]);
+}
+runtime.lockedThreads.add("history-locked");
 const app = new Workspace({
   directory,
   runtime,
@@ -113,15 +152,42 @@ const service = new HostService(app, {
   name: "NUC",
   origin: () => "http://127.0.0.1:14318",
 });
+const handler = createHandler(app, {
+  origin: () => "http://127.0.0.1:14318",
+  service,
+  assets: resolve("dist"),
+});
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: 14318,
   idleTimeout: 0,
-  fetch: createHandler(app, {
-    origin: () => "http://127.0.0.1:14318",
-    service,
-    assets: resolve("dist"),
-  }),
+  async fetch(request) {
+    if (
+      request.method === "POST" &&
+      new URL(request.url).pathname === "/fixture/history-continuation"
+    ) {
+      const { id } = (await request.json()) as { id: string };
+      const detail = app.detail(id.slice(service.identity.id.length + 1));
+      const threadId = detail.threadId!;
+      runtime.names.set(threadId, "Restored report task");
+      runtime.historySessions.get(threadId)!.title = "Restored report task";
+      runtime.historyItems.set(threadId, [
+        ...detail.messages.map((message) => ({
+          ...message,
+          id: message.role === "user" ? `native-${message.id}` : message.id,
+        })),
+        ...Array.from({ length: 31 }, (_, i) => ({
+          id: `external-${threadId}-${i}`,
+          turnId: `external-turn-${i}`,
+          role: "assistant" as const,
+          text: `CLI continuation ${i}`,
+          at: Date.now() + i,
+        })),
+      ]);
+      return Response.json({ threadId });
+    }
+    return handler(request);
+  },
 });
 function cleanup() {
   server.stop(true);

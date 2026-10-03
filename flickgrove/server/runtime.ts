@@ -1,4 +1,12 @@
-import type { Detail, Model, Skill, WeeklyUsage } from "../src/contracts";
+import type {
+  Detail,
+  HistoryPage,
+  HistorySession,
+  HistoryMessages,
+  Model,
+  Skill,
+  WeeklyUsage,
+} from "../src/contracts";
 
 export interface RuntimeItem {
   id: string;
@@ -22,11 +30,17 @@ export type RuntimeEvent =
   | { type: "disconnected"; error: string };
 export interface RuntimeAgent extends Detail {
   token: string;
+  inheritSettings?: boolean;
+  restoreArchived?: boolean;
   turnEnded?: boolean;
 }
 export interface RuntimeHandle {
   threadId: string;
   threadName: string | null;
+  historyCursor?: string;
+  model?: string;
+  effort?: string;
+  serviceTier?: string;
   rename(title: string): Promise<void>;
   send(text: string, turnId?: string): Promise<string>;
   interrupt(turnId: string): Promise<void>;
@@ -34,6 +48,9 @@ export interface RuntimeHandle {
   close(): Promise<void>;
 }
 export interface Runtime {
+  history(cwd: string, cursor?: string): Promise<HistoryPage>;
+  historyThread(threadId: string): Promise<HistorySession>;
+  historyMessages(threadId: string, cursor?: string): Promise<HistoryMessages>;
   readTitle(threadId: string): Promise<string | null>;
   weekly(): Promise<WeeklyUsage>;
   models(): Promise<Model[]>;

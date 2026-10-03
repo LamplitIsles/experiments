@@ -92,6 +92,61 @@ export function createHandler(
         return json(
           await app.projects(url.searchParams.get("host") ?? undefined),
         );
+      if (request.method === "GET" && url.pathname.startsWith("/api/history")) {
+        const host = url.searchParams.get("host") ?? undefined;
+        const project = z
+          .string()
+          .min(1)
+          .parse(url.searchParams.get("project"));
+        const cursor = url.searchParams.get("cursor") ?? undefined;
+        if (request.method === "GET" && url.pathname === "/api/history")
+          return json(
+            await app.history(
+              project,
+              url.searchParams.get("query")?.trim() ?? "",
+              cursor,
+              host,
+            ),
+          );
+        const thread = url.searchParams.get("thread");
+        if (request.method === "GET" && url.pathname === "/api/history/session")
+          return json(
+            await app.historySession(
+              project,
+              z.string().min(1).parse(thread),
+              host,
+            ),
+          );
+        if (
+          request.method === "GET" &&
+          url.pathname === "/api/history/messages"
+        )
+          return json(
+            await app.historyMessages(
+              project,
+              z.string().min(1).parse(thread),
+              cursor,
+              host,
+            ),
+          );
+      }
+      if (request.method === "POST" && url.pathname === "/api/history/resume") {
+        const body = z
+          .object({
+            project: z.string().min(1),
+            threadId: z.string().min(1),
+            archived: z.boolean(),
+          })
+          .parse(await request.json());
+        return json(
+          await app.resumeHistory(
+            body.project,
+            body.threadId,
+            body.archived,
+            url.searchParams.get("host") ?? undefined,
+          ),
+        );
+      }
       if (request.method === "GET" && url.pathname === "/api/models")
         return json(
           await app.models(url.searchParams.get("host") ?? undefined),
@@ -147,7 +202,7 @@ export function createHandler(
           ),
         );
       const agentPath =
-        /^\/api\/agents\/([^/]+)(?:\/(messages|answer|skills|reconcile|stop|title|close))?$/.exec(
+        /^\/api\/agents\/([^/]+)(?:\/(messages|answer|skills|reconcile|stop|title|close|history))?$/.exec(
           url.pathname,
         );
       if (agentPath) {
@@ -157,6 +212,13 @@ export function createHandler(
           return json(await app.detail(id));
         if (request.method === "GET" && action === "skills")
           return json(await app.skills(id));
+        if (request.method === "GET" && action === "history")
+          return json(
+            await app.agentHistory(
+              id,
+              url.searchParams.get("cursor") ?? undefined,
+            ),
+          );
         if (request.method === "POST" && action === "title") {
           const body = z
             .object({ title: z.string() })

@@ -7,6 +7,174 @@ import { CodexRuntime } from "./codex";
 import { Workspace } from "./workspace";
 import type { RuntimeAgent, RuntimeEvent } from "./runtime";
 
+test("history uses indexed metadata for both archive states, reads paginated items, and respects writer-lock rejection", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "grove-history-wire-"));
+  const controlPath = join(directory, ".fake-app-server-control.json");
+  const requestPath = join(directory, ".fake-app-server-requests.jsonl");
+  const controls = {
+    historyThreads: [
+      {
+        archived: false,
+        thread: {
+          id: "cli-history",
+          cwd: directory,
+          source: "cli",
+          name: "Reader performance",
+          preview: "Investigate slow scrolling",
+          model: "fixture-model",
+          reasoningEffort: "medium",
+        },
+      },
+      {
+        archived: true,
+        thread: {
+          id: "archived-history",
+          cwd: directory,
+          source: "cli",
+          name: "Old reader",
+          preview: "Archived task",
+        },
+      },
+      {
+        archived: false,
+        thread: {
+          id: "different-cwd",
+          cwd: join(directory, "other"),
+          source: "cli",
+          name: "Other reader",
+        },
+      },
+    ],
+    historyItems: [
+      {
+        turnId: "old-turn",
+        item: {
+          type: "userMessage",
+          id: "old-user",
+          clientId: null,
+          content: [
+            { type: "text", text: "Original question", text_elements: [] },
+          ],
+        },
+      },
+      {
+        turnId: "old-turn",
+        item: {
+          type: "agentMessage",
+          id: "old-answer",
+          text: "Original answer",
+          phase: "final_answer",
+          delivery: null,
+          memoryCitation: null,
+        },
+      },
+    ],
+    itemsBackwardsCursor: "0",
+    lockedThreads: ["cli-history"],
+  };
+  await writeFile(controlPath, JSON.stringify(controls));
+  const runtime = new CodexRuntime({
+    cwd: directory,
+    origin: () => "http://127.0.0.1:14318",
+    codexPath: fileURLToPath(
+      new URL("../tests/fake-codex.mjs", import.meta.url),
+    ),
+    env: {
+      ...process.env,
+      CODEX_HOME: join(directory, "codex-home"),
+      FAKE_SERVER_ROOT: directory,
+    },
+  });
+  try {
+    expect(
+      (await runtime.history(directory)).sessions.map((s) => s.threadId).sort(),
+    ).toEqual(["archived-history", "cli-history"]);
+    expect((await runtime.historyThread("archived-history")).archived).toBe(
+      true,
+    );
+    expect((await runtime.historyThread("cli-history")).archived).toBe(false);
+    expect(
+      (await runtime.historyMessages("cli-history")).messages.map(
+        (m) => m.text,
+      ),
+    ).toEqual(["Original question", "Original answer"]);
+    const agent: RuntimeAgent = {
+      id: "imported",
+      token: "test-token",
+      role: "orc",
+      project: { alias: "fixture", name: "Fixture", path: directory },
+      title: "Reader",
+      model: "",
+      effort: "",
+      serviceTier: "default",
+      state: "idle",
+      closed: true,
+      threadId: "cli-history",
+      questions: [],
+      messages: [],
+      deliveries: [],
+      inheritSettings: true,
+    };
+    await expect(runtime.open(agent, () => {})).rejects.toThrow(
+      "another Codex instance",
+    );
+    controls.lockedThreads = [];
+    await writeFile(controlPath, JSON.stringify(controls));
+    const handle = await runtime.open(agent, () => {});
+    expect(handle.threadId).toBe("cli-history");
+    expect(handle.historyCursor).toBe("0");
+    expect(handle.model).toBe("fixture-model");
+    await handle.close();
+    const owner = await runtime.historyThread("archived-history");
+    const restored = await runtime.open(
+      { ...agent, threadId: owner.threadId, restoreArchived: owner.archived },
+      () => {},
+    );
+    await restored.close();
+    const requests = (await readFile(requestPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const lists = requests.filter((r) => r.method === "thread/list");
+    expect(
+      lists.every((r) => r.params.useStateDbOnly && r.params.cwd === directory),
+    ).toBe(true);
+    expect(lists.some((r) => r.params.archived)).toBe(true);
+    expect(lists[0].params.sourceKinds).toContain("appServer");
+    expect(lists[0].params.sourceKinds).toContain("subAgent");
+    expect(
+      lists.every(
+        (r) =>
+          Array.isArray(r.params.modelProviders) &&
+          r.params.modelProviders.length === 0,
+      ),
+    ).toBe(true);
+    expect(
+      requests.some(
+        (r) =>
+          r.method === "thread/unarchive" &&
+          r.params.threadId === "archived-history",
+      ),
+    ).toBe(true);
+    expect(
+      requests.some(
+        (r) => r.method === "thread/search" || r.method === "turn/start",
+      ),
+    ).toBe(false);
+    expect(
+      requests
+        .filter((r) => r.method === "thread/resume")
+        .every(
+          (r) =>
+            r.params.model === undefined && r.params.serviceTier === undefined,
+        ),
+    ).toBe(true);
+  } finally {
+    await runtime.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("the SDK adapter initializes isolated role configuration, discovers enabled skills and resumes threads", async () => {
   const directory = await mkdtemp(join(tmpdir(), "flickgrove-sdk-"));
   const argsPath = join(directory, "args.json");

@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { ChevronDown, ChevronRight, Plus } from "@lucide/svelte";
+  import { ChevronDown, ChevronRight, Plus, MessageCircle } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { Badge } from "$lib/components/ui/badge/index.js";
   import { onMount, tick, untrack } from "svelte";
   import { storagePrefix } from "./api";
   import type { Agent, Host } from "./contracts";
@@ -61,14 +60,15 @@
   {#if loading && !agents.length}<p class="list-empty" role="status">{m.loading()}</p>{:else if !roots.length}<div class="list-empty"><h2>{m.empty_heading()}</h2><p>{m.empty_help()}</p><Button size="sm" disabled={!connected} onclick={onnew}><Plus />{m.new_session()}</Button></div>{/if}
   {#each visible as agent (agent.id)}
     {@const children = agents.filter(w => w.ownerId === agent.id)}{@const host = hosts.find(h => h.id === agent.hostId)}
+    {@const status = agent.closeRequest ? m.closing_worker() : agent.stop?.status === "unknown" ? m.stop_unconfirmed() : agent.state === "stopping" ? m.stopping() : agent.state === "working" ? m.working() : agent.state === "error" ? m.failed() : m.idle()}
     <div role="group" class="session-row" data-swipe-id={agent.id} class:revealed={revealedId === agent.id} ontouchstart={e => touchStart(e, agent)} ontouchmove={touchMove} ontouchend={() => gesture = null} ontouchcancel={() => { gesture = null; revealedId = null; }}>
     {#if agent.role === "orc" && revealedId === agent.id}<Button class="tree-close-action" variant="destructive" size="sm" disabled={!connected || host?.connected === false || closingId === agent.id} onclick={() => onclosetree(agent.id)}>{m.close_tree()}</Button>{/if}
     <div class="session-item" class:worker-item={agent.role === "worker"} class:active={selectedId === agent.id} class:navigation-focus={!selectedId && focusedId === agent.id}>
       <button class="session-open" tabindex="-1" data-agent-id={agent.id} aria-current={selectedId === agent.id ? "true" : undefined} aria-label={m.open_agent({ title: agent.title, role: agent.role === "orc" ? m.orc() : m.worker() })} onclick={e => { if(Date.now() < suppressClickUntil) { e.preventDefault(); return; } if(revealedId) { revealedId = null; return; } onopen(agent.id); }}>
-        {#if agent.role === "orc"}<span class="session-meta"><span class:host-warning={host?.connected === false}>{agent.hostName}</span><span>{agent.project.alias}</span></span>{/if}<strong>{agent.title}</strong>
-        <span class="session-state"><span class:working={agent.state === "working"} class:failed={agent.state === "error"}><i></i>{agent.closeRequest ? m.closing_worker() : agent.stop?.status === "unknown" ? m.stop_unconfirmed() : agent.state === "stopping" ? m.stopping() : agent.state === "working" ? m.working() : agent.state === "error" ? m.failed() : m.idle()}</span>{#if agent.questions.some(q => q.state !== "answered")}<Badge variant="outline" class="border-amber-500/30 text-amber-200 text-[10px]">{m.needs_input()}</Badge>{/if}</span>{#if host?.connected === false}<small class="host-warning">{m.disconnected_host()}</small>{/if}
+        <span class="session-title-row"><strong>{agent.title}</strong><span class="session-indicators"><span class="session-state-dot" class:working={agent.state === "working"} class:attention={agent.state === "error" || !!agent.closeRequest || agent.stop?.status === "unknown" || agent.state === "stopping"} title={status} role="img" aria-label={status}></span>{#if agent.questions.some(q => q.state !== "answered")}<MessageCircle class="needs-input-icon" aria-label={m.needs_input()} role="img" />{/if}</span></span>
+        <span class="session-meta">{#if agent.role === "orc"}<span class:host-warning={host?.connected === false} title={host?.connected === false ? m.disconnected_host() : agent.hostName}>{agent.hostName}</span>{:else}<span>{m.worker()}</span>{/if}<span>{agent.project.alias}</span></span>
       </button>
-      {#if agent.role === "orc"}<button class="worker-disclosure" tabindex="-1" aria-label={expanded.includes(agent.id) ? m.collapse_workers() : m.expand_workers()} aria-expanded={expanded.includes(agent.id)} disabled={!children.length} onclick={() => { if(Date.now() >= suppressClickUntil) toggle(agent.id); }}><span>{#if expanded.includes(agent.id)}<ChevronDown />{:else}<ChevronRight />{/if}{m.current_workers({ count: children.length })}</span><span class:working={children.some(w => w.state === "working")}>{m.working_count({ count: children.filter(w => w.state === "working").length })}</span></button>{/if}
+      {#if agent.role === "orc" && children.length}<button class="worker-disclosure" tabindex="-1" aria-label={expanded.includes(agent.id) ? m.collapse_workers() : m.expand_workers()} title={m.current_workers({ count: children.length }) + " · " + m.working_count({ count: children.filter(w => w.state === "working").length })} aria-expanded={expanded.includes(agent.id)} onclick={() => { if(Date.now() >= suppressClickUntil) toggle(agent.id); }}><span>{#if expanded.includes(agent.id)}<ChevronDown />{:else}<ChevronRight />{/if}{children.length}</span>{#if children.some(w => w.state === "working")}<span class="working worker-working-count">{children.filter(w => w.state === "working").length}<i></i></span>{/if}</button>{/if}
     </div>
     {#if closeError?.id === agent.id}<p class="tree-close-error" role="alert">{closeError.reason}</p>{/if}
     </div>
