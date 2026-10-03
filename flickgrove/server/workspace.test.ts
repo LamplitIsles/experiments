@@ -894,7 +894,7 @@ test("Worker close waits for the observed turn, rejects new work, and keeps repo
     turnId: "stale-turn",
     status: "completed",
   });
-  expect(app.detail(worker.id).closeRequest?.turnEnded).toBe(false);
+  expect(app.detail(worker.id).state).toBe("working");
   await app.tool(runtime.agents.get(worker.id)!.token, "worker_report", {
     message: "Implementation failed with diagnostic details",
   });
@@ -987,7 +987,7 @@ test("pending closure allows only contextual answers and waits for the answer tu
     questionIds: [questionId],
   });
   expect(app.detail(worker.id).questions[0].state).toBe("answered");
-  expect(app.detail(worker.id).closeRequest?.turnEnded).toBe(false);
+  expect(app.detail(worker.id).state).toBe("working");
   runtime.emit(worker.id, {
     type: "completed",
     turnId: app.detail(worker.id).turnId!,
@@ -1016,7 +1016,6 @@ test("restart retains pending closure without pretending an interrupted turn com
   expect(restarted.detail(worker.id)).toMatchObject({
     state: "error",
     closeRequest: {
-      turnEnded: false,
       reason: expect.stringContaining("unconfirmed"),
     },
   });
@@ -1036,3 +1035,35 @@ test("restart retains pending closure without pretending an interrupted turn com
     false,
   );
 });
+
+test.each([false, true])(
+  "authoritative failed completion closes a Worker even when requested afterward or preceded by error (%s)",
+  async (requestAfterCompletion) => {
+    const { app, runtime, owner, token, worker } = await workerFixture();
+    const turnId = app.detail(worker.id).turnId!;
+    await app.tool(runtime.agents.get(worker.id)!.token, "worker_report", {
+      message: "Final failure diagnosis",
+    });
+    if (!requestAfterCompletion)
+      await app.tool(token, "worker_close", { workerId: worker.id });
+    runtime.emit(worker.id, { type: "error", error: "Compilation failed" });
+    expect(app.detail(worker.id).turnId).toBe(turnId);
+    runtime.emit(worker.id, {
+      type: "completed",
+      turnId,
+      status: "failed",
+      error: "Compilation failed",
+    });
+    if (requestAfterCompletion) {
+      expect(
+        await app.tool(token, "worker_close", { workerId: worker.id }),
+      ).toMatchObject({ closed: true });
+    }
+    expect(app.snapshot().agents.some((a) => a.id === worker.id)).toBe(false);
+    expect(
+      app
+        .detail(owner.id)
+        .messages.some((m) => m.text.includes("Final failure diagnosis")),
+    ).toBe(true);
+  },
+);

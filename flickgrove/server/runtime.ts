@@ -22,6 +22,7 @@ export type RuntimeEvent =
   | { type: "disconnected"; error: string };
 export interface RuntimeAgent extends Detail {
   token: string;
+  turnEnded?: boolean;
 }
 export interface RuntimeHandle {
   threadId: string;

@@ -57,7 +57,6 @@ export interface Delivery {
 }
 export interface Agent {
   closeRequest?: {
-    turnEnded: boolean;
     reason: string;
   };
   hostId?: string;

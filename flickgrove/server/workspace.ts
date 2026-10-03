@@ -57,6 +57,7 @@ export class Workspace {
       : { agents: [], settings: null, revision: 0 };
     for (const a of this.state.agents) {
       if (a.state === "working" || a.state === "stopping") {
+        a.turnEnded = false;
         if (a.stop?.status === "pending") a.stop.status = "unknown";
         a.state = "error";
         a.error = "Backend restarted. Send a message to resume.";
@@ -90,9 +91,7 @@ export class Workspace {
   private event(a: RuntimeAgent, event: RuntimeEvent) {
     if (a.closed || this.disposed) return;
     if (event.type === "working") {
-      if (a.closeRequest) {
-        a.closeRequest.turnEnded = false;
-      }
+      a.turnEnded = false;
       if (a.stop && a.stop.turnId !== event.turnId) a.stop = undefined;
       a.state =
         a.stop?.turnId === event.turnId && a.stop.status === "pending"
@@ -174,7 +173,7 @@ export class Workspace {
       }
       this.finalAnswers.delete(key);
       if (a.turnId === event.turnId) {
-        if (a.closeRequest) a.closeRequest.turnEnded = true;
+        a.turnEnded = true;
         const stopped =
           a.stop?.turnId === event.turnId && event.status === "interrupted";
         if (a.stop?.turnId === event.turnId)
@@ -188,12 +187,12 @@ export class Workspace {
         a.workingSince = undefined;
       }
     } else {
-      if (a.closeRequest) a.closeRequest.turnEnded = false;
+      a.turnEnded = false;
       if (event.type === "disconnected") this.handles.delete(a.id);
       if (a.stop?.status === "pending") a.stop.status = "unknown";
       a.state = "error";
       a.error = event.error;
-      a.turnId = undefined;
+      if (event.type === "disconnected") a.turnId = undefined;
       a.workingSince = undefined;
     }
     this.save();
@@ -207,6 +206,7 @@ export class Workspace {
   private publicAgent(a: RuntimeAgent): Agent {
     const {
       token: _token,
+      turnEnded: _turnEnded,
       messages: _messages,
       deliveries: _deliveries,
       ...agent
@@ -429,9 +429,7 @@ export class Workspace {
     try {
       const handle = await this.handle(a);
       const activeTurn = a.state === "working" ? a.turnId : undefined;
-      if (a.closeRequest) {
-        a.closeRequest.turnEnded = false;
-      }
+      a.turnEnded = false;
       a.state = "working";
       a.workingSince ??= Date.now();
       a.error = undefined;
@@ -699,10 +697,9 @@ export class Workspace {
             "Only an interrupted Worker with no observed active turn can be confirmed",
           );
         w.closeRequest ??= {
-          turnEnded: w.state === "idle",
           reason: "Waiting for current work to finish",
         };
-        if (input.confirmInterrupted) w.closeRequest.turnEnded = true;
+        if (input.confirmInterrupted) w.turnEnded = true;
         this.save();
         this.advanceWorkerCloses();
         return {
@@ -770,7 +767,7 @@ export class Workspace {
       else if (
         w.state === "working" ||
         w.state === "stopping" ||
-        !w.closeRequest.turnEnded
+        (w.state !== "idle" && !w.turnEnded)
       )
         reason =
           w.state === "working"
