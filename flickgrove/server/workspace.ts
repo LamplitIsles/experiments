@@ -172,6 +172,8 @@ export class Workspace {
       if (event.turnId === a.turnId && a.execution?.retrying) {
         a.execution = undefined;
         a.error = undefined;
+        // Publish recovery even when the item is buffered or omitted below.
+        this.save();
       }
       const item = event.item;
       if (item.type !== "agentMessage") return;

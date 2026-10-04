@@ -6,6 +6,10 @@ for (const width of [1440, 390]) {
     page,
     request,
   }) => {
+    let publications = 0;
+    page.on("websocket", (socket) =>
+      socket.on("framereceived", () => publications++),
+    );
     await page.setViewportSize({ width, height: 900 });
     await request.post(origin + "/fixture/reset", { data: { mode: "long" } });
     await page.goto(origin);
@@ -18,10 +22,19 @@ for (const width of [1440, 390]) {
     const reason =
       "Selected model is at capacity. " +
       "Native reason with a long_unbroken_identifier_".repeat(80);
-    const change = (event: object, agentId = "orc") =>
-      request.post(origin + "/fixture/change", {
+    const change = async (event: object, agentId = "orc") => {
+      const before = publications;
+      await request.post(origin + "/fixture/change", {
         data: { execution: { agentId, event } },
       });
+      await expect.poll(() => publications).toBeGreaterThan(before);
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          ),
+      );
+    };
     await change({
       type: "error",
       willRetry: true,
@@ -59,6 +72,38 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole("button", { name: "Stop Orc" })).toHaveCount(0);
     await feedback.click();
     await page.screenshot({ path: `${shots}/${width}-capacity-expanded.png` });
+    await change(
+      {
+        type: "error",
+        willRetry: false,
+        errorKind: "error",
+        error: "Other Worker failure",
+      },
+      "voice",
+    );
+    await expect(feedback).toHaveAttribute("aria-expanded", "true");
+    await expect(page.locator(".execution-reason")).toHaveText(reason);
+    await change({
+      type: "error",
+      willRetry: false,
+      errorKind: "capacity",
+      error: reason,
+    });
+    await expect(feedback).toHaveAttribute("aria-expanded", "true");
+    await page.screenshot({
+      path: `${shots}/${width}-review-disclosure-preserved.png`,
+    });
+    await change({
+      type: "error",
+      willRetry: false,
+      errorKind: "error",
+      error: "Changed native cause",
+    });
+    await expect(feedback).toHaveAttribute("aria-expanded", "false");
+    await feedback.click();
+    await expect(page.locator(".execution-reason")).toHaveText(
+      "Changed native cause",
+    );
     await change({ type: "completed", status: "completed" });
     await expect(feedback).toHaveCount(0);
     await expect(page.locator(".detail-status")).toContainText("Idle");

@@ -70,8 +70,9 @@ test("isolated native notifications through Workspace and real Chord preserve re
   };
   try {
     await writeFile(control, JSON.stringify({ hold: true }));
-    const a = await app.createOrc("fixture"),
-      b = await app.createOrc("fixture");
+    // Keep the selected thread separate from the fixture's first-thread async question injection.
+    const b = await app.createOrc("fixture"),
+      a = await app.createOrc("fixture");
     const id = qualify(service.identity.id, a.id);
     client = await openGrove(
       socketWithHeaders(origin.replace("http:", "ws:") + "/api/socket", {
@@ -162,6 +163,32 @@ test("isolated native notifications through Workspace and real Chord preserve re
     });
     await until(() => detail()?.error === undefined);
     expect(detail()?.workingSince).toBe(since);
+    for (const phase of ["final_answer", "commentary"]) {
+      await inject("error", { threadId, turnId, willRetry: true, error });
+      await until(() => detail()?.execution?.retrying === true);
+      // Completion itself is progress; no delta or item start precedes it.
+      await inject("item/completed", {
+        threadId,
+        turnId,
+        completedAtMs: Date.now(),
+        item: {
+          type: "agentMessage",
+          id: `recovered-${phase}`,
+          text: `Recovered ${phase}`,
+          phase,
+          delivery: null,
+          questions: null,
+          memoryCitation: null,
+        },
+      });
+      await until(() => app.detail(a.id).execution === undefined);
+      await until(() => detail()?.execution === undefined);
+      expect(detail()?.error).toBeUndefined();
+      expect(detail()?.workingSince).toBe(since);
+      expect(
+        detail()?.messages.some((m) => m.id === `recovered-${phase}`),
+      ).toBe(false);
+    }
     await inject("error", { threadId, turnId, willRetry: false, error });
     await until(() => detail()?.state === "error");
     expect(detail()?.execution).toEqual({ kind: "capacity", retrying: false });
@@ -182,6 +209,12 @@ test("isolated native notifications through Workspace and real Chord preserve re
     });
     await until(() => app.detail(a.id).turnId === undefined);
     expect(app.detail(a.id).error).toContain("capacity");
+    expect(
+      app.detail(a.id).messages.some((m) => m.id === "recovered-final_answer"),
+    ).toBe(true);
+    expect(
+      app.detail(a.id).messages.some((m) => m.id === "recovered-commentary"),
+    ).toBe(false);
     // A distinct native turn start resets the old failure; old turn events cannot change it.
     await inject("turn/started", {
       threadId,

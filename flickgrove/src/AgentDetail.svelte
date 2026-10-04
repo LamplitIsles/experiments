@@ -50,7 +50,13 @@
     else setQuestionPanel(detail.id, !panelOpen);
   }
   let reasonOpen = $state(false);
-  $effect(() => { if (detail.error) reasonOpen = false; });
+  let reasonIdentity: string | undefined;
+  let reasonCause: string | undefined;
+  $effect(() => {
+    if (reasonIdentity !== detail.id || reasonCause !== detail.error) reasonOpen = false;
+    reasonIdentity = detail.id;
+    reasonCause = detail.error;
+  });
   const executionLabel = $derived(detail.execution?.retrying ? m.execution_retrying() : detail.execution?.kind === "capacity" ? m.execution_capacity() : m.execution_failed());
   const pending = $derived(detail.questions.filter(q => q.state !== "answered"));
   const reports = $derived(new Map(detail.deliveries.filter(d => d.source === "worker" && d.reportingWorkerId).map(d => [d.id, d])));
