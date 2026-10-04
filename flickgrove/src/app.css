@@ -452,12 +452,8 @@ pre {
   gap: 8px;
   padding: 0 10px 10px 16px;
 }
-.composer-bottom > span {
-  flex: 1;
-  font-size: 11px;
-  color: #85858e;
-}
 .composer-actions {
+  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1681,5 +1677,35 @@ pre {
   }
   .message-image {
     width: 104px;
+  }
+}
+
+.mobile-skill {
+  display: none;
+}
+.execution-feedback {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.execution-reason {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow-y: auto;
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+@media (max-width: 700px) {
+  .mobile-skill {
+    display: inline-flex;
   }
 }

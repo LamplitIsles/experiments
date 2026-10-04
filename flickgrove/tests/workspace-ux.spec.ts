@@ -86,7 +86,7 @@ test("persistent selection, circular physical shortcuts, visible numeric index a
   await expect(title(page)).toHaveText("Streaming voice input");
   await page.keyboard.press("Escape");
   await composer(page).fill("draft ");
-  await composer(page).press("$");
+  await composer(page).press("Alt+KeyS");
   await page.keyboard.press("Alt+j");
   await page.keyboard.press("Meta+2");
   await expect(title(page)).toHaveText("Streaming voice input");

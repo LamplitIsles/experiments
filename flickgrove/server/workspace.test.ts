@@ -1022,6 +1022,8 @@ test("restart retains pending closure without pretending an interrupted turn com
   ).rejects.toThrow("interrupted Worker");
   runtime.emit(worker.id, {
     type: "error",
+    turnId: app.detail(worker.id).turnId!,
+    willRetry: false,
     error: "Turn outcome not received",
   });
   app.dispose();
@@ -1065,7 +1067,12 @@ test.each([false, true])(
     });
     if (!requestAfterCompletion)
       await app.tool(token, "worker_close", { workerId: worker.id });
-    runtime.emit(worker.id, { type: "error", error: "Compilation failed" });
+    runtime.emit(worker.id, {
+      type: "error",
+      turnId,
+      willRetry: false,
+      error: "Compilation failed",
+    });
     expect(app.detail(worker.id).turnId).toBe(turnId);
     runtime.emit(worker.id, {
       type: "completed",

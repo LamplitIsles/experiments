@@ -42,7 +42,7 @@ for (const surface of [
       if (surface === "skill")
         await page
           .getByRole("textbox", { name: "Message Orc", exact: true })
-          .press("$");
+          .press("Alt+KeyS");
       if (surface === "weekly")
         await page.locator(".mobile-back .weekly-button").click();
       if (surface === "title")

@@ -117,6 +117,7 @@ export interface Agent {
   model: string;
   effort: Effort;
   state: WorkState;
+  execution?: { kind: "capacity" | "error"; retrying: boolean };
   workingSince?: number;
   threadId?: string;
   turnId?: string;

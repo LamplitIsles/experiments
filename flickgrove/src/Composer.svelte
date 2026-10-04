@@ -3,7 +3,7 @@
   import { navigation, setSurface } from "./navigation.svelte";
   import { Button } from '$lib/components/ui/button/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
-  import { ImagePlus, X, ArrowUp, Square } from '@lucide/svelte';
+  import { ImagePlus, X, ArrowUp, Square, Sparkles } from '@lucide/svelte';
   import { storagePrefix } from './api';
   import { imagePreview, loadImages, saveImages, draftKey, operationKey, intakeError, IMAGE_ACCEPT, type ImageDraft } from './image-drafts';
   import { onMount, tick, untrack } from 'svelte';
@@ -79,20 +79,22 @@
     } catch(e){imageError=(e as Error).message;}finally{if(active)preparing=false;}
   }
   function openSkills() {
-    if(skillOpen || !input || (input.selectionStart !== 0 && !/\s/.test(text[input.selectionStart-1]))) return false;
+    if(navigation.surfaces.length || !input || composing || stopping || preparing || !connected) return false;
     insertion={start:input.selectionStart,end:input.selectionEnd}; setSurface("skill", true); return true;
   }
-  function beforeinput(e:InputEvent) {
-    if(!composing && !e.isComposing && e.cancelable && e.inputType === 'insertText' && e.data === '$' && openSkills()) e.preventDefault();
+  function skillShortcut(e:KeyboardEvent) {
+    if(e.defaultPrevented || e.isComposing || e.keyCode === 229 || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.code !== "KeyS") return;
+    if(e.target instanceof HTMLElement && e.target.closest("input, textarea, [contenteditable=true]") && !e.target.closest(".composer")) return;
+    if(openSkills()) { e.preventDefault(); e.stopPropagation(); }
   }
   async function keydown(e:KeyboardEvent) {
     // WebKit may end composition before the confirming Enter keydown.
     if(composing || e.isComposing || e.keyCode === 229 || e.ctrlKey || e.metaKey || e.altKey) return;
-    if(e.key === '$' && openSkills()) { e.preventDefault(); e.stopPropagation(); return; }
     if(e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); return; }
     if(e.key==='Enter' && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); await send(); }
   }
 </script>
+<svelte:window onkeydown={skillShortcut} oncompositionstart={() => { composing = true; }} oncompositionend={() => { composing = false; }} />
 <div class="composer-wrap">
   <SkillSearch bind:open={() => skillOpen, value => setSurface("skill", value)} {skills} {project} onselect={skill => void insertSkill(skill)} onclose={() => void restoreInput()} />
   <form class="composer" ondragover={e=>{if(e.dataTransfer?.types.includes("Files"))e.preventDefault();}} ondrop={e=>{e.preventDefault();void addFiles(Array.from(e.dataTransfer?.files ?? []));}} onsubmit={e => {e.preventDefault();void send();}}>
@@ -100,8 +102,8 @@
     {#if images.length}<div class="image-drafts">{#each images as image,index (image.id)}<div class="image-draft"><img src={previews[index]} alt={image.file.name} /><Button variant="secondary" size="icon-sm" aria-label={`Remove image ${index+1}`} onclick={()=>removeImage(image.id)}><X /></Button></div>{/each}</div>{/if}
     {#if imageError}<p class="inline-error" role="alert">{imageError}</p>{/if}
     {#if preparing}<p role="status">Preparing images…</p>{/if}
-    <Textarea onpaste={paste} bind:ref={input} bind:value={text} aria-label={m.message_orc()} placeholder={m.message_placeholder()} disabled={stopping || preparing} rows={2} oncompositionstart={() => { composing = true; }} oncompositionend={() => { composing = false; }} onbeforeinput={beforeinput} onkeydown={keydown} />
-    <div class="composer-bottom"><Button variant="ghost" size="icon-sm" aria-label="Add images" title="Add images" disabled={preparing || !ready || !imageStorage || stopping} onclick={()=>picker.click()}><ImagePlus /></Button><span>{m.skills_hint()}</span><div class="composer-actions">
+    <Textarea onpaste={paste} bind:ref={input} bind:value={text} aria-label={m.message_orc()} placeholder={m.message_placeholder()} disabled={stopping || preparing} rows={2} oncompositionstart={() => { composing = true; }} oncompositionend={() => { composing = false; }} onkeydown={keydown} />
+    <div class="composer-bottom"><Button variant="ghost" size="icon-sm" aria-label="Add images" title="Add images" disabled={preparing || !ready || !imageStorage || stopping} onclick={()=>picker.click()}><ImagePlus /></Button><Button class="mobile-skill" variant="ghost" size="icon-sm" aria-label={m.search_skills()} title={m.search_skills()} disabled={preparing || stopping || !connected} onclick={openSkills}><Sparkles /></Button><div class="composer-actions">
       {#if working || stopping}<Button variant="secondary" class="round-action" size="icon-sm" title={m.stop_orc()} aria-label={m.stop_orc()} disabled={!connected || stopping} onclick={onstop}><Square /></Button>{/if}
       <Button class="round-action" size="icon-sm" aria-label={m.send_message()} title={m.send_message()} disabled={(!text.trim() && !images.length) || !connected || stopping || preparing || !ready} type="submit"><ArrowUp /></Button>
     </div></div>

@@ -83,6 +83,7 @@ export class Workspace {
         if (a.stop?.status === "pending") a.stop.status = "unknown";
         a.state = "error";
         a.error = "Backend restarted. Send a message to resume.";
+        a.execution = undefined;
         a.turnId = undefined;
         a.workingSince = undefined;
       }
@@ -130,8 +131,30 @@ export class Workspace {
     return () => this.subscribers.delete(listener);
   }
   private event(a: RuntimeAgent, event: RuntimeEvent) {
-    if (a.closed || this.disposed) return;
+    if (
+      a.closed ||
+      this.disposed ||
+      (event.threadId && event.threadId !== a.threadId)
+    )
+      return;
+    if (
+      event.type !== "disconnected" &&
+      this.completedTurns.has(`${a.id}/${event.turnId}`)
+    )
+      return;
+    if (
+      (event.type === "error" || event.type === "progress") &&
+      event.turnId !== a.turnId
+    )
+      return;
     if (event.type === "working") {
+      if (a.turnId === event.turnId) return;
+      if (a.turnId) {
+        this.completedTurns.add(`${a.id}/${a.turnId}`);
+        this.finalAnswers.delete(`${a.id}/${a.turnId}`);
+      }
+      a.execution = undefined;
+      a.workingSince = undefined;
       a.turnEnded = false;
       if (a.stop && a.stop.turnId !== event.turnId) a.stop = undefined;
       a.state =
@@ -141,7 +164,17 @@ export class Workspace {
       a.turnId = event.turnId;
       a.workingSince ??= Date.now();
       a.error = undefined;
+    } else if (event.type === "progress") {
+      if (!a.execution?.retrying) return;
+      a.execution = undefined;
+      a.error = undefined;
     } else if (event.type === "item") {
+      if (event.turnId === a.turnId && a.execution?.retrying) {
+        a.execution = undefined;
+        a.error = undefined;
+        // Publish recovery even when the item is buffered or omitted below.
+        this.save();
+      }
       const item = event.item;
       if (item.type !== "agentMessage") return;
       if (item.delivery === "async" && item.questions?.length) {
@@ -223,11 +256,36 @@ export class Workspace {
         a.error =
           a.state === "idle"
             ? undefined
-            : (event.error ?? "Work was interrupted");
+            : (event.error ?? a.error ?? "Work was interrupted");
+        a.execution =
+          a.state === "idle"
+            ? undefined
+            : {
+                kind: event.errorKind ?? a.execution?.kind ?? "error",
+                retrying: false,
+              };
         a.turnId = undefined;
         a.workingSince = undefined;
       }
+    } else if (event.type === "error") {
+      if (
+        event.willRetry &&
+        a.state === "error" &&
+        a.execution &&
+        !a.execution.retrying
+      )
+        return;
+      a.execution = {
+        kind: event.errorKind ?? "error",
+        retrying: event.willRetry,
+      };
+      a.error = event.error;
+      if (!event.willRetry) {
+        a.state = "error";
+        a.workingSince = undefined;
+      }
     } else {
+      a.execution = undefined;
       a.turnEnded = false;
       if (event.type === "disconnected") this.handles.delete(a.id);
       if (a.stop?.status === "pending") a.stop.status = "unknown";
@@ -696,11 +754,12 @@ export class Workspace {
         throw new DeliveryRejected((error as Error).message);
       }
       const handle = await this.handle(a);
-      const activeTurn = a.state === "working" ? a.turnId : undefined;
+      const activeTurn = !a.turnEnded ? a.turnId : undefined;
       a.turnEnded = false;
-      a.state = "working";
-      a.workingSince ??= Date.now();
-      a.error = undefined;
+      if (!activeTurn && !a.error) {
+        a.state = "working";
+        a.workingSince ??= Date.now();
+      }
       this.save();
       let turnId: string;
       try {
@@ -721,7 +780,11 @@ export class Workspace {
         a.turnId = currentTurn;
         turnId = await handle.send(text, currentTurn, paths);
       }
-      if (!this.completedTurns.has(`${a.id}/${turnId}`)) a.turnId = turnId;
+      if (!this.completedTurns.has(`${a.id}/${turnId}`)) {
+        if (turnId !== activeTurn)
+          this.event(a, { type: "working", turnId, threadId: handle.threadId });
+        a.turnId = turnId;
+      }
       if (a.stop && a.stop.turnId !== turnId) a.stop = undefined;
       if (!a.messages.some((m) => m.id === requestId))
         a.messages.splice(messagePosition, 0, {
@@ -768,7 +831,7 @@ export class Workspace {
         (previousState !== "working" && a.state === "idle")
       ) {
         a.state = "error";
-        a.error = d.error;
+        // Delivery feedback belongs to the message; retain any native cause.
         a.workingSince = undefined;
       }
       this.save();

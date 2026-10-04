@@ -21,7 +21,7 @@ test("abbreviated skill query inserts the exact invocation without sending", asy
   await input.evaluate((el) =>
     (el as HTMLTextAreaElement).setSelectionRange(7, 7),
   );
-  await input.press("$");
+  await input.press("Alt+KeyS");
   await search.fill("grdo");
   await expect(page.getByRole("option")).toHaveCount(1);
   await expect(page.getByRole("option")).toContainText("grill-with-docs");
@@ -29,7 +29,7 @@ test("abbreviated skill query inserts the exact invocation without sending", asy
   await expect(input).toHaveValue("before $grill-with-docs after");
   await expect(input).toBeFocused();
   await expect(page.locator(".user-message")).toHaveCount(messagesBefore);
-  await input.press("$");
+  await input.press("Alt+KeyS");
   await search.fill("toorc");
   await expect(page.getByRole("option")).toHaveCount(1);
   await search.press("Enter");

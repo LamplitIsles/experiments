@@ -549,6 +549,8 @@ test("official wire interruption confirms the observed turn and weekly reads can
       turnId,
       status: "interrupted",
       error: undefined,
+      errorKind: undefined,
+      threadId: handle.threadId,
     });
     await expect(handle.interrupt(turnId)).rejects.toThrow();
     const requests = (

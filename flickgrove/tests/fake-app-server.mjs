@@ -281,8 +281,17 @@ function createNativeImage(kind, number) {
   return path;
 }
 
+const emittedNotifications = new Set();
 async function runTurn(turn) {
   const wait = () => {
+    for (const notification of control().notifications ?? []) {
+      if (emittedNotifications.has(notification.id)) continue;
+      emittedNotifications.add(notification.id);
+      send({
+        method: notification.method,
+        params: notification.params,
+      });
+    }
     if (turn.status !== "inProgress") return;
     if (control().hold) return setTimeout(wait, 15);
     const text = textOf(

@@ -31,6 +31,7 @@ function qualified<T extends Agent>(host: Host, a: T): T {
     model: a.model,
     effort: a.effort,
     state: a.state,
+    execution: a.execution,
     workingSince: a.workingSince,
     threadId: a.threadId,
     turnId: a.turnId,
