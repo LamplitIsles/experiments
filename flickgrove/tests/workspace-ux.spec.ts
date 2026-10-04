@@ -572,3 +572,82 @@ test("an unadmitted batch reloads its original envelope and missing lookup never
     (await (await request.get(`${origin}/fixture/info`)).json()).inputs.length,
   ).toBe(before);
 });
+
+test("question drawer widening releases navigation without dismissing foreground", async ({
+  page,
+  request,
+}) => {
+  await request.post(`${origin}/fixture/reset`, { data: {} });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(origin);
+  await page.locator(".session-open").first().click();
+  await composer(page).fill("Responsive draft");
+  await toggle(page).click();
+  await expect(page.locator(".question-panel")).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect
+    .poll(() => page.evaluate(() => history.state.grove.surfaces))
+    .toEqual([]);
+  await page.locator(".question-panel-heading button").click();
+  await expect(page.locator(".question-panel")).toHaveCount(0);
+  await composer(page).press("Meta+2");
+  await expect(title(page)).toHaveText("Reader performance");
+  await composer(page).press("Alt+k");
+  await expect(title(page)).toHaveText("Streaming voice input");
+  await expect(composer(page)).toHaveValue("Responsive draft");
+  await expect(composer(page)).toBeFocused();
+  await page.screenshot({ path: `${shots}/review-wide-drawer-closed.png` });
+  await page.setViewportSize({ width: 1000, height: 900 });
+  await toggle(page).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect
+    .poll(() => page.evaluate(() => history.state.grove.surfaces))
+    .toEqual(["settings"]);
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden();
+});
+
+test("fresh questions wait behind New and browser Back dismisses the visible foreground first", async ({
+  page,
+  request,
+}) => {
+  await request.post(`${origin}/fixture/reset`, { data: {} });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(origin);
+  await page.locator(".session-open").first().click();
+  await composer(page).fill("Foreground conversation draft");
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("n");
+  const input = page.getByRole("dialog").getByRole("textbox").first();
+  await input.fill("New session draft");
+  await request.post(`${origin}/fixture/change`, {
+    data: { question: true, questionId: "foreground" },
+  });
+  await expect(toggle(page)).toContainText("1");
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("New session draft");
+  await expect
+    .poll(() => page.evaluate(() => history.state.grove.surfaces))
+    .toEqual(["new"]);
+  await page.screenshot({
+    path: `${shots}/review-mobile-new-question-deferred.png`,
+  });
+  await page.goBack();
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(page.locator(".question-panel")).toBeVisible();
+  await expect(page.locator(".current-question h3")).toHaveText(
+    "foreground question 1",
+  );
+  await expect(composer(page)).toHaveValue("Foreground conversation draft");
+  await page.screenshot({
+    path: `${shots}/review-mobile-question-after-back.png`,
+  });
+  await page.goBack();
+  await expect(page.locator(".question-panel")).toHaveCount(0);
+  await expect(title(page)).toHaveText("Streaming voice input");
+  await page.goBack();
+  await expect(page.locator(".session-list")).toBeVisible();
+});

@@ -83,6 +83,13 @@ export function setSurface(name: Surface, open: boolean) {
     if (index === next.surfaces.length - 1) void back();
   }
 }
+// The wide question rail is not a foreground navigation layer.
+export function removeQuestionDrawer() {
+  const next = route();
+  if (!next.surfaces.includes("questions")) return;
+  next.surfaces = next.surfaces.filter((surface) => surface !== "questions");
+  write(next, true);
+}
 export async function openConversation(
   id: string,
   fromDetail = false,

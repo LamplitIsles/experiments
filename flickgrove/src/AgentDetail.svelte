@@ -3,8 +3,8 @@
   import { X, ArrowDown, MessageCircle } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { questionPanels, setQuestionPanel } from "./question-state.svelte";
-  import { navigation, setSurface, back } from "./navigation.svelte";
-  import { tick, untrack } from "svelte";
+  import { navigation, setSurface, removeQuestionDrawer, back } from "./navigation.svelte";
+  import { tick } from "svelte";
   import type { Answer, Agent, Detail, Skill, Message } from "./contracts";
   import { elapsed } from "./api";
   import TitleEditor from "./TitleEditor.svelte";
@@ -28,12 +28,21 @@
     media.addEventListener("change", resize);
     return () => media.removeEventListener("change", resize);
   });
+  let drawerWasOpen = false;
   $effect(() => {
-    if (narrow && panelOpen && !untrack(() => navigation.surfaces.includes("questions"))) setSurface("questions", true);
+    const requested = panelOpen;
+    const drawerOpen = navigation.surfaces.includes("questions");
+    if (!narrow) { drawerWasOpen = false; removeQuestionDrawer(); return; }
+    if (drawerWasOpen && !drawerOpen) {
+      drawerWasOpen = false;
+      setQuestionPanel(detail.id, false);
+      return;
+    }
+    drawerWasOpen = drawerOpen;
+    // A fresh question waits for the currently visible foreground to dismiss.
+    if (requested && !drawerOpen && !navigation.surfaces.length) setSurface("questions", true);
   });
-  $effect(() => {
-    if (narrow && !navigation.surfaces.includes("questions")) setQuestionPanel(detail.id, false);
-  });
+  const panelVisible = $derived(panelOpen && (!narrow || navigation.surfaces.includes("questions")));
   function toggleQuestions() {
     if (narrow) { if (navigation.surfaces.includes("questions")) void back(); else { setQuestionPanel(detail.id, true); setSurface("questions", true); } }
     else setQuestionPanel(detail.id, !panelOpen);
@@ -43,7 +52,7 @@
   const reports = $derived(new Map(detail.deliveries.filter(d => d.source === "worker" && d.reportingWorkerId).map(d => [d.id, d])));
 </script>
 <aside class="agent-detail" aria-label={detail.title}>
-  <div class="mobile-back"><Button variant="ghost" size="sm" onclick={onclose}>{navigation.details.length > 1 ? m.back_orc() : m.back_sessions()}</Button><Weekly surface="weekly-detail" hostId={detail.hostId} {connected} /></div><header class="detail-heading"><div class="detail-meta"><div class="role-project">{detail.role === "orc" ? m.orc() : m.worker()} / {detail.project.alias}</div><div class="detail-status">{#if detail.hostName}<span class="owner-badge">{detail.hostName}</span>{/if}<span class:working={detail.state === "working"} class:failed={detail.state === "error"}><i></i>{detail.closeRequest ? m.closing_worker() : detail.stop?.status === "unknown" ? m.stop_unconfirmed() : detail.state === "stopping" ? m.stopping() : detail.state === "working" ? m.working() + " " + elapsed(detail.workingSince, now) : detail.state === "error" ? m.failed() : m.idle()}</span>{#if pending.length}<Badge variant="outline" class="border-amber-500/30 text-amber-200">{m.needs_input()}</Badge>{/if}</div><div class="detail-model">{detail.model} / {detail.effort}{#if detail.serviceTier === "priority"} / {m.fast_mode()}{/if}</div></div><Button class="questions-toggle" variant="ghost" size="sm" aria-label={m.all_questions()} aria-expanded={panelOpen} onclick={toggleQuestions}><MessageCircle />{m.all_questions()}{#if pending.length}<span class="pending-count">{pending.length}</span>{/if}</Button><TitleEditor title={detail.title} editable={detail.role === "orc" && connected} {onrename} /></header>
+  <div class="mobile-back"><Button variant="ghost" size="sm" onclick={onclose}>{navigation.details.length > 1 ? m.back_orc() : m.back_sessions()}</Button><Weekly surface="weekly-detail" hostId={detail.hostId} {connected} /></div><header class="detail-heading"><div class="detail-meta"><div class="role-project">{detail.role === "orc" ? m.orc() : m.worker()} / {detail.project.alias}</div><div class="detail-status">{#if detail.hostName}<span class="owner-badge">{detail.hostName}</span>{/if}<span class:working={detail.state === "working"} class:failed={detail.state === "error"}><i></i>{detail.closeRequest ? m.closing_worker() : detail.stop?.status === "unknown" ? m.stop_unconfirmed() : detail.state === "stopping" ? m.stopping() : detail.state === "working" ? m.working() + " " + elapsed(detail.workingSince, now) : detail.state === "error" ? m.failed() : m.idle()}</span>{#if pending.length}<Badge variant="outline" class="border-amber-500/30 text-amber-200">{m.needs_input()}</Badge>{/if}</div><div class="detail-model">{detail.model} / {detail.effort}{#if detail.serviceTier === "priority"} / {m.fast_mode()}{/if}</div></div><Button class="questions-toggle" variant="ghost" size="sm" aria-label={m.all_questions()} aria-expanded={panelVisible} onclick={toggleQuestions}><MessageCircle />{m.all_questions()}{#if pending.length}<span class="pending-count">{pending.length}</span>{/if}</Button><TitleEditor title={detail.title} editable={detail.role === "orc" && connected} {onrename} /></header>
   {#if closeError}<p class="detail-close-error" role="alert">{closeError}</p>{/if}
   <div class="detail-body"><div class="dialogue-column"><div class="conversation-wrap"><div class="conversation" bind:this={transcript} onscroll={() => follow = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 80}>
     {#if !connected}<p class="host-outage" role="status">{m.host_offline()}{#if lastSeen}<br/>{m.last_seen({ time: new Date(lastSeen).toLocaleString() })}{/if}</p>{/if}
@@ -70,7 +79,7 @@
   {#if !follow}<Button class="jump-bottom" variant="secondary" size="icon-sm" aria-label={m.jump_bottom()} title={m.jump_bottom()} onclick={jumpToBottom}><ArrowDown /></Button>{/if}</div>
   {#if detail.role === "orc"}<Composer bind:this={composer} agentId={detail.id} project={detail.project.alias} {skills} {connected} working={detail.state === "working"} stopping={detail.state === "stopping"} {onstop} {onsend} />{:else}<footer class="read-only"><p>{m.read_only()}</p>{#if owner}<button onclick={() => onopen(owner.id)}>{m.through_orc()}</button>{/if}</footer>{/if}
   </div>
-  {#if panelOpen}<section class="question-panel" aria-label={m.all_questions()}>
+  {#if panelVisible}<section class="question-panel" aria-label={m.all_questions()}>
     <header class="question-panel-heading"><strong>{m.all_questions()}</strong><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={toggleQuestions}><X /></Button></header>
     {#if detail.role === "orc"}<Questions agentId={detail.id} questions={detail.questions} deliveries={detail.deliveries} connected={connected && detail.state !== "stopping"} {onanswer} {onlookup} {onretry} />
     {:else}<div class="delegated-questions">{#each detail.questions as q}<div><p>{q.text}</p><span>{q.state === "answered" ? q.answer : m.delegated()}</span></div>{/each}</div>{/if}
