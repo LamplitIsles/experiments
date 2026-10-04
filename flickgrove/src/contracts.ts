@@ -96,6 +96,7 @@ export interface Delivery {
   at: number;
 }
 export interface Agent {
+  directoryBranch?: string;
   historyCursor?: string;
   historyMessageCount?: number;
   closeRequest?: {
