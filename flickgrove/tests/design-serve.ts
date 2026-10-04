@@ -11,7 +11,7 @@ import { Workspace } from "../server/workspace";
 import { HostService } from "../server/hosts";
 import { createHandler, createUpgrade } from "../server/http";
 import { groveWebsocket, type SocketData } from "../server/chord-socket";
-import { DeliveryRejected } from "../server/runtime";
+import { type RuntimeEvent, DeliveryRejected } from "../server/runtime";
 import { FakeRuntime } from "../server/testing";
 import type { Detail, WeeklyUsage } from "../src/contracts";
 const directory = mkdtempSync(join(tmpdir(), "grove-design-preview-"));
@@ -434,6 +434,12 @@ const server = Bun.serve({
       });
     if (url.pathname === "/fixture/change" && request.method === "POST") {
       const body = (await request.json()) as {
+        execution?: {
+          agentId?: string;
+          threadId?: string;
+          turnId?: string;
+          event: Exclude<RuntimeEvent, { type: "disconnected" }>;
+        };
         branch?: string;
         branchPeer?: boolean;
         branchFailure?: boolean;
@@ -531,6 +537,15 @@ const server = Bun.serve({
         sendMode = body.sendMode;
         if (sendMode !== "held") sendGate.resolve();
         else sendGate = Promise.withResolvers<void>();
+      }
+      if (body.execution) {
+        const id = body.execution.agentId ?? "orc";
+        const detail = current.app.detail(id);
+        current.runtime.emit(id, {
+          ...body.execution.event,
+          threadId: body.execution.threadId ?? detail.threadId,
+          turnId: body.execution.turnId ?? detail.turnId!,
+        });
       }
       if (body.complete) {
         const turnId = current.app.detail("orc").turnId!;

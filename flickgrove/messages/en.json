@@ -32,7 +32,6 @@
   "read_only": "Read-only conversation",
   "through_orc": "Send instructions through Orc",
   "assigned_by": "Assigned by {title}",
-  "working_for": "Working for {time}",
   "choose_project": "Choose a registered project for your Orc.",
   "search_projects": "Search projects…",
   "project_keyboard": "↑ ↓ Select · Enter Create · Esc Cancel",
@@ -146,7 +145,6 @@
   "skill_search_hint": "Select to insert · Enter to send later",
   "select_conversation": "Open a conversation from the session list.",
   "back_orc": "‹ Orc",
-  "skills_hint": "$ skills",
   "jump_bottom": "Jump to bottom",
   "open_session": "Open session",
   "find_history": "Find history",
@@ -182,5 +180,8 @@
   "delivery_missing": "No submission record found on this host. Check the conversation before sending again.",
   "delivery_pending": "The host is still processing this submission.",
   "dismiss_delivery": "I checked — remove local pending item",
-  "dismiss_delivery_help": "Removes this local pending item only. It does not resend or delete conversation history."
+  "dismiss_delivery_help": "Removes this local pending item only. It does not resend or delete conversation history.",
+  "execution_retrying": "Retrying",
+  "execution_capacity": "Model at capacity",
+  "execution_failed": "Execution error"
 }

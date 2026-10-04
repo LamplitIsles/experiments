@@ -135,6 +135,9 @@ const agent = z.object({
   questions: z.array(question),
   threadId: id.optional(),
   turnId: id.optional(),
+  execution: z
+    .object({ kind: z.enum(["capacity", "error"]), retrying: z.boolean() })
+    .optional(),
   workingSince: z.number().optional(),
   error: z.string().optional(),
   historyCursor: z.string().optional(),

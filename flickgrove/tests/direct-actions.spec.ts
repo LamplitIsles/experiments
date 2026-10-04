@@ -37,7 +37,7 @@ test("skill panel preserves independent multiword query, insertion, caret and Ba
   await input.evaluate((el) =>
     (el as HTMLTextAreaElement).setSelectionRange(7, 7),
   );
-  await input.press("$");
+  await input.press("Alt+KeyS");
   await expect(search).toBeFocused();
   await search.fill("one spec");
   await expect(page.getByRole("option")).toHaveCount(1);
@@ -51,7 +51,7 @@ test("skill panel preserves independent multiword query, insertion, caret and Ba
   await input.evaluate((el) =>
     (el as HTMLTextAreaElement).setSelectionRange(7, 7),
   );
-  await input.press("$");
+  await input.press("Alt+KeyS");
   await search.fill("no matching skill");
   await search.press("Enter");
   await expect(search).toBeFocused();
@@ -63,14 +63,14 @@ test("skill panel preserves independent multiword query, insertion, caret and Ba
     await input.evaluate((el) => (el as HTMLTextAreaElement).selectionStart),
   ).toBe(7);
   await expect(input).toHaveValue("before $to-orc-impl after");
-  await input.press("$");
+  await input.press("Alt+KeyS");
   await search.fill("one Worker");
   await search.press("Enter");
   await expect(input).toHaveValue("before $to-orc-impl $to-orc-impl after");
   await input.evaluate((el) =>
     (el as HTMLTextAreaElement).setSelectionRange(0, 0),
   );
-  await input.press("$");
+  await input.press("Alt+KeyS");
   await search.press("ArrowDown");
   await search.press("ArrowDown");
   await expect(page.locator(".completion-description")).toHaveText(
@@ -93,7 +93,7 @@ test("skill panel preserves independent multiword query, insertion, caret and Ba
   await expect(page.locator(".completion")).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   await input.fill("");
-  await input.press("$");
+  await input.press("Alt+KeyS");
   await page.screenshot({ path: `${shots}/mobile-skill.png` });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     390,
@@ -325,7 +325,7 @@ for (const width of [1440, 390])
     });
   }
 
-test("mobile input-only dollar opens skills without changing the draft or replacement range", async ({
+test("mobile dollar stays ordinary text; explicit icon preserves the replacement range", async ({
   page,
   request,
 }) => {
@@ -339,7 +339,9 @@ test("mobile input-only dollar opens skills without changing the draft or replac
   const search = page.getByRole("combobox", { name: "Search skills…" });
   const cdp = await page.context().newCDPSession(page);
   await input.fill("draft ");
-  await cdp.send("Input.insertText", { text: "$" });
+  await page
+    .getByRole("button", { name: "Search skills…", exact: true })
+    .click();
   await expect(search).toBeFocused();
   await expect(input).toHaveValue("draft ");
   await search.press("Escape");
@@ -355,7 +357,9 @@ test("mobile input-only dollar opens skills without changing the draft or replac
   await input.evaluate((el) =>
     (el as HTMLTextAreaElement).setSelectionRange(7, 12),
   );
-  await cdp.send("Input.insertText", { text: "$" });
+  await page
+    .getByRole("button", { name: "Search skills…", exact: true })
+    .click();
   await expect(search).toBeFocused();
   await expect(input).toHaveValue("before after");
   await page.goBack();
@@ -368,7 +372,9 @@ test("mobile input-only dollar opens skills without changing the draft or replac
       (el as HTMLTextAreaElement).selectionEnd,
     ]),
   ).toEqual([7, 12]);
-  await cdp.send("Input.insertText", { text: "$" });
+  await page
+    .getByRole("button", { name: "Search skills…", exact: true })
+    .click();
   await expect(search).toBeFocused();
   await search.fill("one spec");
   await search.press("Tab");

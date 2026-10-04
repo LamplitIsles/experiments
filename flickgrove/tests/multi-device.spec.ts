@@ -150,7 +150,7 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await capture(page, "controls-01");
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("");
-  await input.press("$");
+  await input.press("Alt+KeyS");
   await capture(page, "controls-02");
   await page.keyboard.press("Escape");
   await capture(page, "controls-12");

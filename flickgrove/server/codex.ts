@@ -394,7 +394,7 @@ export class CodexRuntime implements Runtime {
     let threadName: string | null = null;
     let titleGeneration: AbortController | undefined;
     const dispatch = (event: RuntimeEvent) => {
-      if (!closed) notify(event);
+      if (!closed) notify({ ...event, threadId });
     };
     const off = [
       client.onError((error) => {
@@ -410,6 +410,14 @@ export class CodexRuntime implements Runtime {
       client.onNotification("turn/started", (p) => {
         if (p.threadId === threadId)
           dispatch({ type: "working", turnId: p.turn.id });
+      }),
+      client.onNotification("item/agentMessage/delta", (p) => {
+        if (p.threadId === threadId && p.delta.length)
+          dispatch({ type: "progress", turnId: p.turnId });
+      }),
+      client.onNotification("item/started", (p) => {
+        if (p.threadId === threadId && p.item.type !== "userMessage")
+          dispatch({ type: "progress", turnId: p.turnId });
       }),
       client.onNotification("item/completed", (p) => {
         if (p.threadId !== threadId || p.item.type !== "agentMessage") return;
@@ -436,12 +444,27 @@ export class CodexRuntime implements Runtime {
             type: "completed",
             turnId: p.turn.id,
             status: p.turn.status,
-            error: p.turn.error?.message,
+            error: p.turn.error
+              ? [p.turn.error.message, p.turn.error.additionalDetails]
+                  .filter(Boolean)
+                  .join("\n\n")
+              : undefined,
+            errorKind: p.turn.error
+              ? executionErrorKind(p.turn.error)
+              : undefined,
           });
       }),
       client.onNotification("error", (p) => {
-        if (p.threadId === threadId && !p.willRetry)
-          dispatch({ type: "error", error: p.error.message });
+        if (p.threadId === threadId)
+          dispatch({
+            type: "error",
+            turnId: p.turnId,
+            willRetry: p.willRetry,
+            error: [p.error.message, p.error.additionalDetails]
+              .filter(Boolean)
+              .join("\n\n"),
+            errorKind: executionErrorKind(p.error),
+          });
       }),
     ];
     const roleInstructions =
@@ -626,4 +649,15 @@ export class CodexRuntime implements Runtime {
     this.threads.clear();
     if (managed) await managed.then((client) => client.close()).catch(() => {});
   }
+}
+
+function executionErrorKind(error: {
+  message: string;
+  codexErrorInfo: unknown;
+}): "capacity" | "error" {
+  return error.codexErrorInfo === "serverOverloaded" ||
+    (error.codexErrorInfo == null &&
+      /selected model (?:is )?at capacity/i.test(error.message))
+    ? "capacity"
+    : "error";
 }

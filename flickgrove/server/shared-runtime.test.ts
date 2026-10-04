@@ -82,10 +82,10 @@ test("one managed process isolates concurrent threads, native requests, Stop/Clo
     expect(replies.filter((r) => r.error.code === -32601)).toHaveLength(2);
     expect(replies.filter((r) => r.error.code === -32602)).toHaveLength(2);
     expect(ae.filter((e) => e.type === "working")).toEqual([
-      { type: "working", turnId: at },
+      { type: "working", turnId: at, threadId: ah.threadId },
     ]);
     expect(be.filter((e) => e.type === "working")).toEqual([
-      { type: "working", turnId: bt },
+      { type: "working", turnId: bt, threadId: bh.threadId },
     ]);
     expect(await bh.send("b steer", bt)).toBe(bt);
     await ah.interrupt(at);

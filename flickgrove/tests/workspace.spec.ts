@@ -94,7 +94,7 @@ test("create, delegate, read a Worker, insert a skill and close the tree through
     .getByRole("button", { name: "Send instructions through Orc" })
     .click();
   await input.fill("");
-  await input.press("$");
+  await input.press("Alt+KeyS");
   await expect(page.getByRole("listbox", { name: "Skills" })).toBeVisible();
   await expect(page.getByRole("option", { name: /to-orc-impl/ })).toBeVisible();
   await page.getByRole("combobox", { name: "Search skills…" }).press("Tab");
@@ -289,7 +289,7 @@ test("Tab completes without moving focus, skill search preserves drafts, and clo
   await input.press("Tab");
   await expect(input).toBeFocused();
   await expect(input).toHaveValue("Draft before skill ");
-  await input.press("$");
+  await input.press("Alt+KeyS");
   const search = page.getByRole("combobox", { name: "Search skills…" });
   await expect(search).toBeFocused();
   await expect(input).toHaveValue("Draft before skill ");
@@ -300,7 +300,7 @@ test("Tab completes without moving focus, skill search preserves drafts, and clo
   await search.press("Escape");
   await expect(input).toBeFocused();
   await expect(input).toHaveValue("Draft before skill ");
-  await input.press("$");
+  await input.press("Alt+KeyS");
   await search.fill("toorc");
   await search.press("Tab");
   await expect(input).toHaveValue("Draft before skill $to-orc-impl ");

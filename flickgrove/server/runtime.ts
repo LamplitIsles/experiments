@@ -22,12 +22,26 @@ export interface RuntimeItem {
       }[]
     | null;
 }
-export type RuntimeEvent =
+export type RuntimeEvent = { threadId?: string } & (
   | { type: "working"; turnId: string }
   | { type: "item"; turnId: string; item: RuntimeItem }
-  | { type: "completed"; turnId: string; status: string; error?: string }
-  | { type: "error"; error: string }
-  | { type: "disconnected"; error: string };
+  | {
+      type: "completed";
+      turnId: string;
+      status: string;
+      error?: string;
+      errorKind?: "capacity" | "error";
+    }
+  | { type: "progress"; turnId: string }
+  | {
+      type: "error";
+      turnId: string;
+      error: string;
+      willRetry: boolean;
+      errorKind?: "capacity" | "error";
+    }
+  | { type: "disconnected"; error: string }
+);
 export interface RuntimeAgent extends Detail {
   token: string;
   workerDefaults?: { model: string; effort: string; serviceTier: string };
