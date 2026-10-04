@@ -1,5 +1,7 @@
 // Isolated synthetic preview: production components and real Hub/HTTP/Workspace,
 // with only test-owned state and FakeRuntime. No installed project/provider access.
+import { temporaryGit, fixtureGit } from "../server/branch-testing";
+import { readDirectoryBranch } from "../server/directory-branches";
 import type { ServerWebSocket } from "bun";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
@@ -42,6 +44,9 @@ let peerDrop = false;
 let freshNoWorkers = false;
 let longConversations = false;
 const browserSockets = new Set<ServerWebSocket<SocketData>>();
+let branchFixture = false;
+let branchFailure = false;
+let branchPaths = new Map<string, string[]>();
 let units: ReturnType<typeof unit>[] = [];
 let current: ReturnType<typeof unit>;
 let peer: ReturnType<typeof unit>;
@@ -56,6 +61,17 @@ function unit(
   origin: () => string,
   restoredDirectory?: string,
 ) {
+  const unitProjects = branchFixture
+    ? projects.map((project, index) => ({
+        ...project,
+        path: branchPaths.get(name)![index],
+      }))
+    : projects;
+  if (branchFixture)
+    agents = agents.map((a) => ({
+      ...a,
+      project: unitProjects.find((p) => p.alias === a.project.alias)!,
+    }));
   const stateDirectory =
     restoredDirectory ?? join(directory, crypto.randomUUID());
   if (!restoredDirectory) {
@@ -132,7 +148,19 @@ function unit(
   const app = new Workspace({
     directory: stateDirectory,
     runtime,
-    projects: async () => projects,
+    projects: async () => unitProjects,
+    ...(branchFixture
+      ? {
+          branches: {
+            intervalMs: 50,
+            read: async (path: string, signal: AbortSignal) => {
+              if (name === "NUC" && branchFailure)
+                throw new Error("Synthetic Git timeout/permission failure");
+              return readDirectoryBranch(path, signal);
+            },
+          },
+        }
+      : {}),
   });
   const service = new HostService(app, {
     directory: stateDirectory,
@@ -225,6 +253,21 @@ async function reset(mode = "working") {
     unit.app.dispose();
   }
   units = [];
+  branchFixture = mode === "branches";
+  branchFailure = false;
+  branchPaths = new Map();
+  if (branchFixture)
+    for (const name of ["NUC", "Neil’s Mac", "Workstation"]) {
+      branchPaths.set(
+        name,
+        [0, 1].map((i) =>
+          temporaryGit(
+            join(directory, crypto.randomUUID(), name, String(i)),
+            "feat/a-very-long-checkout-branch-for-directory-identification",
+          ),
+        ),
+      );
+    }
   freshNoWorkers = mode === "no-workers";
   longConversations = mode === "long";
   peerDrop = false;
@@ -254,7 +297,7 @@ async function reset(mode = "working") {
             agent(
               "docs",
               "worker",
-              mode === "dense"
+              ["dense", "branches"].includes(mode)
                 ? "Documentation for a very long Worker assignment covering mobile navigation and persistent conversation drafts across hosts"
                 : "Documentation",
               1,
@@ -391,6 +434,9 @@ const server = Bun.serve({
       });
     if (url.pathname === "/fixture/change" && request.method === "POST") {
       const body = (await request.json()) as {
+        branch?: string;
+        branchPeer?: boolean;
+        branchFailure?: boolean;
         quotaFailure?: boolean;
         modelFailure?: boolean;
         quotaResets?: number | null;
@@ -408,6 +454,16 @@ const server = Bun.serve({
         restartHub?: boolean;
         append?: { agentId: string; text: string };
       };
+      if (body.branchFailure !== undefined) branchFailure = body.branchFailure;
+      if (body.branch && branchFixture)
+        fixtureGit(
+          branchPaths.get(body.branchPeer ? "Neil’s Mac" : "NUC")![
+            body.branchPeer ? 1 : 0
+          ],
+          "branch",
+          "-m",
+          body.branch,
+        );
       if (body.restartHub) {
         const prior = current;
         const inputs = [...prior.runtime.inputs];

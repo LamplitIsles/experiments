@@ -26,6 +26,7 @@ function qualified<T extends Agent>(host: Host, a: T): T {
     role: a.role,
     ownerId: a.ownerId ? qualify(host.id, a.ownerId) : undefined,
     project: a.project,
+    directoryBranch: a.directoryBranch,
     title: a.title,
     model: a.model,
     effort: a.effort,

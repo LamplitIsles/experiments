@@ -1,4 +1,5 @@
 import { ImageStore } from "./images";
+import { DirectoryBranches, type BranchReader } from "./directory-branches";
 import type { MessageImage } from "../src/contracts";
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
@@ -30,6 +31,7 @@ type State = {
   revision: number;
 };
 export class Workspace {
+  private readonly branches: DirectoryBranches;
   readonly images: ImageStore;
   private readonly db: Database;
   private readonly state: State;
@@ -50,6 +52,7 @@ export class Workspace {
       directory: string;
       runtime: Runtime;
       projects: () => Promise<Project[]>;
+      branches?: { read?: BranchReader; intervalMs?: number };
     },
   ) {
     mkdirSync(options.directory, { recursive: true, mode: 0o700 });
@@ -65,6 +68,11 @@ export class Workspace {
       ? JSON.parse(row.value)
       : { agents: [], revision: 0 };
     this.state = { agents: stored.agents, revision: stored.revision };
+    this.branches = new DirectoryBranches(() => {
+      if (this.disposed) return;
+      this.state.revision++;
+      for (const listener of this.subscribers) listener();
+    }, options.branches);
     for (const a of this.state.agents) {
       if (
         a.state === "working" ||
@@ -100,6 +108,9 @@ export class Workspace {
   }
   private save() {
     if (this.disposed) return;
+    this.branches.update(
+      this.state.agents.filter((a) => !a.closed).map((a) => a.project.path),
+    );
     this.state.revision++;
     this.db
       .query(
@@ -244,7 +255,15 @@ export class Workspace {
       workerDefaults: _workerDefaults,
       ...agent
     } = a;
-    return structuredClone(agent);
+    const owner = this.state.agents.find((o) => o.id === a.ownerId);
+    const sharedDirectory =
+      owner && this.branches.shares(owner.project.path, a.project.path);
+    return structuredClone({
+      ...agent,
+      directoryBranch: sharedDirectory
+        ? undefined
+        : this.branches.value(a.project.path),
+    });
   }
   snapshot(): Snapshot {
     return {
@@ -1159,6 +1178,7 @@ export class Workspace {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.branches.dispose();
     this.subscribers.clear();
     void this.options.runtime.close();
     this.db.close();

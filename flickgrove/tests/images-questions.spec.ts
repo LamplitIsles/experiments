@@ -121,6 +121,7 @@ for (const width of [1440, 390]) {
     await expect(
       page.locator(".user-message").filter({ hasText: "Screenshot feedback" }),
     ).toHaveCount(1);
+    await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
     expect(originals).toHaveLength(0);
     await page.screenshot({ path: `${shots}/${width}-image-message.png` });
     await page.locator(".message-image").first().click();
@@ -210,6 +211,7 @@ for (const width of [1440, 390]) {
         .locator(".user-message")
         .filter({ hasText: "Question: required question 1" }),
     ).toHaveCount(1);
+    await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
     await page.screenshot({ path: `${shots}/${width}-questions-pending.png` });
     await request.post(origin + "/fixture/change", {
       data: { question: true, questionId: "next", questionOptions: true },
@@ -224,6 +226,7 @@ for (const width of [1440, 390]) {
       2,
     );
     await expect(page.locator(".answered-summary details")).toHaveCount(0);
+    await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
     await page.locator(".answer-radio").first().focus();
     await page.keyboard.press("ArrowDown");
     await expect(page.locator(".answer-radio").last()).toBeChecked();
@@ -267,7 +270,8 @@ test("slow upload binds original Peer/conversation while new draft remains isola
   await expect(page.locator(".message-image")).toHaveCount(1);
   await expect(
     page.locator(".user-message").filter({ hasText: "Original upload" }),
-  ).toContainText("Sending");
+  ).toHaveCount(1);
+  await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
   await page.screenshot({ path: `${shots}/desktop-uploading.png` });
   await composer(page).press("Meta+2");
   await expect(page.locator(".agent-detail h1")).toHaveText(

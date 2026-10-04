@@ -33,6 +33,7 @@ for (const [name, viewport] of [
         page.locator(".user-message").filter({ hasText: text }),
       ).toHaveCount(1);
     }
+    await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
     await input.fill("A newer editable draft");
     await expect
       .poll(
@@ -69,6 +70,10 @@ for (const [name, viewport] of [
     expect(info.inputs[1].turnId).toBeTruthy();
     expect(info.inputs[2].turnId).toBe(info.inputs[1].turnId);
     await expect(input).toHaveValue("A newer editable draft");
+    await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
+    await page.screenshot({
+      path: `../.scratch/flickgrove-directory-branch/screenshots/delivery-success-${name}.png`,
+    });
     await page.reload();
     await expect(input).toHaveValue("A newer editable draft");
     for (const text of [
@@ -108,6 +113,15 @@ for (const [name, viewport] of [
     await request.post(origin + "/fixture/change", {
       data: { sendMode: "rejected" },
     });
+    await expect(
+      page
+        .locator(".user-message")
+        .filter({ hasText: "Rejected content" })
+        .getByRole("status"),
+    ).toHaveText("Needs attention");
+    await expect(page.locator(".delivery-error summary")).toHaveText(
+      "Synthetic rejection",
+    );
     await page.locator(".delivery-error summary").click();
     await page.getByRole("button", { name: "Restore to draft" }).click();
     await expect(input).toHaveValue("New draft\n\nRejected content");

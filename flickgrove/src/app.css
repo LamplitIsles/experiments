@@ -1210,6 +1210,24 @@ pre {
 .worker-item .session-meta {
   padding-right: 0;
 }
+.session-meta > .session-branch {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 1 auto;
+}
+.session-branch svg {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+}
+.session-branch > span {
+  min-width: 0;
+  max-width: 12ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .worker-item {
   margin-left: 20px;
   border-left-color: var(--border);

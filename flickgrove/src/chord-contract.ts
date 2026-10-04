@@ -125,6 +125,7 @@ const agent = z.object({
   hostId: id.optional(),
   hostName: z.string().optional(),
   project: z.object({ alias: id, name: z.string(), path: z.string() }),
+  directoryBranch: z.string().optional(),
   title: z.string(),
   model: z.string(),
   effort: z.string(),
