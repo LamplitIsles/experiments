@@ -44,7 +44,7 @@
   $effect(() => {
     const ids = visibleAgents.map(a => a.id);
     const current = navigation.details.at(-1);
-    if (desktop && !loading && (!current || !ids.includes(current))) {
+    if (desktop && matchMedia("(min-width: 701px)").matches && !loading && (!current || !ids.includes(current))) {
       const position = previousVisible.indexOf(current ?? lostSelection ?? "");
       const adjacent = previousVisible.slice(position + 1).find(id => ids.includes(id)) ?? previousVisible.slice(0, Math.max(0, position)).reverse().find(id => ids.includes(id));
       const next = adjacent ?? visibleAgents.find(a => a.role === "orc")?.id;

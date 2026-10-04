@@ -588,6 +588,7 @@ test("question drawer widening releases navigation without dismissing foreground
   await expect
     .poll(() => page.evaluate(() => history.state.grove.surfaces))
     .toEqual([]);
+  await expect(page.locator(".question-panel")).toBeVisible();
   await page.locator(".question-panel-heading button").click();
   await expect(page.locator(".question-panel")).toHaveCount(0);
   await composer(page).press("Meta+2");
@@ -597,6 +598,17 @@ test("question drawer widening releases navigation without dismissing foreground
   await expect(composer(page)).toHaveValue("Responsive draft");
   await expect(composer(page)).toBeFocused();
   await page.screenshot({ path: `${shots}/review-wide-drawer-closed.png` });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await toggle(page).click();
+  await expect(page.locator(".question-panel")).toBeVisible();
+  await page.goBack();
+  await expect(page.locator(".question-panel")).toHaveCount(0);
+  await expect(title(page)).toHaveText("Streaming voice input");
+  await page.goBack();
+  await expect(page.locator(".session-list")).toBeVisible();
+  await expect(page.locator(".agent-detail")).toHaveCount(0);
+  await page.screenshot({ path: `${shots}/review-width-roundtrip-list.png` });
+  await page.locator(".session-open").first().click();
   await page.setViewportSize({ width: 1000, height: 900 });
   await toggle(page).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -606,8 +618,14 @@ test("question drawer widening releases navigation without dismissing foreground
     .poll(() => page.evaluate(() => history.state.grove.surfaces))
     .toEqual(["settings"]);
   await expect(page.getByRole("dialog")).toBeVisible();
+  await page.screenshot({ path: `${shots}/review-wide-settings-retained.png` });
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toBeHidden();
+  await page.locator(".question-panel-heading button").click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goBack();
+  await expect(page.locator(".session-list")).toBeVisible();
+  await expect(page.locator(".agent-detail")).toHaveCount(0);
 });
 
 test("fresh questions wait behind New and browser Back dismisses the visible foreground first", async ({

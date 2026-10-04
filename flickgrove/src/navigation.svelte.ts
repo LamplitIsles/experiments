@@ -15,6 +15,7 @@ export const navigation = $state<Route>({ details: [], surfaces: [] });
 let initialized = false;
 let pending: { promise: Promise<void>; resolve: () => void } | null = null;
 let validIds: Set<string> | null = null;
+let retiringQuestionDrawer: Route | null = null;
 function route(): Route {
   return {
     details: [...navigation.details],
@@ -43,7 +44,23 @@ export function initializeNavigation(selected: string | null) {
     if (selected) write({ details: [selected], surfaces: [] });
   }
   const pop = () => {
-    apply(history.state?.grove ?? { details: [], surfaces: [] });
+    const next = history.state?.grove ?? { details: [], surfaces: [] };
+    if (retiringQuestionDrawer) {
+      const retained = retiringQuestionDrawer;
+      retiringQuestionDrawer = null;
+      // Resume below the drawer and rebuild only the retained foreground history.
+      const lowerCount = next.surfaces.length;
+      write(
+        { ...retained, surfaces: retained.surfaces.slice(0, lowerCount) },
+        true,
+      );
+      for (
+        let count = lowerCount + 1;
+        count <= retained.surfaces.length;
+        count++
+      )
+        write({ ...retained, surfaces: retained.surfaces.slice(0, count) });
+    } else apply(next);
     const done = pending;
     pending = null;
     done?.resolve();
@@ -86,15 +103,21 @@ export function setSurface(name: Surface, open: boolean) {
 // The wide question rail is not a foreground navigation layer.
 export function removeQuestionDrawer() {
   const next = route();
-  if (!next.surfaces.includes("questions")) return;
-  next.surfaces = next.surfaces.filter((surface) => surface !== "questions");
-  write(next, true);
+  const index = next.surfaces.indexOf("questions");
+  if (index < 0 || retiringQuestionDrawer || pending) return;
+  retiringQuestionDrawer = {
+    ...next,
+    surfaces: next.surfaces.filter((surface) => surface !== "questions"),
+  };
+  apply(retiringQuestionDrawer);
+  void move(-(next.surfaces.length - index));
 }
 export async function openConversation(
   id: string,
   fromDetail = false,
   ownerId?: string | null,
 ) {
+  if (pending) await pending.promise;
   if (navigation.surfaces.length) await move(-navigation.surfaces.length);
   const next = route();
   if (!fromDetail && next.details.length > 1) {
