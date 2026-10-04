@@ -6,8 +6,7 @@ import { CodexRuntime } from "./codex";
 import { Workspace } from "./workspace";
 import { registeredProjects } from "./projects";
 import { HostService } from "./hosts";
-import { createHandler, createUpgrade } from "./http";
-import { groveWebsocket } from "./chord-socket";
+import { servePeer } from "./http";
 
 const { values } = parseArgs({
   args: Bun.argv.slice(2),
@@ -53,18 +52,10 @@ const httpOptions = {
   service,
   assets: fileURLToPath(new URL("../dist", import.meta.url)),
 };
-const handler = createHandler(app, httpOptions);
-const upgrade = createUpgrade(app, httpOptions);
-const server = Bun.serve({
-  hostname: values.listen,
+const server = servePeer(app, {
+  ...httpOptions,
+  hostname: values.listen!,
   port,
-  idleTimeout: 0,
-  maxRequestBodySize: 1024 * 1024,
-  websocket: groveWebsocket,
-  fetch(request, server) {
-    const result = upgrade(request, server);
-    return result === true ? undefined : (result ?? handler(request));
-  },
 });
 console.log(
   `FlickGrove Peer is available at ${origin}; private access credential: ${join(directory, "hosts.json")}`,

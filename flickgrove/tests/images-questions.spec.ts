@@ -545,3 +545,70 @@ test("IndexedDB open SecurityError leaves image error visible and pure text send
     "Image storage unavailable",
   );
 });
+
+for (const failure of [
+  {
+    status: 413,
+    body: "",
+    contentType: "text/plain",
+    expected: "Image upload exceeds 20 MiB",
+  },
+  {
+    status: 502,
+    body: "<html>proxy failed</html>",
+    contentType: "text/html",
+    expected: "Image request failed (HTTP 502)",
+  },
+  {
+    status: 400,
+    body: JSON.stringify({ error: "Synthetic upload rejection" }),
+    contentType: "application/json",
+    expected: "Synthetic upload rejection",
+  },
+  {
+    status: 400,
+    body: "null",
+    contentType: "application/json",
+    expected: "Image request failed (HTTP 400)",
+  },
+  {
+    status: 400,
+    body: JSON.stringify({ error: { detail: "invalid" } }),
+    contentType: "application/json",
+    expected: "Image request failed (HTTP 400)",
+  },
+  {
+    status: 200,
+    body: JSON.stringify({ images: [] }),
+    contentType: "application/json",
+    expected: "Peer identity changed",
+  },
+]) {
+  test(`image HTTP ${failure.status} ${failure.body.slice(0, 35) || "empty"} missing identity header classification`, async ({
+    page,
+    request,
+  }) => {
+    await setup(page, request, 1440);
+    const before = (await (await request.get(origin + "/fixture/info")).json())
+      .inputs.length;
+    await add(page);
+    await composer(page).fill("Preserve failed upload");
+    await page.route("**/api/images?*", (route) =>
+      route.fulfill({
+        status: failure.status,
+        body: failure.body,
+        contentType: failure.contentType,
+      }),
+    );
+    await composer(page).press("Enter");
+    await expect(page.locator(".delivery-error")).toContainText(
+      failure.expected,
+    );
+    await expect(composer(page)).toHaveValue("Preserve failed upload");
+    await expect(page.locator(".image-draft")).toHaveCount(1);
+    expect(
+      (await (await request.get(origin + "/fixture/info")).json()).inputs
+        .length,
+    ).toBe(before);
+  });
+}

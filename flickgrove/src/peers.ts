@@ -405,12 +405,18 @@ export class Peers {
       credentials: "omit",
       signal: AbortSignal.timeout(60_000),
     });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      const error =
+        typeof body?.error === "string" && body.error.trim()
+          ? body.error
+          : response.status === 413
+            ? "Image upload exceeds 20 MiB"
+            : `Image request failed (HTTP ${response.status})`;
+      throw new Error(error);
+    }
     if (response.headers.get("X-Grove-Peer") !== peer)
       throw new Error("Peer identity changed");
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(body.error ?? "Image unavailable");
-    }
     return response;
   }
   private stop(link: Link) {
