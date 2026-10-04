@@ -168,7 +168,7 @@ for (const width of [1440, 390])
     await request.post(`${origin}/fixture/change`, {
       data: { question: true, questionId: "first", questionCount: 2 },
     });
-    await expect(page.locator(".question-card")).toHaveCount(2);
+    await expect(page.locator(".question-card")).toHaveCount(1);
     await expect(composer(page)).toBeFocused();
     await request.post(`${origin}/fixture/change`, {
       data: { question: true, questionId: "second" },
@@ -181,6 +181,12 @@ for (const width of [1440, 390])
       name: "Your answer · first question 1",
       exact: true,
     });
+    await page
+      .getByRole("button", { name: "Previous question", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Previous question", exact: true })
+      .click();
     await first.fill("Protected original answer");
     await request.post(`${origin}/fixture/change`, {
       data: { question: true, questionId: "third" },
@@ -191,8 +197,13 @@ for (const width of [1440, 390])
       "first question 1",
     );
     await page
+      .getByRole("button", { name: "Next question", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Next question", exact: true })
+      .click();
+    await page
       .locator(".question-card")
-      .filter({ hasText: "second question 1" })
       .getByRole("radio", { name: "Alternative", exact: true })
       .check();
     await request.post(`${origin}/fixture/change`, {
@@ -209,6 +220,12 @@ for (const width of [1440, 390])
     await page.reload();
     await expect(page.locator(".question-panel")).toHaveCount(0);
     await toggle(page).click();
+    await page
+      .getByRole("button", { name: "Previous question", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Previous question", exact: true })
+      .click();
     await expect(first).toHaveValue("Protected original answer");
     const before = (await (await request.get(`${origin}/fixture/info`)).json())
       .inputs.length;
@@ -244,7 +261,7 @@ for (const width of [1440, 390])
       await composer(page).press("Meta+1");
     }
     await expect(page.locator(".answered-summary")).toContainText(
-      "All 5 answers sent",
+      "Protected original answer",
     );
     await expect(next).toHaveValue("Next batch unsent draft");
     await expect
@@ -269,17 +286,18 @@ for (const width of [1440, 390])
     expect(batch.answers[0].answer).toBe("Protected original answer");
     expect(batch.answers[2].answer).toBe("Alternative");
     expect(batch.questionIds).not.toContain("next-batch:0");
-    await expect(page.locator(".conversation")).not.toContainText(
+    await expect(page.locator(".conversation")).toContainText(
       "Protected original answer",
     );
-    await page.locator(".answered-summary summary").click();
     await expect(page.locator(".sent-answer").first()).toHaveText(
       "Protected original answer",
     );
     await request.post(`${origin}/fixture/change`, {
       data: { append: { agentId: "orc", text: "Ordinary refresh" } },
     });
-    await expect(page.locator(".answered-summary")).toHaveAttribute("open");
+    await expect(page.locator(".answered-summary .answered-item")).toHaveCount(
+      5,
+    );
     await page.screenshot({ path: `${shots}/${width}-answer-history.png` });
     await page.locator(".question-panel-heading button").click();
     await page.screenshot({ path: `${shots}/${width}-panel-closed.png` });
@@ -354,7 +372,7 @@ test("unknown batch retains its immutable operation across reload and lookup, an
     .getByRole("button", { name: "Retry", exact: true })
     .click();
   await expect(page.locator(".answered-summary")).toContainText(
-    "All 2 answers sent",
+    "Retained rejected draft",
   );
   await expect
     .poll(
@@ -438,14 +456,17 @@ test("every pending question needs an answer and unselected questions do not ste
     name: "Send all answers",
     exact: true,
   });
-  await expect(send).toBeDisabled();
+  await expect(send).toBeEnabled();
   await page
     .getByRole("textbox", {
       name: "Your answer · required question 1",
       exact: true,
     })
     .fill("First draft");
-  await expect(send).toBeDisabled();
+  await expect(send).toBeEnabled();
+  await page
+    .getByRole("button", { name: "Next question", exact: true })
+    .click();
   await page
     .getByRole("textbox", {
       name: "Your answer · required question 2",
@@ -467,7 +488,6 @@ test("every pending question needs an answer and unselected questions do not ste
   await expect(page.locator(".question-panel")).toHaveCount(0);
   await composer(page).press("Meta+2");
   await expect(title(page)).toHaveText("Reader performance");
-  await toggle(page).click();
   await expect(page.locator(".question-card h3")).toHaveText(
     "remote question 1",
   );
@@ -480,6 +500,9 @@ test("every pending question needs an answer and unselected questions do not ste
   await page.locator(".question-panel-heading button").click();
   await composer(page).press("Meta+1");
   await toggle(page).click();
+  await page
+    .getByRole("button", { name: "Previous question", exact: true })
+    .click();
   await expect(
     page.getByRole("textbox", {
       name: "Your answer · required question 1",
@@ -499,6 +522,9 @@ test("every pending question needs an answer and unselected questions do not ste
     .toBe(selected);
   await expect(page.locator(".question-panel")).toHaveCount(0);
   await toggle(page).click();
+  await page
+    .getByRole("button", { name: "Next question", exact: true })
+    .click();
   await expect(
     page.getByRole("textbox", {
       name: "Your answer · required question 2",

@@ -13,6 +13,7 @@ import type {
   Settings,
   Snapshot,
   Answer,
+  MessageImage,
 } from "../src/contracts";
 import type { Workspace } from "./workspace";
 
@@ -168,10 +169,32 @@ export class HostService {
   skills(id: string) {
     return this.workspace.skills(this.raw(id));
   }
-  async send(id: string, text: string, operationId: string) {
+  async uploadImages(
+    id: string,
+    operationId: string,
+    text: string,
+    files: File[],
+  ) {
+    const raw = this.raw(id);
+    const agent = this.workspace.detail(raw);
+    if (agent.role !== "orc" || agent.closed)
+      throw new Error("Choose an open Orc conversation");
+    return this.workspace.images.upload(raw, operationId, text, files);
+  }
+  media(id: string, imageId: string, preview: boolean) {
+    const raw = this.raw(id);
+    this.workspace.detail(raw);
+    return this.workspace.images.read(raw, imageId, preview);
+  }
+  async send(
+    id: string,
+    text: string,
+    operationId: string,
+    images?: MessageImage[],
+  ) {
     return qualified(
       this.local(),
-      await this.workspace.send(this.raw(id), text, operationId),
+      await this.workspace.send(this.raw(id), text, operationId, images),
     );
   }
   async rename(id: string, title: string) {

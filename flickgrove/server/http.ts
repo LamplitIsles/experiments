@@ -1,3 +1,4 @@
+import { imageHttp } from "./image-http";
 import { resolve, sep } from "node:path";
 import { z } from "zod";
 import type { Server } from "bun";
@@ -72,6 +73,8 @@ export function createHandler(workspace: Workspace, options: Options) {
       : [origin, options.localOrigin?.()].filter(
           (value): value is string => !!value,
         );
+    const media = await imageHttp(request, options.service, origins);
+    if (media) return media;
     if (
       !origins.some((value) => url.host === new URL(value).host) ||
       (request.headers.get("origin") &&

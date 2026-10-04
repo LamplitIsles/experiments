@@ -17,6 +17,9 @@
   import { RequestRejected } from "./chord-client";
   import { receiptSchema, type Receipt } from "./chord-contract";
   import { addOutgoing, observeOutgoing, outgoing, withOutgoing, acceptReceipt, unknownOutgoing, dismissOutgoing } from "./outgoing.svelte";
+  import { imageSchema } from "./chord-contract";
+  import { restoreImages, type ImageDraft } from "./image-drafts";
+  import { receiptAlreadyAccepted, setOutgoingImages } from "./outgoing.svelte";
   import { observeQuestions, questionPanels, setQuestionPanel } from "./question-state.svelte";
   import HostFilter from "./HostFilter.svelte";
   import Hosts from "./Hosts.svelte";
@@ -45,7 +48,7 @@
   $effect(() => {
     const ids = visibleAgents.map(a => a.id);
     const current = navigation.details.at(-1);
-    if (desktop && matchMedia("(min-width: 701px)").matches && !loading && (!current || !ids.includes(current))) {
+    if (!navigation.surfaces.length && desktop && matchMedia("(min-width: 701px)").matches && !loading && (!current || !ids.includes(current))) {
       const position = previousVisible.indexOf(current ?? lostSelection ?? "");
       const adjacent = previousVisible.slice(position + 1).find(id => ids.includes(id)) ?? previousVisible.slice(0, Math.max(0, position)).reverse().find(id => ids.includes(id));
       const next = adjacent ?? visibleAgents.find(a => a.role === "orc")?.id;
@@ -91,7 +94,7 @@
   }
   function open(id: string, fromDetail = false) { openConversation(id, fromDetail, snapshot.agents.find(a => a.id === id)?.ownerId); }
   async function restoreDetail(id: string) {
-    error = ""; selectedId = id; localStorage.setItem(`${storagePrefix}/selected`, id);
+    error = ""; selectedId = id; observeQuestions(snapshot.agents,id); localStorage.setItem(`${storagePrefix}/selected`, id);
     const cached = localStorage.getItem(`${storagePrefix}/detail/${id}`); detail = cached ? JSON.parse(cached) : null; skills = [];
     if (hosts.find(h=>h.id===id.split(":")[0])?.connected) {
       void client?.call('select', {ids:[id]}).catch(e => { if(selectedId === id) error = e instanceof Error ? e.message : m.load_failure(); });
@@ -142,10 +145,13 @@
     error = "";
     if (kind === "new") { search = ""; void chooseHost(hostFilter || preferences.host || snapshot.entryId || ""); }
     if (kind === "settings") {
-      settings=preferences.settings;
+      const saved=preferences.settings;
+      const fallback=models.find(m=>m.isDefault) ?? models[0];
+      settings=saved ? structuredClone(saved) : fallback ? {fast:false,orc:{model:fallback.id,effort:fallback.defaultEffort},worker:{model:fallback.id,effort:fallback.defaultEffort}} : null;
       try{models = await api<Model[]>("/models");preferences.models=models;}catch(e){if(!models.length)error=e instanceof Error?e.message:m.load_failure();}
+      // Catalogue refresh must not replace a foreground settings draft.
       const model = models.find(m => m.isDefault) ?? models[0];
-      settings = preferences.settings ? structuredClone(preferences.settings) : model ? { fast: false, orc: { model: model.id, effort: model.defaultEffort }, worker: { model: model.id, effort: model.defaultEffort } } : null;
+      if(!settings && modal==='settings' && model)settings={fast:false,orc:{model:model.id,effort:model.defaultEffort},worker:{model:model.id,effort:model.defaultEffort}};
     }
     if (kind === "settings" && settings) { settings.fast = !!settings.fast; }
     await tick(); if (modal === kind && kind === "new") projectSearch?.focus();
@@ -198,21 +204,37 @@
   async function reconcilePending() {
     for(const pending of outgoing.entries) if(pending.status === 'uncertain') void lookup(pending.agentId,pending.id);
   }
-  async function send(text: string, operationId: string) {
-    if (!selectedId || !hostConnected || !client) return false;
-    const id = selectedId; const connection = client;
-    addOutgoing(id,text,operationId);
-    try {
-      const result = await connection.call<Detail>('send',{id,text,operationId});
-      observeOutgoing(result);
-      // Only replicated detail updates may replace visible state; RPC replies may be older.
-      const delivery = result.deliveries.find(d => d.id === operationId);
-      if(!delivery) unknownOutgoing(id,operationId,m.unknown_delivery());
-    } catch(e) {
-      if(e instanceof RequestRejected)acceptReceipt(id,{operationId,state:"rejected",turnId:null,error:e.message});
-      else unknownOutgoing(id,operationId,e instanceof Error?e.message:m.load_failure());
+  async function send(id: string, text: string, operationId: string, images: ImageDraft[] = []) {
+    if (!client || !hosts.find(h=>h.id===id.split(':')[0])?.connected) {
+      acceptReceipt(id,{operationId,state:"rejected",turnId:null,error:"Execution host disconnected before submission"});
+      try{await restoreImages(id,operationId,text);}catch(e){if(selectedId===id)error=(e as Error).message;}
+      return false;
     }
-    void lookup(id,operationId);
+    const connection = client;
+    addOutgoing(id,text,operationId,undefined,undefined,images.map(i=>i.id));
+    let submitted=false;
+    try {
+      let refs;
+      if(images.length){
+        const form=new FormData();form.set('text',text);for(const image of images)form.append('images',image.file,image.file.name);
+        const response=await connection.media(id,`/api/images?agent=${encodeURIComponent(id)}&operation=${encodeURIComponent(operationId)}`,{method:'POST',body:form});
+        const upload=await response.json();
+        if(upload.agent!==id || upload.operation!==operationId)throw new Error("Image operation identity changed");
+        refs=upload.images.map((i:unknown)=>imageSchema.parse(i));setOutgoingImages(id,operationId,refs);
+      }
+      submitted=true;
+      const result=await connection.call<Detail>('send',{id,text,operationId,...(refs ? {images:refs} : {})});
+      const delivery=result.deliveries.find(d=>d.id===operationId);
+      observeOutgoing(result);
+      if(images.length && delivery?.status==='failed' && !receiptAlreadyAccepted(id,operationId) && !detail?.messages.some(m=>m.id===operationId))try{await restoreImages(id,operationId,text);}catch(e){if(selectedId===id)error=(e as Error).message;}
+      if(!result.deliveries.some(d=>d.id===operationId))unknownOutgoing(id,operationId,m.unknown_delivery());
+    }catch(e){
+      if((!submitted || e instanceof RequestRejected) && !receiptAlreadyAccepted(id,operationId)){
+        acceptReceipt(id,{operationId,state:"rejected",turnId:null,error:e instanceof Error?e.message:m.load_failure()});
+        if(images.length)try{await restoreImages(id,operationId,text);}catch(recovery){if(selectedId===id)error=(recovery as Error).message;}
+      }else unknownOutgoing(id,operationId,e instanceof Error?e.message:m.load_failure());
+    }
+    if(submitted)void lookup(id,operationId);
     return true;
   }
   let closingId = $state<string | null>(null);

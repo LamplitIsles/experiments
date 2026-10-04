@@ -8,6 +8,9 @@ import type {
   ReasoningEffort,
   v2,
 } from "@jaminzhou/codex-app-server-client/protocol";
+import { createHash } from "node:crypto";
+import { stat, readFile } from "node:fs/promises";
+import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sameDirectory } from "./directory";
 import { nameThreadFromPrompt } from "./thread-title";
@@ -67,6 +70,10 @@ function historySession(thread: v2.Thread, archived: boolean): HistorySession {
 
 export class CodexRuntime implements Runtime {
   private managed?: Promise<CodexAppServerClient>;
+  private readonly historyImages = new Map<
+    string,
+    { threadId: string; content: v2.UserInput }
+  >();
   private readonly threads = new Map<string, CodexAppServerClient>();
   private readonly openingThreads = new Set<string>();
   private catalogModels?: Model[];
@@ -259,17 +266,39 @@ export class CodexRuntime implements Runtime {
       const turnId = "turnId" in entry ? entry.turnId : undefined;
       if (item.type === "userMessage") {
         const text = item.content
-          .map((input) =>
-            input.type === "text"
-              ? input.text
-              : input.type === "image" || input.type === "localImage"
-                ? "[Image]"
-                : "",
-          )
-          .filter(Boolean)
+          .filter((input) => input.type === "text")
+          .map((input) => input.text)
           .join("\n");
-        if (text)
-          messages.push({ id: item.id, turnId, role: "user", text, at: 0 });
+        const images = item.content.flatMap((content, index) => {
+          if (content.type !== "image" && content.type !== "localImage")
+            return [];
+          const imageId = createHash("sha256")
+            .update(`${threadId}/${item.id}/${index}`)
+            .digest("hex");
+          this.historyImages.set(imageId, { threadId, content });
+          if (this.historyImages.size > 1000)
+            this.historyImages.delete(this.historyImages.keys().next().value!);
+          return [
+            {
+              id: imageId,
+              name: "Native message image",
+              width: 1,
+              height: 1,
+              bytes: 0,
+              mediaType: "image/png",
+              availability: "missing" as const,
+            },
+          ];
+        });
+        if (text || images.length)
+          messages.push({
+            id: item.id,
+            turnId,
+            role: "user",
+            text,
+            at: 0,
+            ...(images.length ? { images } : {}),
+          });
       } else if (
         item.type === "agentMessage" &&
         item.text &&
@@ -285,6 +314,33 @@ export class CodexRuntime implements Runtime {
       }
     }
     return { messages: messages.reverse(), nextCursor: response.nextCursor };
+  }
+  async historyImage(threadId: string, imageId: string): Promise<File | null> {
+    // Membership comes only from an actual thread/items/list response. Browser
+    // callers supply opaque IDs; they never supply paths or external URLs.
+    const image = this.historyImages.get(imageId);
+    if (!image || image.threadId !== threadId) return null;
+    const content = image.content;
+    try {
+      if (content.type === "localImage") {
+        const info = await stat(content.path);
+        if (!info.isFile() || info.size > 5 * 1024 * 1024) return null;
+        return new File([await readFile(content.path)], basename(content.path));
+      }
+      if (
+        content.type === "image" &&
+        /^data:image\/(png|jpeg|webp|gif);base64,/.test(content.url) &&
+        content.url.length < 7_000_000
+      ) {
+        const [header, data] = content.url.split(",");
+        return new File([Buffer.from(data, "base64")], "Native message image", {
+          type: header.slice(5).split(";")[0],
+        });
+      }
+    } catch {
+      /* Missing native attachments remain an explicit placeholder. */
+    }
+    return null;
   }
   async weekly(): Promise<WeeklyUsage> {
     const result = await (
@@ -484,8 +540,11 @@ export class CodexRuntime implements Runtime {
         titleGeneration?.abort();
         await client.call("thread/name/set", { threadId: id, name });
       },
-      send: async (text, activeTurn) => {
-        const input = [{ type: "text" as const, text, text_elements: [] }];
+      send: async (text, activeTurn, images = []) => {
+        const input: v2.UserInput[] = [
+          ...(text ? [{ type: "text" as const, text, text_elements: [] }] : []),
+          ...images.map((path) => ({ type: "localImage" as const, path })),
+        ];
         try {
           if (activeTurn)
             return (

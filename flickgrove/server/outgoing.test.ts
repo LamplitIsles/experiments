@@ -11,6 +11,10 @@ test("authoritative delivery replaces an obsolete pending or missing receipt cla
     const source = new Bun.Transpiler({ loader: "ts" })
       .transformSync(readFileSync(sourcePath, "utf8"))
       .replace(
+        '"./image-drafts"',
+        JSON.stringify(import.meta.dir + "/../src/image-drafts.ts"),
+      )
+      .replace(
         '"./chord-contract"',
         JSON.stringify(import.meta.dir + "/../src/chord-contract.ts"),
       );
@@ -35,7 +39,7 @@ test("authoritative delivery replaces an obsolete pending or missing receipt cla
       Object.assign(globalThis, {location: {origin: "http://fixture.invalid"}, window: {addEventListener() {}}, localStorage: {
         getItem: key => records.get(key) ?? null, setItem: (key, value) => records.set(key, value), removeItem: key => records.delete(key)
       }});
-      const {addOutgoing, acceptReceipt, observeOutgoing, outgoing} = await import("./outgoing.mjs");
+      const {addOutgoing, acceptReceipt, observeOutgoing, outgoing, receiptAlreadyAccepted} = await import("./outgoing.mjs");
       addOutgoing("peer:orc", "draft", "op");
       acceptReceipt("peer:orc", {operationId: "op", state: "pending", turnId: null, error: null});
       const detail = status => ({id: "peer:orc", messages: [], deliveries: [{id: "op", status}]});
@@ -47,6 +51,14 @@ test("authoritative delivery replaces an obsolete pending or missing receipt cla
       assert.equal(outgoing.entries[0].receiptState, "pending");
       observeOutgoing(detail("sent"));
       assert.equal(outgoing.entries[0].status, "sent");
+      observeOutgoing({id:'peer:orc',messages:[{id:'op'}],deliveries:[]});
+      assert.equal(outgoing.entries.length,0);
+      assert.equal(receiptAlreadyAccepted('peer:orc','op'),true);
+      acceptReceipt('peer:orc',{operationId:'op',state:'rejected',turnId:null,error:'late'});
+      assert.equal(outgoing.entries.length,0);
+      addOutgoing('peer:orc','second','second');
+      observeOutgoing({id:'peer:orc',messages:[],deliveries:[{id:'second',status:'sent'}]});
+
       assert.equal(outgoing.entries[0].receiptState, undefined);
     `,
     );

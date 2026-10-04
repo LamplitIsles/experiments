@@ -51,7 +51,12 @@ export class FakeRuntime implements Runtime {
   }
   readonly agents = new Map<string, RuntimeAgent>();
   readonly listeners = new Map<string, (e: RuntimeEvent) => void>();
-  readonly inputs: { agentId: string; text: string; turnId?: string }[] = [];
+  readonly inputs: {
+    agentId: string;
+    text: string;
+    turnId?: string;
+    images?: string[];
+  }[] = [];
   sendOverride?: (
     agentId: string,
     text: string,
@@ -131,8 +136,8 @@ export class FakeRuntime implements Runtime {
         await this.renameOverride?.(id, title);
         this.names.set(id, title);
       },
-      send: async (text, turnId) => {
-        this.inputs.push({ agentId: agent.id, text, turnId });
+      send: async (text, turnId, images) => {
+        this.inputs.push({ agentId: agent.id, text, turnId, images });
         return this.sendOverride
           ? this.sendOverride(agent.id, text, turnId)
           : (turnId ?? `turn-${this.inputs.length}`);

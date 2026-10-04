@@ -1,6 +1,12 @@
+import { saveImages, operationKey } from "./image-drafts";
 import { z } from "zod";
 import type { Detail, Answer } from "./contracts";
-import { answerSchema, receiptSchema, type Receipt } from "./chord-contract";
+import {
+  imageSchema,
+  answerSchema,
+  receiptSchema,
+  type Receipt,
+} from "./chord-contract";
 const prefix = `flickgrove/${location.origin}/outgoing/`;
 const key = (o: Outgoing) =>
   `${prefix}${encodeURIComponent(o.agentId)}/${encodeURIComponent(o.id)}`;
@@ -12,6 +18,8 @@ const entry = z.object({
   status: z.enum(["sending", "sent", "failed", "uncertain"]),
   error: z.string().optional(),
   receiptState: z.enum(["pending", "missing"]).optional(),
+  images: z.array(imageSchema).optional(),
+  localImageIds: z.array(z.string()).optional(),
   answers: z.array(answerSchema).optional(),
 });
 export type Outgoing = z.infer<typeof entry>;
@@ -49,6 +57,8 @@ export function addOutgoing(
   text: string,
   id: string,
   answers?: Answer[],
+  images?: import("./contracts").MessageImage[],
+  localImageIds?: string[],
 ) {
   const previous = outgoing.entries.find(
     (o) => o.agentId === agentId && o.id === id,
@@ -70,17 +80,32 @@ export function addOutgoing(
     id,
     at: Date.now(),
     status: "sending",
+    images,
+    localImageIds,
     ...(answers ? { answers: structuredClone(answers) } : {}),
   };
-  outgoing.entries.push(o);
   persist(o);
+  outgoing.entries.push(o);
+}
+export function receiptAlreadyAccepted(agentId: string, id: string) {
+  return !!localStorage.getItem(
+    `flickgrove/${location.origin}/accepted/${encodeURIComponent(agentId)}/${encodeURIComponent(id)}`,
+  );
+}
+function rememberAccepted(agentId: string, id: string) {
+  localStorage.setItem(
+    `flickgrove/${location.origin}/accepted/${encodeURIComponent(agentId)}/${encodeURIComponent(id)}`,
+    "true",
+  );
 }
 export function observeOutgoing(detail: Detail) {
   outgoing.entries = outgoing.entries.filter((o) => {
     if (localStorage.getItem(key(o) + "/dismissed")) return false;
     if (o.agentId !== detail.id) return true;
     if (detail.messages.some((m) => m.id === o.id)) {
+      rememberAccepted(o.agentId, o.id);
       localStorage.removeItem(key(o));
+      void saveImages(operationKey(o.agentId, o.id), []).catch(() => {});
       return false;
     }
     const d = detail.deliveries.find((d) => d.id === o.id);
@@ -103,6 +128,13 @@ export function observeOutgoing(detail: Detail) {
 }
 export function acceptReceipt(agentId: string, raw: Receipt) {
   const receipt = receiptSchema.parse(raw);
+  if (receipt.state === "accepted")
+    rememberAccepted(agentId, receipt.operationId);
+  if (
+    receipt.state !== "accepted" &&
+    receiptAlreadyAccepted(agentId, receipt.operationId)
+  )
+    return;
   const o = outgoing.entries.find(
     (o) => o.agentId === agentId && o.id === receipt.operationId,
   );
@@ -119,7 +151,7 @@ export function acceptReceipt(agentId: string, raw: Receipt) {
 }
 export function unknownOutgoing(agentId: string, id: string, error: string) {
   const o = outgoing.entries.find((o) => o.agentId === agentId && o.id === id);
-  if (o && o.status !== "sent") {
+  if (o && o.status !== "sent" && !receiptAlreadyAccepted(agentId, id)) {
     o.status = "uncertain";
     o.error = error;
     persist(o);
@@ -140,7 +172,7 @@ export function withOutgoing(detail: Detail): Detail {
   const unobserved = detail.deliveries.filter(
     (d) =>
       !dismissed(d.id) &&
-      d.source === "user" &&
+      (d.source === "user" || d.source === "question") &&
       !detail.messages.some((m) => m.id === d.id) &&
       !local.some((o) => o.id === d.id),
   );
@@ -158,17 +190,18 @@ export function withOutgoing(detail: Detail): Detail {
     }),
     messages: [
       ...detail.messages,
-      ...local
-        .filter((o) => !o.answers)
-        .map((o) => ({
-          id: o.id,
-          text: o.text,
-          role: "user" as const,
-          at: o.at,
-        })),
+      ...local.map((o) => ({
+        id: o.id,
+        text: o.text,
+        images: o.images,
+        localImageIds: o.localImageIds,
+        role: "user" as const,
+        at: o.at,
+      })),
       ...unobserved.map((d) => ({
         id: d.id,
         text: d.text,
+        images: d.images,
         role: "user" as const,
         at: d.at,
       })),
@@ -180,6 +213,7 @@ export function withOutgoing(detail: Detail): Detail {
       ...local.map((o) => ({
         id: o.id,
         text: o.text,
+        images: o.images,
         status: o.status,
         source: o.answers ? ("question" as const) : ("user" as const),
         questionIds: o.answers?.map((a) => a.questionId) ?? [],
@@ -224,3 +258,15 @@ window.addEventListener("storage", (event) => {
     } catch {}
   }
 });
+
+export function setOutgoingImages(
+  agentId: string,
+  id: string,
+  images: import("./contracts").MessageImage[],
+) {
+  const o = outgoing.entries.find((o) => o.agentId === agentId && o.id === id);
+  if (o) {
+    o.images = images;
+    persist(o);
+  }
+}

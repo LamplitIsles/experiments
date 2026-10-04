@@ -43,7 +43,7 @@ export interface RuntimeHandle {
   effort?: string;
   serviceTier?: string;
   rename(title: string): Promise<void>;
-  send(text: string, turnId?: string): Promise<string>;
+  send(text: string, turnId?: string, images?: string[]): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   title(input: string): Promise<string | undefined>;
   close(): Promise<void>;
@@ -51,6 +51,7 @@ export interface RuntimeHandle {
 export interface Runtime {
   history(cwd: string, cursor?: string): Promise<HistoryPage>;
   historyThread(threadId: string): Promise<HistorySession>;
+  historyImage?(threadId: string, imageId: string): Promise<File | null>;
   historyMessages(threadId: string, cursor?: string): Promise<HistoryMessages>;
   readTitle(threadId: string): Promise<string | null>;
   weekly(): Promise<WeeklyUsage>;

@@ -390,6 +390,29 @@ export class Peers {
       );
     return link.client.call<T>(member, input);
   }
+  async media(agent: string, path: string, init: RequestInit = {}) {
+    const peer = agent.split(":")[0];
+    const link = this.links.get(peer);
+    if (!link || !link.host.connected)
+      throw new Error("Execution Peer is offline");
+    const headers = new Headers(init.headers);
+    headers.set("X-Grove-Peer", peer);
+    if (link.config.credential)
+      headers.set("Authorization", `Bearer ${link.config.credential}`);
+    const response = await fetch(new URL(path, link.config.url), {
+      ...init,
+      headers,
+      credentials: "omit",
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (response.headers.get("X-Grove-Peer") !== peer)
+      throw new Error("Peer identity changed");
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error ?? "Image unavailable");
+    }
+    return response;
+  }
   private stop(link: Link) {
     link.generation++;
     clearTimeout(link.retry);

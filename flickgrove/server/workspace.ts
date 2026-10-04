@@ -1,3 +1,5 @@
+import { ImageStore } from "./images";
+import type { MessageImage } from "../src/contracts";
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -28,6 +30,7 @@ type State = {
   revision: number;
 };
 export class Workspace {
+  readonly images: ImageStore;
   private readonly db: Database;
   private readonly state: State;
   private readonly handles = new Map<string, RuntimeHandle>();
@@ -50,6 +53,7 @@ export class Workspace {
     },
   ) {
     mkdirSync(options.directory, { recursive: true, mode: 0o700 });
+    this.images = new ImageStore(join(options.directory, "media"));
     this.db = new Database(join(options.directory, "workspace.sqlite"));
     this.db.exec(
       "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS workspace (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL)",
@@ -410,6 +414,36 @@ export class Workspace {
         inserted.add(message.turnId!);
       }
     }
+    for (const message of messages) {
+      if (!message.images?.length || !this.options.runtime.historyImage)
+        continue;
+      const restored: MessageImage[] = [];
+      for (const image of message.images) {
+        if (image.availability !== "missing") {
+          restored.push(image);
+          continue;
+        }
+        try {
+          const file = await this.options.runtime.historyImage(
+            agent.threadId,
+            image.id,
+          );
+          if (!file) {
+            restored.push(image);
+            continue;
+          }
+          const operation = `history-${image.id}`;
+          const refs = await this.images.upload(agent.id, operation, "", [
+            file,
+          ]);
+          this.images.commit(agent.id, operation, "", refs);
+          restored.push(...refs);
+        } catch {
+          restored.push(image);
+        }
+      }
+      message.images = restored;
+    }
     return { ...page, messages };
   }
   async resumeHistory(
@@ -588,6 +622,7 @@ export class Workspace {
     source: Delivery["source"],
     questionIds: string[] = [],
     answers?: Answer[],
+    images?: MessageImage[],
   ) {
     if (this.disposed) throw new Error("Workspace is stopped");
     if (a.closeRequest && !questionIds.length)
@@ -604,7 +639,8 @@ export class Workspace {
       }
       return this.detail(a.id);
     }
-    if (!text.trim()) throw new Error("Write a message first");
+    if (!text.trim() && !images?.length)
+      throw new Error("Write a message first");
     if (text.length > 100_000) throw new Error("Message is too long");
     let d = a.deliveries.find((d) => d.id === requestId);
     if (d && d.status !== "failed" && d.status !== "queued")
@@ -617,6 +653,7 @@ export class Workspace {
         status: "sending",
         questionIds,
         ...(answers ? { answers: structuredClone(answers) } : {}),
+        ...(images?.length ? { images: structuredClone(images) } : {}),
         at: Date.now(),
       };
       a.deliveries.push(d);
@@ -631,6 +668,14 @@ export class Workspace {
     this.save();
     const messagePosition = a.messages.length;
     try {
+      let paths: string[] = [];
+      try {
+        paths = d.images?.length
+          ? this.images.commit(a.id, requestId, text, d.images)
+          : [];
+      } catch (error) {
+        throw new DeliveryRejected((error as Error).message);
+      }
       const handle = await this.handle(a);
       const activeTurn = a.state === "working" ? a.turnId : undefined;
       a.turnEnded = false;
@@ -640,7 +685,7 @@ export class Workspace {
       this.save();
       let turnId: string;
       try {
-        turnId = await handle.send(text, activeTurn);
+        turnId = await handle.send(text, activeTurn, paths);
       } catch (error) {
         if (!(error instanceof StaleTurn)) throw error;
         if (
@@ -655,7 +700,7 @@ export class Workspace {
           error.activeTurnId ??
           (a.turnId !== activeTurn ? a.turnId : undefined);
         a.turnId = currentTurn;
-        turnId = await handle.send(text, currentTurn);
+        turnId = await handle.send(text, currentTurn, paths);
       }
       if (!this.completedTurns.has(`${a.id}/${turnId}`)) a.turnId = turnId;
       if (a.stop && a.stop.turnId !== turnId) a.stop = undefined;
@@ -666,6 +711,7 @@ export class Workspace {
           text,
           turnId,
           at: d.at,
+          ...(d.images?.length ? { images: d.images } : {}),
         });
       d.status = "sent";
       d.turnId = turnId;
@@ -679,6 +725,7 @@ export class Workspace {
       if (
         a.role === "orc" &&
         d.source === "user" &&
+        text.trim() &&
         a.title === "New session" &&
         a.messages.filter((m) => m.role === "user").length === 1
       ) {
@@ -743,16 +790,21 @@ export class Workspace {
       error: d?.error ?? null,
     };
   }
-  send(id: string, text: string, requestId: string) {
+  send(id: string, text: string, requestId: string, images?: MessageImage[]) {
     return this.serialize(id, async () => {
       const a = this.agent(id);
       if (a.role !== "orc") throw new Error("Send instructions through Orc");
       const previous = a.deliveries.find((d) => d.id === requestId);
       if (previous) {
-        if (previous.text !== text || previous.source !== "user")
+        if (
+          previous.text !== text ||
+          previous.source !== "user" ||
+          JSON.stringify(previous.images ?? []) !== JSON.stringify(images ?? [])
+        )
           throw new Error("Operation ID is bound to different content");
         return this.detail(id);
       }
+      if (images?.length) this.images.validate(a.id, requestId, text, images);
       if (a.state === "stopping") {
         a.deliveries.push({
           id: requestId,
@@ -760,13 +812,14 @@ export class Workspace {
           source: "user",
           status: "failed",
           questionIds: [],
+          images,
           at: Date.now(),
           error: "Wait for the observed turn outcome before sending",
         });
         this.save();
         return this.detail(id);
       }
-      return this.deliver(a, text, requestId, "user");
+      return this.deliver(a, text, requestId, "user", [], undefined, images);
     });
   }
   closeTree(id: string) {

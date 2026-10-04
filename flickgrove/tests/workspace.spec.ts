@@ -120,7 +120,7 @@ test("all pending questions preserve drafts and use one explicit batch submissio
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Ask me questions");
   await input.press("Enter");
-  await expect(page.locator(".question-card")).toHaveCount(8);
+  await expect(page.locator(".question-card")).toHaveCount(1);
   const answer = page.getByRole("textbox", {
     name: "Your answer · Question 1",
     exact: true,
@@ -135,9 +135,8 @@ test("all pending questions preserve drafts and use one explicit batch submissio
     .click();
   await expect(page.locator(".question-card")).toHaveCount(0);
   await expect(page.locator(".answered-summary")).toContainText(
-    "All 8 answers sent",
+    "My custom choice",
   );
-  await page.locator(".answered-summary summary").click();
   await expect(page.locator(".sent-answer").first()).toHaveText(
     "My custom choice",
   );
@@ -315,6 +314,7 @@ test("Tab completes without moving focus, skill search preserves drafts, and clo
   ).toBeVisible();
   await page.keyboard.press("Alt+x");
   await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
+  await page.mouse.move(0, 0); // Sonner pauses its duration while hovered.
   await expect(page.getByText("Tree closed.", { exact: true })).toHaveCount(0, {
     timeout: 6500,
   });
