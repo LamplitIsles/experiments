@@ -80,6 +80,7 @@ export interface Delivery {
   reportingWorkerId?: string;
   questionIds: string[];
   error?: string;
+  receiptState?: "pending" | "missing";
   at: number;
 }
 export interface Agent {
@@ -118,10 +119,8 @@ export interface Host {
   id: string;
   name: string;
   url: string;
-  role: "hub" | "execution";
   connected: boolean;
   lastSeen?: number;
-  defaults: "synced" | "pending" | "failed";
   error?: string;
 }
 export interface WeeklyUsage {
@@ -133,7 +132,7 @@ export interface WeeklyUsage {
   source?: string;
 }
 export interface Snapshot {
-  hubId?: string;
+  entryId?: string;
   hosts?: Host[];
   agents: Agent[];
   settings: Settings | null;

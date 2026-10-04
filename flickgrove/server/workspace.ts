@@ -25,7 +25,6 @@ import { roleTools, toolDefinitions, sessionTitle } from "./tools";
 
 type State = {
   agents: RuntimeAgent[];
-  settings: Settings | null;
   revision: number;
 };
 export class Workspace {
@@ -58,9 +57,10 @@ export class Workspace {
     const row = this.db
       .query("SELECT value FROM workspace WHERE id=1")
       .get() as { value: string } | null;
-    this.state = row
+    const stored: State = row
       ? JSON.parse(row.value)
-      : { agents: [], settings: null, revision: 0 };
+      : { agents: [], revision: 0 };
+    this.state = { agents: stored.agents, revision: stored.revision };
     for (const a of this.state.agents) {
       if (
         a.state === "working" ||
@@ -237,6 +237,7 @@ export class Workspace {
       turnEnded: _turnEnded,
       messages: _messages,
       deliveries: _deliveries,
+      workerDefaults: _workerDefaults,
       ...agent
     } = a;
     return structuredClone(agent);
@@ -246,7 +247,7 @@ export class Workspace {
       agents: this.state.agents
         .filter((a) => !a.closed)
         .map((a) => this.publicAgent(a)),
-      settings: structuredClone(this.state.settings),
+      settings: null,
       revision: this.state.revision,
     };
   }
@@ -306,7 +307,7 @@ export class Workspace {
   models() {
     return this.options.runtime.models();
   }
-  projects(_hostId?: string) {
+  projects() {
     return this.options.projects();
   }
   private async historyProject(alias: string) {
@@ -330,12 +331,7 @@ export class Workspace {
       ownerProject: owner?.project.alias,
     };
   }
-  async history(
-    alias: string,
-    query: string,
-    cursor?: string,
-    _hostId?: string,
-  ) {
+  async history(alias: string, query: string, cursor?: string) {
     const project = await this.historyProject(alias);
     const schema = z.object({
       cwd: z.string(),
@@ -375,19 +371,14 @@ export class Workspace {
         : null,
     };
   }
-  async historySession(alias: string, threadId: string, _hostId?: string) {
+  async historySession(alias: string, threadId: string) {
     const project = await this.historyProject(alias);
     const session = await this.options.runtime.historyThread(threadId);
     if (!sameDirectory(session.cwd, project.path))
       throw new Error("Session does not belong to this project directory");
     return this.historyIdentity(session);
   }
-  async historyMessages(
-    alias: string,
-    threadId: string,
-    cursor?: string,
-    _hostId?: string,
-  ) {
+  async historyMessages(alias: string, threadId: string, cursor?: string) {
     await this.historySession(alias, threadId);
     return this.options.runtime.historyMessages(threadId, cursor);
   }
@@ -425,7 +416,7 @@ export class Workspace {
     alias: string,
     threadId: string,
     archived: boolean,
-    _hostId?: string,
+    settings?: Settings,
   ) {
     return this.serialize(`history:${threadId}`, async () => {
       const project = await this.historyProject(alias);
@@ -442,7 +433,9 @@ export class Workspace {
         const session = await this.historySession(alias, threadId);
         if (session.role === "worker")
           throw new Error("Continue this Worker through its original Orc");
-        await this.initializeSettings();
+        const workerDefaults = existing
+          ? existing.workerDefaults
+          : (await this.executionSettings(settings)).worker;
         const agent: RuntimeAgent = existing ?? {
           id: crypto.randomUUID(),
           token: crypto.randomUUID(),
@@ -459,6 +452,7 @@ export class Workspace {
           messages: [],
           deliveries: [],
           inheritSettings: true,
+          workerDefaults,
         };
         agent.restoreArchived = archived;
         try {
@@ -488,56 +482,40 @@ export class Workspace {
       return existing ? this.serialize(existing.id, restore) : restore();
     });
   }
-  async saveSettings(settings: Settings) {
+  private async executionSettings(settings?: Settings) {
     const models = await this.models();
-    for (const defaults of [settings.orc, settings.worker]) {
-      if (
-        !models
-          .find((m) => m.id === defaults.model)
-          ?.efforts.includes(defaults.effort)
-      )
+    const first = models.find((m) => m.isDefault) ?? models[0];
+    if (!first) throw new Error("No models available");
+    const value = settings ?? {
+      fast: false,
+      orc: { model: first.id, effort: first.defaultEffort },
+      worker: { model: first.id, effort: first.defaultEffort },
+    };
+    const capture = (defaults: Settings["orc"]) => {
+      const model = models.find((m) => m.id === defaults.model);
+      if (!model?.efforts.includes(defaults.effort))
         throw new Error("Choose a supported model and reasoning effort");
-      if (
-        settings.fast &&
-        !models.find((m) => m.id === defaults.model)?.fastTier
-      )
+      if (value.fast && !model.fastTier)
         throw new Error("Fast is not available for this model");
-    }
-    this.state.settings = structuredClone(settings);
-    this.save();
-  }
-  private async initializeSettings() {
-    if (!this.state.settings) {
-      const models = await this.models();
-      const model = models.find((m) => m.isDefault) ?? models[0];
-      if (!model) throw new Error("No models available");
-      const defaults = {
-        model: model.id,
-        effort: model.defaultEffort,
+      return {
+        ...defaults,
+        serviceTier: value.fast ? model.fastTier! : "default",
       };
-      this.state.settings = {
-        fast: false,
-        orc: { ...defaults },
-        worker: { ...defaults },
-      };
-    }
+    };
+    return { orc: capture(value.orc), worker: capture(value.worker) };
   }
-  async createOrc(alias: string, _hostId?: string) {
+  async createOrc(alias: string, settings?: Settings) {
     const project = (await this.projects()).find((p) => p.alias === alias);
     if (!project) throw new Error("Registered project not found");
-    await this.initializeSettings();
+    const captured = await this.executionSettings(settings);
     const a: RuntimeAgent = {
       id: crypto.randomUUID(),
       token: crypto.randomUUID(),
       role: "orc",
       project,
       title: "New session",
-      ...this.state.settings!.orc,
-      serviceTier: this.state.settings!.fast
-        ? (await this.models()).find(
-            (m) => m.id === this.state.settings!.orc.model,
-          )!.fastTier!
-        : "default",
+      ...captured.orc,
+      workerDefaults: captured.worker,
       state: "idle",
       closed: false,
       questions: [],
@@ -912,12 +890,11 @@ export class Workspace {
             ownerId: a.id,
             project,
             title: input.title,
-            ...this.state.settings!.worker,
-            serviceTier: this.state.settings!.fast
-              ? (await this.models()).find(
-                  (m) => m.id === this.state.settings!.worker.model,
-                )!.fastTier!
-              : "default",
+            ...(a.workerDefaults ?? {
+              model: a.model,
+              effort: a.effort,
+              serviceTier: a.serviceTier,
+            }),
             state: "idle",
             closed: false,
             questions: [],

@@ -26,7 +26,7 @@ test("a real stdio MCP client discovers role tools and delegates through the aut
       origin: () => origin,
       service: new HostService(app, {
         directory,
-        hub: false,
+
         origin: () => origin,
       }),
     }),

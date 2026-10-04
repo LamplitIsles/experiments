@@ -25,7 +25,7 @@ test("local API creates a session, preserves work across visits and rejects fore
   };
   const service = new HostService(app, {
     directory,
-    hub: true,
+
     origin: () => "http://127.0.0.1:4321",
   });
   const fetch = createHandler(app, {
@@ -66,17 +66,36 @@ test("local API creates a session, preserves work across visits and rejects fore
           }),
         );
   expect(
-    (await request("/api/agents", { project: "alpha" }, "https://evil.example"))
-      .status,
+    (
+      await request(
+        "/api/agents",
+        {
+          project: "alpha",
+          settings: {
+            fast: false,
+            orc: { model: "sol", effort: "medium" },
+            worker: { model: "sol", effort: "medium" },
+          },
+        },
+        "https://evil.example",
+      )
+    ).status,
   ).toBe(403);
-  const response = await request("/api/agents", { project: "alpha" });
+  const response = await request("/api/agents", {
+    project: "alpha",
+    settings: {
+      fast: false,
+      orc: { model: "sol", effort: "medium" },
+      worker: { model: "sol", effort: "medium" },
+    },
+  });
   expect(response.status).toBe(200);
   const agent = (await response.json()) as { id: string };
   await request(`/api/agents/${agent.id}/messages`, {
     text: "Build a reader",
     operationId: "first",
   });
-  const secondVisit = (await (await request("/api/snapshot")).json()) as {
+  const secondVisit = service.snapshot() as {
     agents: { state: string; token?: string }[];
   };
   expect(secondVisit.agents[0].state).toBe("working");

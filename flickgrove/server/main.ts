@@ -12,7 +12,6 @@ import { groveWebsocket } from "./chord-socket";
 const { values } = parseArgs({
   args: Bun.argv.slice(2),
   options: {
-    hub: { type: "boolean", default: false },
     listen: { type: "string", default: "127.0.0.1" },
     origin: { type: "string" },
     name: { type: "string" },
@@ -45,7 +44,6 @@ const app = new Workspace({
 });
 const service = new HostService(app, {
   directory,
-  hub: values.hub,
   name: values.name,
   origin: () => origin,
 });
@@ -69,9 +67,7 @@ const server = Bun.serve({
   },
 });
 console.log(
-  values.hub
-    ? `FlickGrove Hub is available at ${origin}`
-    : `FlickGrove execution service listens at ${origin}; private access credential: ${join(directory, "hosts.json")}`,
+  `FlickGrove Peer is available at ${origin}; private access credential: ${join(directory, "hosts.json")}`,
 );
 let stopping = false;
 const stop = async () => {

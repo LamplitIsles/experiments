@@ -3,7 +3,7 @@ import type { WeeklyUsage } from "./contracts";
 export const weeklyCache = $state<Record<string, WeeklyUsage | null>>({});
 const requests = new Map<string, Promise<WeeklyUsage>>();
 export function weeklyKey(hostId?: string) {
-  return hostId ?? "hub";
+  return hostId ?? "entry";
 }
 export function loadWeekly(hostId?: string) {
   const key = weeklyKey(hostId);

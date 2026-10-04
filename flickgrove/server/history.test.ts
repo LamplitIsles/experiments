@@ -69,11 +69,6 @@ test("history searches title and first message within the selected project, incl
 test("CLI resume is idempotent, retains the original thread and settings, and does not copy historical messages", async () => {
   const { app, runtime, directory } = fixture();
   session(runtime);
-  await app.saveSettings({
-    fast: true,
-    orc: { model: "sol", effort: "high" },
-    worker: { model: "sol", effort: "high" },
-  });
   const [a, b] = await Promise.all([
     app.resumeHistory("alpha", "cli-history", false),
     app.resumeHistory("alpha", "cli-history", false),

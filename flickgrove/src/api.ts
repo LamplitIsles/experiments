@@ -1,29 +1,19 @@
-import type { GroveClient } from "./chord-client";
+import type { Peers } from "./peers";
 import { routeCall } from "./chord-contract";
-let client: GroveClient | undefined;
-export function setClient(value: GroveClient | undefined) {
+let client: Peers | undefined;
+export function setClient(value: Peers | undefined) {
   client = value;
 }
+export function peers() {
+  if (!client) throw new Error("Connection offline");
+  return client;
+}
 export const storagePrefix = `flickgrove/${location.origin}`;
-export async function api<T>(
-  path: string,
-  body?: unknown,
-  method = "POST",
-): Promise<T> {
-  if (body !== undefined) {
-    if (!client) throw new Error("Connection offline. Outcome unknown.");
-    const call = routeCall(path, body);
-    return client.call<T>(call.member, call.input);
-  }
-  const response = await fetch(`/api${path}`, {
-    method: body === undefined ? "GET" : method,
-    headers: { "Content-Type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const result = await response.json();
-  if (!response.ok)
-    throw new Error(result.error ?? "Could not complete this action");
-  return result as T;
+export async function api<T>(path: string, body?: unknown): Promise<T> {
+  if (!client) throw new Error("Connection offline. Outcome unknown.");
+  if (path === "/snapshot") return client.snapshot() as T;
+  const call = routeCall(path, body);
+  return client.call<T>(call.member, call.input);
 }
 export function editable(target: EventTarget | null) {
   return (

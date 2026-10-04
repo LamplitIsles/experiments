@@ -5,7 +5,7 @@ const workerId = z.string().min(1);
 export const toolDefinitions = {
   worker_start: {
     description:
-      "Start one implementation Worker for one registered project and one spec. Uses the global Worker model and effort. Return the Worker ID for subsequent operations.",
+      "Start one implementation Worker for one registered project and one spec. Uses the Worker model and effort captured by the owning Orc. Return the Worker ID for subsequent operations.",
     shape: {
       project: z.string().min(1),
       title: sessionTitle,

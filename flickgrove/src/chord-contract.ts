@@ -19,6 +19,11 @@ const id = z.string().min(1).max(500);
 const text = z.string().trim().min(1).max(100_000);
 export const answerSchema = z.object({ questionId: id, answer: text });
 const defaults = z.object({ model: id, effort: id });
+export const settingsSchema = z.object({
+  fast: z.boolean(),
+  orc: defaults,
+  worker: defaults,
+});
 export const inputs = {
   select: z.object({ ids: z.array(id).max(100) }),
   identity: z.object({}),
@@ -42,22 +47,16 @@ export const inputs = {
     project: id,
     threadId: id,
     archived: z.boolean(),
+    settings: settingsSchema,
     host: id.optional(),
   }),
   agentHistory: z.object({ id, cursor: id.optional() }),
   detail: z.object({ id }),
   skills: z.object({ id }),
-  createOrc: z.object({ project: id, host: id.optional() }),
-  saveSettings: z.object({
-    fast: z.boolean(),
-    orc: defaults,
-    worker: defaults,
-  }),
-  register: z.object({
-    id: id.optional(),
-    name: z.string().min(1).max(120),
-    url: z.string().max(2048),
-    credential: z.string().max(1000),
+  createOrc: z.object({
+    project: id,
+    settings: settingsSchema,
+    host: id.optional(),
   }),
   send: z.object({ id, text, operationId: z.string().min(1).max(120) }),
   retryDelivery: z.object({ id, deliveryId: id }),
@@ -153,9 +152,9 @@ export const detailSchema = agent.extend({
   ),
 });
 export const snapshotSchema = z.object({
-  hubId: id.optional(),
+  entryId: id.optional(),
   revision: z.number(),
-  settings: inputs.saveSettings.nullable(),
+  settings: settingsSchema.nullable(),
   agents: z.array(agent),
   hosts: z
     .array(
@@ -163,9 +162,7 @@ export const snapshotSchema = z.object({
         id,
         name: z.string(),
         url: z.string(),
-        role: z.enum(["hub", "execution"]),
         connected: z.boolean(),
-        defaults: z.enum(["synced", "pending", "failed"]),
         lastSeen: z.number().optional(),
         error: z.string().optional(),
       }),
@@ -195,8 +192,6 @@ export function routeCall(
     "/projects": ["projects", { host }],
     "/models": ["models", {}],
     "/weekly": ["weekly", {}],
-    "/settings": ["saveSettings", body],
-    "/hosts": ["register", body],
     "/agents": ["createOrc", { ...(body as object), host }],
     "/history": [
       "history",

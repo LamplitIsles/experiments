@@ -9,14 +9,6 @@ test("abbreviated skill query inserts the exact invocation without sending", asy
   await request.post(`${origin}/fixture/reset`, {
     data: { mode: "no-workers" },
   });
-  await page.route("**/api/agents/*/skills", (route) =>
-    route.fulfill({
-      json: [
-        { name: "grill-with-docs", description: "Interview a design" },
-        { name: "to-orc-impl", description: "Implement a spec" },
-      ],
-    }),
-  );
   await page.goto(origin);
   await page
     .getByRole("button", { name: "Open Streaming voice input Orc" })

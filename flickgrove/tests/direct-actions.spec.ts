@@ -72,13 +72,16 @@ test("skill panel preserves independent multiword query, insertion, caret and Ba
   );
   await input.press("$");
   await search.press("ArrowDown");
+  await search.press("ArrowDown");
   await expect(page.locator(".completion-description")).toHaveText(
     "Review code and verify tests",
   );
   await search.press("ArrowUp");
+  await search.press("ArrowUp");
   await expect(page.locator(".completion-description")).toHaveText(
     "Implement one spec with one Worker",
   );
+  await search.press("ArrowDown");
   await search.press("ArrowDown");
   await search.press("Tab");
   await expect(input).toHaveValue(
@@ -196,6 +199,19 @@ test("mobile swipe only reveals, one row at a time; right/outside collapse and e
   await expect
     .poll(() => page.locator(".session-list").evaluate((el) => el.scrollTop))
     .toBeGreaterThan(0);
+  // Wait for native touch inertia to settle before resetting the scroll position.
+  let previousScroll = -1;
+  let stableSamples = 0;
+  await expect
+    .poll(async () => {
+      const scroll = await page
+        .locator(".session-list")
+        .evaluate((el) => el.scrollTop);
+      stableSamples = scroll === previousScroll ? stableSamples + 1 : 0;
+      previousScroll = scroll;
+      return stableSamples;
+    })
+    .toBeGreaterThanOrEqual(2);
   await page.locator(".session-list").evaluate((el) => (el.scrollTop = 0));
   await expect
     .poll(() => page.locator(".session-list").evaluate((el) => el.scrollTop))

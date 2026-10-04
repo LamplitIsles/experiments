@@ -5,7 +5,7 @@
   import { tick, untrack } from "svelte";
   import type { Answer, Delivery, Question } from "./contracts";
   import * as m from "./paraglide/messages";
-  let { agentId, questions, deliveries, connected, onanswer, onlookup, onretry }: { agentId: string; questions: Question[]; deliveries: Delivery[]; connected: boolean; onanswer: (answers: Answer[], operationId: string) => Promise<void>; onlookup: (id: string) => Promise<void>; onretry: (id: string) => Promise<void> } = $props();
+  let { agentId, questions, deliveries, connected, onanswer, onlookup, onretry, ondismiss }: { agentId: string; questions: Question[]; deliveries: Delivery[]; connected: boolean; onanswer: (answers: Answer[], operationId: string) => Promise<void>; onlookup: (id: string) => Promise<void>; onretry: (id: string) => Promise<void>; ondismiss:(id:string)=>void } = $props();
   const storageKey = untrack(() => `${storagePrefix}/questions/${agentId}`);
   type Draft = { selected: string; text: string; edited?: boolean };
   let drafts = $state<Record<string, Draft>>(JSON.parse(localStorage.getItem(storageKey) ?? "{}"));
@@ -37,9 +37,9 @@
 <div class="questions-content" bind:this={panel}>
   {#each batches as batch (batch.id)}
     <section class="answer-batch" aria-label={m.answer_batch()} data-operation-id={batch.id}>
-      <p class="batch-status" role="status">{batch.status === "sending" || batch.status === "queued" ? m.sending() : batch.status === "uncertain" ? m.unknown_delivery() : batch.error ?? m.load_failure()}</p>
+      <p class="batch-status" role="status">{batch.status === "sending" || batch.status === "queued" ? m.sending() : batch.status === "uncertain" ? (batch.receiptState === "missing" ? m.delivery_missing() : batch.receiptState === "pending" ? m.delivery_pending() : m.unknown_delivery()) : batch.error ?? m.load_failure()}</p>
       {#each batch.answers ?? [] as answer}<div class="answered-item"><p>{questions.find(q => q.id === answer.questionId)?.text}</p><span>{answer.answer}</span></div>{/each}
-      {#if batch.status === "uncertain"}<p class="question-hint">{m.lookup_help()}</p><Button variant="ghost" size="sm" disabled={!connected} onclick={() => onlookup(batch.id)}>{m.check_delivery()}</Button>
+      {#if batch.status === "uncertain"}<p class="question-hint">{m.lookup_help()}</p><Button variant="ghost" size="sm" disabled={!connected} onclick={() => onlookup(batch.id)}>{m.check_delivery()}</Button><Button variant="ghost" size="sm" onclick={()=>ondismiss(batch.id)}>{m.dismiss_delivery()}</Button>
       {:else if batch.status === "failed"}<Button variant="secondary" size="sm" disabled={!connected} onclick={() => onretry(batch.id)}>{m.retry()}</Button>{/if}
     </section>
   {/each}

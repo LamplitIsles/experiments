@@ -1,3 +1,5 @@
+Status: superseded by FlickNote ADR #3283 (2026-10-04). Every Peer now serves a frontend; browser connections are direct and independent. Whole-tree execution ownership remains.
+
 # ADR 0001: Fixed Hub and host-owned execution
 
 Status: accepted for spec #3133; implemented in the same PR as tickets #3134–#3139.

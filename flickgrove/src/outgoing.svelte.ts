@@ -11,6 +11,7 @@ const entry = z.object({
   at: z.number(),
   status: z.enum(["sending", "sent", "failed", "uncertain"]),
   error: z.string().optional(),
+  receiptState: z.enum(["pending", "missing"]).optional(),
   answers: z.array(answerSchema).optional(),
 });
 export type Outgoing = z.infer<typeof entry>;
@@ -19,6 +20,7 @@ for (const storageKey of Object.keys(localStorage)) {
   if (!storageKey.startsWith(prefix)) continue;
   try {
     const o = entry.parse(JSON.parse(localStorage.getItem(storageKey)!));
+    if (localStorage.getItem(storageKey + "/dismissed")) continue;
     saved.push({
       ...o,
       status: o.status === "sending" ? "uncertain" : o.status,
@@ -75,6 +77,7 @@ export function addOutgoing(
 }
 export function observeOutgoing(detail: Detail) {
   outgoing.entries = outgoing.entries.filter((o) => {
+    if (localStorage.getItem(key(o) + "/dismissed")) return false;
     if (o.agentId !== detail.id) return true;
     if (detail.messages.some((m) => m.id === o.id)) {
       localStorage.removeItem(key(o));
@@ -90,6 +93,8 @@ export function observeOutgoing(detail: Detail) {
             : d.status === "uncertain"
               ? "uncertain"
               : o.status;
+      o.receiptState =
+        d.status === "queued" || d.status === "sending" ? "pending" : undefined;
       o.error = d.error;
       persist(o);
     }
@@ -105,6 +110,10 @@ export function acceptReceipt(agentId: string, raw: Receipt) {
   if (receipt.state === "accepted") o.status = "sent";
   else if (receipt.state === "rejected") o.status = "failed";
   else o.status = "uncertain";
+  o.receiptState =
+    receipt.state === "pending" || receipt.state === "missing"
+      ? receipt.state
+      : undefined;
   o.error = receipt.error ?? undefined;
   persist(o);
 }
@@ -117,12 +126,20 @@ export function unknownOutgoing(agentId: string, id: string, error: string) {
   }
 }
 export function withOutgoing(detail: Detail): Detail {
+  void dismissedVersion.value;
+  const dismissed = (id: string) =>
+    !!localStorage.getItem(
+      `${prefix}${encodeURIComponent(detail.id)}/${encodeURIComponent(id)}/dismissed`,
+    );
   const local = outgoing.entries.filter(
     (o) =>
-      o.agentId === detail.id && !detail.messages.some((m) => m.id === o.id),
+      o.agentId === detail.id &&
+      !dismissed(o.id) &&
+      !detail.messages.some((m) => m.id === o.id),
   );
   const unobserved = detail.deliveries.filter(
     (d) =>
+      !dismissed(d.id) &&
       d.source === "user" &&
       !detail.messages.some((m) => m.id === d.id) &&
       !local.some((o) => o.id === d.id),
@@ -157,7 +174,9 @@ export function withOutgoing(detail: Detail): Detail {
       })),
     ],
     deliveries: [
-      ...detail.deliveries.filter((d) => !local.some((o) => o.id === d.id)),
+      ...detail.deliveries.filter(
+        (d) => !dismissed(d.id) && !local.some((o) => o.id === d.id),
+      ),
       ...local.map((o) => ({
         id: o.id,
         text: o.text,
@@ -166,8 +185,42 @@ export function withOutgoing(detail: Detail): Detail {
         questionIds: o.answers?.map((a) => a.questionId) ?? [],
         ...(o.answers ? { answers: o.answers } : {}),
         error: o.error,
+        receiptState: o.receiptState,
         at: o.at,
       })),
     ],
   };
 }
+
+export function dismissOutgoing(agentId: string, id: string) {
+  const record = outgoing.entries.find(
+    (o) => o.agentId === agentId && o.id === id,
+  );
+  const storageKey = `${prefix}${encodeURIComponent(agentId)}/${encodeURIComponent(id)}`;
+  localStorage.setItem(storageKey + "/dismissed", "true");
+  localStorage.removeItem(storageKey);
+  outgoing.entries = outgoing.entries.filter((o) => o !== record);
+  dismissedVersion.value++;
+}
+const dismissedVersion = $state({ value: 0 });
+window.addEventListener("storage", (event) => {
+  if (!event.key?.startsWith(prefix)) return;
+  dismissedVersion.value++;
+  if (event.key.endsWith("/dismissed")) {
+    outgoing.entries = outgoing.entries.filter(
+      (o) => !localStorage.getItem(key(o) + "/dismissed"),
+    );
+    return;
+  }
+  if (event.newValue) {
+    try {
+      const parsed = entry.parse(JSON.parse(event.newValue));
+      const local = outgoing.entries.find(
+        (o) => o.id === parsed.id && o.agentId === parsed.agentId,
+      );
+      if (local && parsed.status === "sent") {
+        Object.assign(local, parsed);
+      }
+    } catch {}
+  }
+});

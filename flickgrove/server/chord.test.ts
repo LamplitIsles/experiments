@@ -22,7 +22,7 @@ export async function until(check: () => boolean) {
     await new Promise((r) => setTimeout(r, 5));
   }
 }
-function fixture(hub = true) {
+function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "grove-chord-"));
   const runtime = new FakeRuntime();
   let app = new Workspace({
@@ -31,7 +31,7 @@ function fixture(hub = true) {
     projects: async () => fixtureProjects,
   });
   let origin = "";
-  let service = new HostService(app, { directory, hub, origin: () => origin });
+  let service = new HostService(app, { directory, origin: () => origin });
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -84,7 +84,7 @@ function fixture(hub = true) {
         runtime: new FakeRuntime(),
         projects: async () => fixtureProjects,
       });
-      service = new HostService(app, { directory, hub, origin: () => origin });
+      service = new HostService(app, { directory, origin: () => origin });
     },
   };
 }
@@ -106,6 +106,11 @@ test("real socket admits A/B/C in order, start then steer, with operation-bound 
   ).toBe("missing");
   const other = await client.call<{ id: string }>("createOrc", {
     project: "alpha",
+    settings: {
+      fast: false,
+      orc: { model: "sol", effort: "medium" },
+      worker: { model: "sol", effort: "medium" },
+    },
   });
   expect(other.id).not.toBe(id);
   expect(f.runtime.inputs.map((i) => i.text)).toEqual(["A"]);
@@ -207,117 +212,6 @@ test("two browser selections and rapid switching are independent; detail pushes 
   expect(Object.keys(right!.details)).toEqual([bid]);
   await l.call("select", { ids: [] });
   await until(() => Object.keys(left!.details).length === 0);
-});
-test("browser/peer upgrade authorization, unknown identity and method boundaries reject access", async () => {
-  const hub = fixture(),
-    exec = fixture(false);
-  const url = hub.origin.replace("http:", "ws:") + "/api/socket";
-  for (const headers of [{ Origin: "https://foreign.invalid" }, {}] as Record<
-    string,
-    string
-  >[])
-    await expect(
-      openGrove(
-        socketWithHeaders(url, headers),
-        () => {},
-        () => {},
-      ),
-    ).rejects.toThrow();
-  await expect(
-    openGrove(
-      socketWithHeaders(exec.origin.replace("http:", "ws:") + "/api/socket", {
-        Origin: exec.origin,
-      }),
-      () => {},
-      () => {},
-    ),
-  ).rejects.toThrow();
-  const peerURL = exec.origin.replace("http:", "ws:") + "/execution/socket";
-  for (const headers of [
-    { Authorization: "Bearer invalid", "Grove-Host": exec.service.identity.id },
-    {
-      Authorization: `Bearer ${exec.service.credential}`,
-      "Grove-Host": "wrong",
-    },
-  ])
-    await expect(
-      openGrove(
-        socketWithHeaders(peerURL, headers),
-        () => {},
-        () => {},
-      ),
-    ).rejects.toThrow();
-  const peer = await openGrove(
-    socketWithHeaders(peerURL, {
-      Authorization: `Bearer ${exec.service.credential}`,
-      "Grove-Host": exec.service.identity.id,
-    }),
-    () => {},
-    () => {},
-  );
-  cleanups.push(() => peer.close());
-  await expect(
-    peer.call("register", {
-      name: "bad",
-      url: hub.origin,
-      credential: "fixture",
-    }),
-  ).rejects.toThrow("Hub");
-  const client = await hub.client();
-  await expect(
-    client.call("send", {
-      id: "unknown:agent",
-      text: "bad",
-      operationId: "bad",
-    }),
-  ).rejects.toThrow("Host not found");
-  await expect(client.call("identity", {})).rejects.toThrow("execution access");
-  expect(exec.runtime.inputs).toHaveLength(0);
-  expect(hub.runtime.inputs).toHaveLength(0);
-});
-test("peer detail subscriptions union browser interests, release old interests, and publish promptly", async () => {
-  const hub = fixture(),
-    peer = fixture(false);
-  await hub.service.register({
-    name: "peer",
-    url: peer.origin,
-    credential: peer.service.credential,
-  });
-  const a = await peer.app.createOrc("alpha"),
-    b = await peer.app.createOrc("beta");
-  const aid = qualify(peer.service.identity.id, a.id),
-    bid = qualify(peer.service.identity.id, b.id);
-  let left: View | undefined, right: View | undefined;
-  const l = await hub.client((v) => (left = v)),
-    r = await hub.client((v) => (right = v));
-  await l.call("select", { ids: [aid] });
-  await r.call("select", { ids: [bid] });
-  await until(() => !!left?.details[aid] && !!right?.details[bid]);
-  await l.call("send", { id: aid, text: "remote", operationId: "remote" });
-  const turnId = peer.app.detail(a.id).turnId!;
-  peer.runtime.emit(a.id, {
-    type: "item",
-    turnId,
-    item: {
-      id: "peer-result",
-      type: "agentMessage",
-      phase: "final_answer",
-      text: "Pushed remote result",
-    },
-  });
-  peer.runtime.emit(a.id, { type: "completed", turnId, status: "completed" });
-  await until(
-    () =>
-      left?.details[aid]?.messages.some(
-        (m) => m.text === "Pushed remote result",
-      ) === true,
-  );
-  expect(right?.details[aid]).toBeUndefined();
-  expect(hub.runtime.inputs).toHaveLength(0);
-  l.close();
-  await r.call("select", { ids: [] });
-  expect(peer.app.detail(a.id).state).toBe("idle");
-  expect(peer.runtime.interruptions).toHaveLength(0);
 });
 test("public Chord provider reset over a real socket precedes the next delta and a fresh decoder rehydrates", async () => {
   const {
@@ -428,88 +322,6 @@ test("public Chord provider reset over a real socket precedes the next delta and
   );
   cleanups.push(() => fresh.close());
   await until(() => hydrated?.snapshot.revision === 102);
-});
-
-test("isolated WebSocket proxy preserves peer authorization and forwarded Chord state", async () => {
-  const execution = fixture(false);
-  const agent = await execution.app.createOrc("alpha");
-  const target = execution.origin.replace("http:", "ws:") + "/execution/socket";
-  const proxy = Bun.serve<{
-    headers: Record<string, string>;
-    upstream?: WebSocket;
-  }>({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch(req, server) {
-      if (
-        server.upgrade(req, {
-          data: {
-            headers: {
-              Authorization: req.headers.get("Authorization") ?? "",
-              "Grove-Host": req.headers.get("Grove-Host") ?? "",
-            },
-          },
-        })
-      )
-        return undefined;
-      return new Response("Upgrade required", { status: 400 });
-    },
-    websocket: {
-      open(socket) {
-        const upstream = socketWithHeaders(target, socket.data.headers);
-        socket.data.upstream = upstream;
-        upstream.addEventListener("message", (event) =>
-          socket.send(String(event.data)),
-        );
-        upstream.addEventListener("close", () => socket.close());
-        upstream.addEventListener("error", () => socket.close());
-      },
-      async message(socket, raw) {
-        const upstream = socket.data.upstream!;
-        if (upstream.readyState === 0)
-          await new Promise<void>((resolve, reject) => {
-            upstream.addEventListener("open", () => resolve(), { once: true });
-            upstream.addEventListener(
-              "close",
-              () => reject(new Error("Proxy target rejected")),
-              { once: true },
-            );
-          }).catch(() => {});
-        if (upstream.readyState === 1) upstream.send(raw);
-      },
-      close(socket) {
-        socket.data.upstream?.close();
-      },
-    },
-  });
-  cleanups.push(() => proxy.stop(true));
-  const address = `ws://127.0.0.1:${proxy.port}/execution/socket`;
-  const client = await openGrove(
-    socketWithHeaders(address, {
-      Authorization: `Bearer ${execution.service.credential}`,
-      "Grove-Host": execution.service.identity.id,
-    }),
-    () => {},
-    () => {},
-  );
-  cleanups.push(() => client.close());
-  expect(await client.call("identity", {})).toMatchObject({
-    id: execution.service.identity.id,
-    role: "execution",
-  });
-  expect(await client.call("detail", { id: agent.id })).toMatchObject({
-    id: agent.id,
-  });
-  await expect(
-    openGrove(
-      socketWithHeaders(address, {
-        Authorization: "Bearer invalid",
-        "Grove-Host": execution.service.identity.id,
-      }),
-      () => {},
-      () => {},
-    ),
-  ).rejects.toThrow();
 });
 
 test("slow read and late result leave the socket and other calls alive", async () => {
