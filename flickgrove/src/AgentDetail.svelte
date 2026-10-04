@@ -68,7 +68,7 @@
       {#if report}<WorkerReport text={message.text} sender={workers.find(w => w.id === report.reportingWorkerId)?.title} />
       {:else}<div class:user-message={message.role === "user"} class:assistant-message={message.role === "assistant"}><div class="message-role">{message.role === "assistant" ? detail.role === "orc" ? m.orc() : m.worker() : ""}</div><Markdown text={message.text} />
       {#if message.images?.length || message.localImageIds?.length}<MessageImages agentId={detail.id} operationId={message.id} images={message.images} localImageIds={message.localImageIds} />{/if}
-      {#if delivery}<small class:failed={delivery.status==='failed'} role="status">{delivery.status==='sent' ? 'Accepted' : delivery.status==='failed' ? 'Not accepted' : delivery.status==='uncertain' ? m.unknown_delivery() : m.sending()}</small>{/if}
+      {#if delivery?.status==='failed' || delivery?.status==='uncertain'}<small class:failed={delivery.status==='failed'} role="status">{delivery.status==='failed' ? m.failed() : m.unknown_delivery()}</small>{/if}
       </div>{/if}
     {/snippet}
     {#each detail.messages.slice(detail.historyCursor ? detail.historyMessageCount ?? 0 : 0) as message (message.id)}
