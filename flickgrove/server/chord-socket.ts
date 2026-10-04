@@ -20,18 +20,19 @@ import {
 } from "../src/chord-contract";
 import { decodeFrame, MAX_FRAME } from "../src/chord-client";
 import { invoke } from "./chord-methods";
-import type { Workspace } from "./workspace";
 import type { HostService } from "./hosts";
 
 type Channel = ReturnType<typeof connect>;
 export type SocketData = {
-  app: Workspace | HostService;
+  app: HostService;
   service: HostService;
-  peer: boolean;
   channel?: Channel;
+  heartbeat?: ReturnType<typeof setInterval>;
+  deadline?: ReturnType<typeof setTimeout>;
+  ping?: string;
 };
 function connect(socket: ServerWebSocket<SocketData>) {
-  const { app, service, peer } = socket.data;
+  const { app, service } = socket.data;
   const view = replicatedState(
     jsonValue<View>({ snapshot: app.snapshot(), details: {} }),
   );
@@ -83,7 +84,7 @@ function connect(socket: ServerWebSocket<SocketData>) {
       async (input: unknown) => {
         if (member === "select") {
           const p = inputs.select.parse(input);
-          if (!peer && p.ids.length > 1)
+          if (p.ids.length > 1)
             throw new Error("Select one visible conversation");
           // Validate identities before changing subscriptions; caches cannot grant writes.
           const gen = ++generation;
@@ -91,17 +92,14 @@ function connect(socket: ServerWebSocket<SocketData>) {
           if (gen !== generation || disposed) return null;
           selection = p.ids;
           unobserve();
-          unobserve = "observe" in app ? app.observe(selection) : () => {};
+          unobserve = () => {};
           await refresh();
           return null;
         }
         if (member === "identity") {
           inputs.identity.parse(input);
-          if (!peer) throw new Error("Peer identity requires execution access");
           return service.identity;
         }
-        if (peer && member === "register")
-          throw new Error("Only the Hub registers hosts");
         return jsonValue(await invoke(app, member as Method, input));
       },
     ]),
@@ -222,10 +220,21 @@ function connect(socket: ServerWebSocket<SocketData>) {
 }
 export const groveWebsocket = {
   maxPayloadLength: MAX_FRAME,
-  idleTimeout: 45,
-  sendPings: true,
+  idleTimeout: 0,
+  sendPings: false,
   open(socket: ServerWebSocket<SocketData>) {
     socket.data.channel = connect(socket);
+    socket.data.heartbeat = setInterval(() => {
+      if (socket.data.ping) return;
+      socket.data.ping = crypto.randomUUID();
+      socket.ping(socket.data.ping);
+      socket.data.deadline = setTimeout(() => {
+        console.warn("[grove] browser pong timed out", {
+          peerId: socket.data.service.identity.id,
+        });
+        socket.terminate();
+      }, 10_000);
+    }, 15_000);
   },
   message(socket: ServerWebSocket<SocketData>, message: string | Buffer) {
     if (typeof message !== "string") {
@@ -234,7 +243,14 @@ export const groveWebsocket = {
     }
     void socket.data.channel?.receive(message);
   },
+  pong(socket: ServerWebSocket<SocketData>, payload: Buffer) {
+    if (payload.toString() !== socket.data.ping) return;
+    clearTimeout(socket.data.deadline);
+    socket.data.ping = undefined;
+  },
   close(socket: ServerWebSocket<SocketData>) {
+    clearInterval(socket.data.heartbeat);
+    clearTimeout(socket.data.deadline);
     socket.data.channel?.dispose();
   },
 };

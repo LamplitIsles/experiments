@@ -1,113 +1,25 @@
-async function until(check: () => boolean) {
-  const end = Date.now() + 4000;
-  while (!check()) {
-    if (Date.now() > end) throw new Error("Condition timed out");
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Workspace } from "./workspace";
-import { FakeRuntime, fixtureProjects } from "./testing";
 import { HostService, qualify } from "./hosts";
+import { FakeRuntime, fixtureProjects } from "./testing";
 import { createHandler, createUpgrade } from "./http";
-import { groveWebsocket } from "./chord-socket";
-import { callRoute } from "./socket-testing";
-import type { Detail, Snapshot } from "../src/contracts";
+import { groveWebsocket, type SocketData } from "./chord-socket";
+import type { ServerWebSocket } from "bun";
+import { openGrove } from "../src/chord-client";
 const cleanup: (() => void)[] = [];
 afterEach(() => {
-  for (const f of cleanup.splice(0).reverse()) f();
+  for (const close of cleanup.splice(0).reverse()) close();
 });
-test("history searches and resumes on the selected execution host through authenticated owner routes", async () => {
-  const hub = fixture(true),
-    peer = fixture(false);
-  const thread = {
-    threadId: "remote-cli",
-    cwd: fixtureProjects[0].path,
-    title: "Remote history",
-    preview: "Only on Mac",
-    archived: false,
-    role: "session" as const,
-    source: "cli",
-    updatedAt: 1000,
-    model: "sol",
-    effort: "medium",
-  };
-  peer.runtime.historySessions.set(thread.threadId, thread);
-  peer.runtime.historyItems.set(thread.threadId, [
-    { id: "original", role: "user", text: "Only on Mac", at: 1 },
-  ]);
-  peer.runtime.names.set(thread.threadId, thread.title);
-  await hub.service.register({
-    name: "Mac",
-    url: peer.origin,
-    credential: peer.service.credential,
-  });
-  const host = peer.service.identity.id;
-  const result = await hub.request(
-    `/api/history?project=alpha&host=${host}&query=Mac`,
-  );
-  expect(result.status).toBe(200);
-  expect((await result.json()).sessions).toHaveLength(1);
-  expect(
-    (await hub.service.history("alpha", "", undefined, hub.service.identity.id))
-      .sessions,
-  ).toHaveLength(0);
-  const resumed = await hub.request(`/api/history/resume?host=${host}`, {
-    project: "alpha",
-    threadId: thread.threadId,
-    archived: false,
-  });
-  expect(resumed.status).toBe(200);
-  const agent = await resumed.json();
-  expect(agent.id.startsWith(host + ":")).toBe(true);
-  expect(agent.historyCursor).toBe("1");
-  expect(agent.historyMessageCount).toBe(0);
-  const detail = await hub.request(
-    `/api/agents/${encodeURIComponent(agent.id)}`,
-  );
-  expect((await detail.json()).historyCursor).toBe("1");
-  expect(hub.app.snapshot().agents).toHaveLength(0);
-  expect(peer.app.snapshot().agents).toHaveLength(1);
-  const page = await hub.request(
-    `/api/agents/${encodeURIComponent(agent.id)}/history`,
-  );
-  expect((await page.json()).messages[0].text).toBe("Only on Mac");
-  const results = await hub.service.history("alpha", "", undefined, host);
-  expect(results.sessions[0].agentId).toBe(agent.id);
-  expect(peer.runtime.inputs).toHaveLength(0);
-});
-function fixture(hub: boolean, collision = false, probe = false) {
-  const directory = mkdtempSync(join(tmpdir(), "grove-host-test-"));
-  if (collision) {
-    // Own synthetic durable state, with equal local IDs on two hosts.
-    const agent = {
-      id: "same",
-      token: "fixture-agent-token",
-      role: "orc",
-      project: fixtureProjects[0],
-      title: "Collision",
-      model: "sol",
-      effort: "medium",
-      serviceTier: "default",
-      state: "idle",
-      closed: false,
-      questions: [],
-      messages: [],
-      deliveries: [],
-    };
-    const { Database } = require("bun:sqlite");
-    const db = new Database(join(directory, "workspace.sqlite"));
-    db.exec(
-      "CREATE TABLE workspace (id INTEGER PRIMARY KEY, value TEXT NOT NULL)",
-    );
-    db.query("INSERT INTO workspace VALUES(1,?)").run(
-      JSON.stringify({ agents: [agent], settings: null, revision: 0 }),
-    );
-    db.close();
-  }
+const settings = {
+  fast: false,
+  orc: { model: "sol", effort: "medium" },
+  worker: { model: "luna", effort: "low" },
+};
+function fixture() {
+  const directory = mkdtempSync(join(tmpdir(), "grove-peer-"));
   const runtime = new FakeRuntime();
   const app = new Workspace({
     directory,
@@ -117,759 +29,175 @@ function fixture(hub: boolean, collision = false, probe = false) {
   let origin = "";
   const service = new HostService(app, {
     directory,
-    hub,
-    name: hub ? "NUC" : "Mac",
+    name: "Test Peer",
     origin: () => origin,
-
-    timeoutMs: 150,
-    ...(probe ? { probeIntervalMs: 20, probeTimeoutMs: 100 } : {}),
   });
-  const handler = createHandler(app, { service, origin: () => origin });
-  let drop = false;
-  let loseResponse: string | null = null;
-  let dropSelect = false;
-  const selectedResponses = new Set<string>();
-  const responseIds = new Set<string>();
-  const serverOptions = {
-    websocket: {
-      ...groveWebsocket,
-      open(socket: Parameters<typeof groveWebsocket.open>[0]) {
-        const proxy = new Proxy(socket, {
-          get(target, key) {
-            if (key === "send")
-              return (raw: string) => {
-                const frame = JSON.parse(raw);
-                if (
-                  frame.type === "result" &&
-                  selectedResponses.delete(frame.id)
-                )
-                  return 1;
-                if (frame.type === "result" && responseIds.has(frame.id)) {
-                  responseIds.delete(frame.id);
-                  target.close();
-                  return 1;
-                }
-                return target.send(raw);
-              };
-            const value = Reflect.get(target, key);
-            return typeof value === "function" ? value.bind(target) : value;
-          },
-        });
-        groveWebsocket.open(proxy);
-      },
-      message(
-        socket: Parameters<typeof groveWebsocket.message>[0],
-        raw: string | Buffer,
-      ) {
-        if (typeof raw === "string") {
-          const frame = JSON.parse(raw);
-          if (dropSelect && frame.call?.member === "select")
-            selectedResponses.add(frame.id);
-          if (
-            loseResponse &&
-            frame.call?.member ===
-              (loseResponse.includes("agents") ? "createOrc" : "send")
-          ) {
-            responseIds.add(frame.id);
-            loseResponse = null;
-          }
-        }
-        groveWebsocket.message(socket, raw);
-      },
-    },
+  const sockets = new Set<ServerWebSocket<SocketData>>();
+  const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: async (
-      req: Request,
-      server: Parameters<ReturnType<typeof createUpgrade>>[1],
-    ) => {
-      if (drop) throw new Error("fixture transport outage");
-      const upgraded = createUpgrade(app, { service, origin: () => origin })(
-        req,
-        server,
-      );
-      if (upgraded) return upgraded === true ? undefined : upgraded;
-      const result = await handler(req);
-      if (
-        loseResponse &&
-        req.method === "POST" &&
-        new URL(req.url).pathname.endsWith(loseResponse)
-      )
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      return result;
+    websocket: {
+      ...groveWebsocket,
+      open(socket) {
+        sockets.add(socket);
+        groveWebsocket.open(socket);
+      },
     },
-    error: () => new Response("unavailable", { status: 503 }),
-  };
-  let server = Bun.serve(serverOptions);
+    fetch: (req, s) => {
+      const options = { service, origin: () => origin };
+      const result = createUpgrade(app, options)(req, s);
+      return result === true
+        ? undefined
+        : (result ?? createHandler(app, options)(req));
+    },
+  });
   origin = `http://127.0.0.1:${server.port}`;
   cleanup.push(() => {
-    service.dispose();
     server.stop(true);
     app.dispose();
     rmSync(directory, { recursive: true, force: true });
   });
-  async function request(
-    path: string,
-    body?: unknown,
-    token?: string,
-    method = "POST",
-  ) {
-    if (
-      body !== undefined &&
-      path.startsWith("/api/") &&
-      !path.startsWith("/api/mcp/")
-    )
-      return callRoute(origin, path, body);
-    return fetch(origin + path, {
-      method: body === undefined ? "GET" : method,
-      headers: {
-        Origin: origin,
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-  }
-  return {
-    app,
-    service,
-    directory,
-    origin,
-    runtime,
-    request,
-    handler,
-    setDrop: (value: boolean) => {
-      drop = value;
-      if (value) server.stop(true);
-      else
-        server = Bun.serve({
-          ...serverOptions,
-          port: Number(new URL(origin).port),
-        });
-    },
-    loseResponse: (path = "/messages") => {
-      loseResponse = path;
-    },
-    setDropSelect: (value: boolean) => {
-      dropSelect = value;
-    },
-    count: () => runtime.inputs.length,
-  };
+  return { directory, runtime, app, service, origin, sockets };
 }
-test("execution role is private, identity durable, browser origin and independent MCP authorization stay enforced", async () => {
-  const exec = fixture(false);
-  expect((await exec.request("/")).status).toBe(404);
-  expect((await exec.request("/api/snapshot")).status).toBe(404);
-  expect((await exec.request("/execution/snapshot")).status).toBe(401);
-  expect(
-    (await exec.request("/execution/snapshot", undefined, "invalid")).status,
-  ).toBe(401);
-  expect(
-    (
-      await exec.request(
-        "/execution/identity",
-        undefined,
-        exec.service.credential,
-      )
-    ).status,
-  ).toBe(200);
-  const state = JSON.parse(
-    readFileSync(join(exec.directory, "hosts.json"), "utf8"),
-  );
-  expect(state.id).toBe(exec.service.identity.id);
-  expect(statSync(join(exec.directory, "hosts.json")).mode & 0o777).toBe(0o600);
-  const another = new HostService(exec.app, {
-    directory: exec.directory,
-    hub: false,
-    origin: () => exec.origin,
-  });
-  expect(another.identity).toEqual(exec.service.identity);
-  expect(another.credential).toBe(exec.service.credential);
-  another.dispose();
-  expect(
-    (
-      await exec.handler(
-        new Request(exec.origin + "/execution/snapshot", {
-          headers: {
-            Authorization: `Bearer ${exec.service.credential}`,
-            Origin: "https://foreign.invalid",
-          },
-        }),
-      )
-    ).status,
-  ).toBe(403);
-  expect(
-    (await exec.request("/api/mcp/info", undefined, exec.service.credential))
-      .status,
-  ).toBe(400);
-});
-test("verified shared registry rejects identity/auth/role/URL swaps and never reads back credentials", async () => {
-  const hub = fixture(true);
-  const peer = fixture(false);
-  const second = fixture(false);
-  const input = {
-    name: "Mac",
-    url: peer.origin,
-    credential: peer.service.credential,
+async function client(f: ReturnType<typeof fixture>, token?: string) {
+  const Client = WebSocket as unknown as {
+    new (
+      url: string,
+      protocols: string[],
+      options: { headers: Record<string, string> },
+    ): WebSocket;
   };
-  for (const bad of [
-    { ...input, credential: "invalid" },
-    { ...input, url: "file:///tmp/test" },
-    { ...input, url: hub.origin, credential: hub.service.credential },
-  ])
-    await expect(hub.service.register(bad)).rejects.toThrow();
-  expect(hub.service.snapshot().hosts).toHaveLength(1);
-  await hub.service.register(input);
-  await expect(hub.service.register(input)).rejects.toThrow(
-    "already registered",
+  const socket = new Client(
+    f.origin.replace("http:", "ws:") + "/api/socket",
+    token ? ["grove.v1", `grove-auth.${token}`] : ["grove.v1"],
+    { headers: { Origin: "http://other-peer.invalid" } },
   );
-  await expect(
-    hub.service.register({
-      ...input,
-      id: peer.service.identity.id,
-      url: second.origin,
-      credential: second.service.credential,
-    }),
-  ).rejects.toThrow("identity changed");
-  await hub.service.register({
-    ...input,
-    id: peer.service.identity.id,
-    name: "Mac renamed",
-    credential: "",
-  });
-  const snapshot = JSON.stringify(hub.service.snapshot());
-  expect(snapshot).not.toContain(peer.service.credential);
-  expect(snapshot).not.toContain("fixture-agent-token");
-  expect(snapshot).toContain("Mac renamed");
-  const redirect = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch: () => Response.redirect(peer.origin + "/execution/identity"),
-  });
-  try {
-    await expect(
-      hub.service.register({
-        ...input,
-        url: `http://127.0.0.1:${redirect.port}`,
-      }),
-    ).rejects.toThrow();
-  } finally {
-    redirect.stop(true);
-  }
-  const state = JSON.parse(
-    readFileSync(join(hub.directory, "hosts.json"), "utf8"),
+  const c = await openGrove(
+    socket,
+    () => {},
+    () => {},
+    2000,
   );
-  expect(state.peers[0].credential).toBe(peer.service.credential);
-});
-test("two-host collision routing, shared defaults, simultaneous answers, outage caches and reconnect without replay", async () => {
-  const hub = fixture(true, true);
-  const peer = fixture(false, true);
-  await hub.service.register({
-    name: "Mac",
-    url: peer.origin,
-    credential: peer.service.credential,
-  });
-  const localId = qualify(hub.service.identity.id, "same");
-  const remoteId = qualify(peer.service.identity.id, "same");
-  expect(hub.service.snapshot().agents.map((a) => a.id)).toEqual([
-    localId,
-    remoteId,
-  ]);
-  await hub.service.send(remoteId, "Remote message", "remote-message");
-  const renamed = (await hub.service.rename(
-    remoteId,
-    "Remote title",
-  )) as Detail;
-  expect(renamed.id).toBe(remoteId);
-  expect(renamed.title).toBe("Remote title");
-  expect(peer.app.detail("same").title).toBe("Remote title");
-  expect(hub.app.detail("same").title).toBe("Collision");
-  expect(peer.runtime.inputs).toHaveLength(1);
-  expect(hub.runtime.inputs).toHaveLength(0);
-  const turnId = peer.app.detail("same").turnId!;
-  peer.runtime.emit("same", {
-    type: "item",
-    turnId,
-    item: {
-      id: "q",
-      type: "agentMessage",
-      delivery: "async",
-      questions: [{ question: "Which?" }],
-    },
-  });
-  const answers = await Promise.all([
-    hub.service.answerBatch(
-      remoteId,
-      [{ questionId: "q:0", answer: "One" }],
-      "same-batch",
-    ),
-    hub.service.answerBatch(
-      remoteId,
-      [{ questionId: "q:0", answer: "One" }],
-      "same-batch",
-    ),
-  ]);
-  expect(peer.runtime.inputs).toHaveLength(2);
-  expect((answers[0] as Detail).questions[0].state).toBe("answered");
-  await hub.service.detail(remoteId);
-  await hub.service.saveSettings({
-    fast: true,
-    orc: { model: "sol", effort: "high" },
-    worker: { model: "sol", effort: "medium" },
-  });
-  const created = await hub.service.createOrc("beta", peer.service.identity.id);
-  expect(created.hostId).toBe(peer.service.identity.id);
-  expect(created.serviceTier).toBe("priority");
-  expect(created.effort).toBe("high");
-  expect(peer.app.detail("same").effort).toBe("medium");
-  const token = peer.runtime.agents.get(created.id.split(":")[1])!.token;
-  const worker = (await peer.app.tool(token, "worker_start", {
+  cleanup.push(() => c.close());
+  return c;
+}
+test("cross-origin browser access requires the target Peer credential and can execute directly", async () => {
+  const f = fixture();
+  await expect(client(f)).rejects.toThrow();
+  await expect(client(f, "wrong")).rejects.toThrow();
+  const c = await client(f, f.service.credential);
+  expect(await c.call<{ id: string; name: string }>("identity", {})).toEqual(
+    f.service.identity,
+  );
+  const agent = await c.call<{ id: string }>("createOrc", {
     project: "alpha",
-    title: "Worker",
-    spec: "fixture",
-    message: "Work",
-  })) as Detail;
-  expect(worker.ownerId).toBe(created.id.split(":")[1]);
-  expect((await hub.request("/api/mcp/info", undefined, token)).status).toBe(
-    400,
-  );
-  peer.setDrop(true);
-  await until(
-    () =>
-      hub.service
-        .snapshot()
-        .hosts?.find((h) => h.id === peer.service.identity.id)?.connected ===
-      false,
-  );
+    settings,
+  });
+  expect(agent.id.startsWith(f.service.identity.id + ":")).toBe(true);
+  await c.call("send", {
+    id: agent.id,
+    text: "Direct input",
+    operationId: "one",
+  });
+  expect(f.runtime.inputs.map((i) => i.text)).toEqual(["Direct input"]);
   expect(
-    hub.service.snapshot().hosts?.find((h) => h.id === peer.service.identity.id)
-      ?.connected,
-  ).toBe(false);
-  expect((await hub.service.detail(remoteId)).messages[0].text).toBe(
-    "Remote message",
+    (
+      await c.call<{ state: string }>("lookup", {
+        id: agent.id,
+        operationId: "one",
+      })
+    ).state,
+  ).toBe("accepted");
+  await expect(c.call("detail", { id: "foreign:agent" })).rejects.toThrow(
+    "another Peer",
   );
-  await expect(
-    hub.service.send(remoteId, "No replay", "blocked"),
-  ).rejects.toThrow("disconnected");
-  await hub.service.send(localId, "Local still works", "local");
-  expect(hub.runtime.inputs).toHaveLength(1);
-  await hub.service.saveSettings({
-    fast: false,
-    orc: { model: "sol", effort: "medium" },
+  expect(JSON.stringify(f.service.snapshot())).not.toContain(
+    f.service.credential,
+  );
+});
+test("Peer identity survives restart and owns only local state", async () => {
+  const f = fixture(),
+    other = fixture();
+  const first = await f.service.createOrc("alpha", settings);
+  const identity = new HostService(f.app, {
+    directory: f.directory,
+    origin: () => f.origin,
+  });
+  expect(identity.identity.id).toBe(f.service.identity.id);
+  expect(identity.credential).toBe(f.service.credential);
+  expect(f.service.snapshot().hosts).toHaveLength(1);
+  expect(other.service.snapshot().agents).toHaveLength(0);
+  expect(
+    JSON.parse(readFileSync(join(f.directory, "hosts.json"), "utf8")).peers,
+  ).toBeUndefined();
+  await expect(other.service.detail(first.id)).rejects.toThrow("another Peer");
+});
+test("captured Worker settings survive workspace restart without browser or global settings", async () => {
+  const f = fixture();
+  const agent = await f.app.createOrc("alpha", settings);
+  await f.app.createOrc("beta", {
+    ...settings,
     worker: { model: "sol", effort: "high" },
   });
-  expect(
-    hub.service.snapshot().hosts?.find((h) => h.id === peer.service.identity.id)
-      ?.defaults,
-  ).toBe("pending");
-  const before = peer.count();
-  peer.setDrop(false);
-  await until(
-    () =>
-      hub.service
-        .snapshot()
-        .hosts?.find((h) => h.id === peer.service.identity.id)?.connected ===
-      true,
-  );
-  expect(peer.count()).toBe(before);
-  expect(peer.app.snapshot().settings?.worker.effort).toBe("high");
-  expect(
-    hub.service.snapshot().hosts?.find((h) => h.id === peer.service.identity.id)
-      ?.connected,
-  ).toBe(true);
-  const fetched = await hub.request("/api/snapshot");
-  expect(
-    ((await fetched.json()) as Snapshot).agents.some((a) => a.id === remoteId),
-  ).toBe(true);
-  const quota = await hub.service.weekly();
-  expect(quota.remaining).toBe(72);
-  expect(quota.source).toBe("NUC");
-});
-test("unknown mutation response is not replayed; rejected close preserves connection and defaults capability is enforced", async () => {
-  const hub = fixture(true);
-  const peer = fixture(false);
-  await hub.service.register({
-    name: "Mac",
-    url: peer.origin,
-    credential: peer.service.credential,
+  f.app.dispose();
+  const runtime = new FakeRuntime();
+  const app = new Workspace({
+    directory: f.directory,
+    runtime,
+    projects: async () => fixtureProjects,
   });
-  const agent = await hub.service.createOrc("alpha", peer.service.identity.id);
-  peer.runtime.sendOverride = async () => {
-    throw new Error("fixture acceptance unknown");
-  };
-  const result = (await hub.service.send(
-    agent.id,
-    "Ambiguous",
-    "one",
-  )) as Detail;
-  expect(result.deliveries[0].status).toBe("uncertain");
-  expect(peer.runtime.inputs).toHaveLength(1);
-  await expect(hub.service.closeTree(agent.id)).rejects.toThrow(
-    "unconfirmed delivery",
-  );
-  expect(
-    hub.service.snapshot().hosts?.find((h) => h.id === peer.service.identity.id)
-      ?.connected,
-  ).toBe(true);
-  peer.runtime.models = async () => [];
-  await hub.service.saveSettings({
-    fast: false,
-    orc: { model: "sol", effort: "high" },
-    worker: { model: "sol", effort: "medium" },
+  cleanup.push(() => app.dispose());
+  await app.send(agent.id, "Resume", "resume");
+  const token = runtime.agents.get(agent.id)!.token;
+  const worker = (await app.tool(token, "worker_start", {
+    project: "alpha",
+    title: "Child",
+    spec: "spec",
+    message: "Go",
+  })) as { id: string };
+  expect(app.detail(worker.id)).toMatchObject({
+    model: "luna",
+    effort: "low",
+    serviceTier: "default",
   });
-  expect(
-    hub.service.snapshot().hosts?.find((h) => h.id === peer.service.identity.id)
-      ?.defaults,
-  ).toBe("failed");
-  await expect(
-    hub.service.createOrc("alpha", peer.service.identity.id),
-  ).rejects.toThrow("synchronize");
+  expect(qualify(f.service.identity.id, worker.id)).toContain(":");
 });
 
-test("accepted peer mutation with a lost socket response refreshes authority without transport replay", async () => {
-  const hub = fixture(true);
-  const peer = fixture(false);
-  await hub.service.register({
-    name: "Mac",
-    url: peer.origin,
-    credential: peer.service.credential,
-  });
-  const agent = await hub.service.createOrc("alpha", peer.service.identity.id);
-  peer.loseResponse();
-  await expect(
-    hub.service.send(agent.id, "Accepted once", "accepted-once"),
-  ).rejects.toThrow("Outcome unknown");
-  expect(peer.runtime.inputs).toHaveLength(1);
-  await until(
-    () =>
-      hub.service
-        .snapshot()
-        .hosts?.find((h) => h.id === peer.service.identity.id)?.connected ===
-      true,
-  );
-  const detail = await hub.service.detail(agent.id);
-  expect(detail.messages.filter((m) => m.id === "accepted-once")).toHaveLength(
-    1,
-  );
-  expect(peer.count()).toBe(1);
+test("native WebSocket Pong clears only its matching liveness deadline", async () => {
+  const f = fixture();
+  await client(f, f.service.credential);
+  const socket = [...f.sockets][0];
+  let expired = false;
+  socket.data.ping = "test-owned-probe";
+  socket.data.deadline = setTimeout(() => {
+    expired = true;
+  }, 100);
+  groveWebsocket.pong(socket, Buffer.from("unrelated"));
+  expect(socket.data.ping).toBe("test-owned-probe");
+  socket.ping("test-owned-probe");
+  const until = Date.now() + 500;
+  while (socket.data.ping && Date.now() < until) await Bun.sleep(5);
+  expect(socket.data.ping).toBeUndefined();
+  await Bun.sleep(110);
+  expect(expired).toBe(false);
 });
 
-test("accepted remote creation with a lost response is unknown and never recreated on reconnect", async () => {
-  const hub = fixture(true);
-  const peer = fixture(false);
-  await hub.service.register({
-    name: "Mac",
-    url: peer.origin,
-    credential: peer.service.credential,
+test("a Peer exposes its local browser identity alongside its advertised proxy origin", async () => {
+  const f = fixture();
+  const handler = createHandler(f.app, {
+    service: f.service,
+    origin: () => "https://advertised.invalid",
+    localOrigin: () => f.origin,
   });
-  peer.loseResponse("/execution/agents");
-  await expect(
-    hub.service.createOrc("alpha", peer.service.identity.id),
-  ).rejects.toThrow("Outcome unknown");
-  expect(peer.app.snapshot().agents).toHaveLength(1);
-  expect(
-    hub.service.snapshot().hosts?.find((h) => h.id === peer.service.identity.id)
-      ?.connected,
-  ).toBe(false);
-  await until(
-    () =>
-      hub.service
-        .snapshot()
-        .hosts?.find((h) => h.id === peer.service.identity.id)?.connected ===
-      true,
+  const local = await handler(
+    new Request(f.origin + "/api/identity", { headers: { Origin: f.origin } }),
   );
-  expect(peer.app.snapshot().agents).toHaveLength(1);
-  expect(hub.service.snapshot().agents).toHaveLength(1);
-});
-
-test.each([true, false])(
-  "registration initializes persisted Hub defaults before peer-local Worker creation (existing=%s)",
-  async (existing) => {
-    const hub = fixture(true);
-    const peer = fixture(false);
-    if (existing)
-      await hub.app.saveSettings({
-        fast: false,
-        orc: { model: "sol", effort: "high" },
-        worker: { model: "sol", effort: "high" },
-      });
-    const expected = existing
-      ? hub.app.snapshot().settings!
-      : {
-          fast: false,
-          orc: { model: "sol", effort: "medium" },
-          worker: { model: "sol", effort: "medium" },
-        };
-    // The peer Orc predates registration and retains its captured settings.
-    const orc = await peer.app.createOrc("alpha");
-    await hub.service.register({
-      name: "Mac",
-      url: peer.origin,
-      credential: peer.service.credential,
-    });
-    expect(
-      hub.service
-        .snapshot()
-        .hosts?.find((h) => h.id === peer.service.identity.id)?.defaults,
-    ).toBe("synced");
-    expect(
-      JSON.parse(readFileSync(join(hub.directory, "hosts.json"), "utf8"))
-        .defaults,
-    ).toEqual(expected);
-    expect(peer.app.snapshot().settings).toEqual(expected);
-    const worker = (await peer.app.tool(
-      peer.runtime.agents.get(orc.id)!.token,
-      "worker_start",
-      {
-        project: "alpha",
-        title: "Local worker",
-        spec: "fixture",
-        message: "Work",
-      },
-    )) as Detail;
-    expect(peer.app.detail(worker.id).effort).toBe(expected.worker.effort);
-    expect(peer.app.detail(orc.id).effort).toBe("medium");
-  },
-);
-
-test("dedicated Close reaches the execution owner, preserves guards and never sends a message", async () => {
-  const hub = fixture(true),
-    peer = fixture(false);
-  await hub.service.register({
-    name: "Mac",
-    url: peer.origin,
-    credential: peer.service.credential,
-  });
-  for (const hostId of [hub.service.identity.id, peer.service.identity.id]) {
-    const agent = await hub.service.createOrc("alpha", hostId);
-    const closed = await hub.request(`/api/agents/${agent.id}/close`, {});
-    expect(closed.status).toBe(200);
-    expect(await closed.json()).toMatchObject({ closed: true });
-    expect(hub.service.snapshot().agents.some((a) => a.id === agent.id)).toBe(
-      false,
-    );
-  }
-  expect(hub.runtime.inputs).toHaveLength(0);
-  expect(peer.runtime.inputs).toHaveLength(0);
-  const agent = await hub.service.createOrc("alpha", peer.service.identity.id);
-  await hub.service.send(agent.id, "Work", "working");
-  const rejected = await hub.request(`/api/agents/${agent.id}/close`, {});
-  expect(rejected.status).toBe(400);
-  expect(peer.runtime.inputs).toHaveLength(1);
-  expect(hub.service.snapshot().agents.some((a) => a.id === agent.id)).toBe(
-    true,
+  expect(local.status).toBe(200);
+  expect(await local.json()).toEqual(f.service.identity);
+  const foreign = await handler(
+    new Request(f.origin + "/api/identity", {
+      headers: { Origin: "https://foreign.invalid" },
+    }),
   );
-  expect(
-    (
-      await peer.request(
-        `/execution/agents/${peer.app.snapshot().agents[0].id}/close`,
-        {},
-      )
-    ).status,
-  ).toBe(401);
-});
-
-test("slow native admission times out but stays connected for receipt lookup without replay or host interference", async () => {
-  const hub = fixture(true, false, true),
-    peer = fixture(false),
-    other = fixture(false);
-  for (const host of [peer, other])
-    await hub.service.register({
-      name: "Synthetic peer",
-      url: host.origin,
-      credential: host.service.credential,
-    });
-  const a = await hub.service.createOrc("alpha", peer.service.identity.id);
-  const b = await hub.service.createOrc("beta", other.service.identity.id);
-  const held = Promise.withResolvers<string>();
-  peer.runtime.sendOverride = () => held.promise;
-  await expect(
-    hub.service.send(a.id, "Held native input", "slow-once"),
-  ).rejects.toThrow("Outcome unknown");
-  expect(
-    hub.service.snapshot().hosts?.find((h) => h.id === peer.service.identity.id)
-      ?.connected,
-  ).toBe(true);
-  expect(peer.count()).toBe(1);
-  await hub.service.send(b.id, "Independent host", "other-once");
-  expect(other.count()).toBe(1);
-  await until(
-    () =>
-      hub.service
-        .snapshot()
-        .hosts?.find((h) => h.id === peer.service.identity.id)?.connected ===
-      true,
-  );
-  expect(await hub.service.lookup(a.id, "slow-once")).toMatchObject({
-    state: "pending",
-  });
-  held.resolve("native-slow-turn");
-  await until(
-    () => peer.app.detail(a.id.split(":")[1]).deliveries[0]?.status === "sent",
-  );
-  expect(await hub.service.lookup(a.id, "slow-once")).toMatchObject({
-    state: "accepted",
-    operationId: "slow-once",
-  });
-  expect(peer.count()).toBe(1);
-  expect(peer.runtime.interruptions).toHaveLength(0);
-  expect(other.count()).toBe(1);
-});
-
-test("a selected remote conversation disappearing is a rejected detail read, not a host outage", async () => {
-  const hub = fixture(true),
-    peer = fixture(false);
-  await hub.service.register({
-    name: "Mac",
-    url: peer.origin,
-    credential: peer.service.credential,
-  });
-  const a = await hub.service.createOrc("alpha", peer.service.identity.id);
-  const unobserve = hub.service.observe([a.id]);
-  await hub.service.detail(a.id);
-  await hub.service.closeTree(a.id);
-  await until(
-    () => !hub.service.snapshot().agents.some((agent) => agent.id === a.id),
-  );
-  await expect(hub.service.detail(a.id)).rejects.toThrow();
-  expect(
-    hub.service.snapshot().hosts?.find((h) => h.id === peer.service.identity.id)
-      ?.connected,
-  ).toBe(true);
-  unobserve();
-});
-
-test("quota and UI catalogue come only from Hub, including while a peer is offline", async () => {
-  const hub = fixture(true),
-    peer = fixture(false);
-  await hub.service.register({
-    name: "Mac",
-    url: peer.origin,
-    credential: peer.service.credential,
-  });
-  peer.runtime.weekly = async () => {
-    throw new Error("Peer quota must not be queried");
-  };
-  // Peer still validates its own capabilities when creating or applying defaults.
-  peer.runtime.models = async () => {
-    throw new Error("Peer catalogue must not be queried by UI");
-  };
-  const quota = await hub.service.weekly();
-  expect(quota.remaining).toBe(72);
-  expect(quota.hostId).toBe(hub.service.identity.id);
-  expect(quota.source).toBe("NUC");
-  expect(await hub.service.models()).toEqual(await hub.app.models());
-  peer.setDrop(true);
-  await until(
-    () =>
-      !hub.service
-        .snapshot()
-        .hosts?.find((h) => h.id === peer.service.identity.id)?.connected,
-  );
-  expect((await hub.service.weekly()).remaining).toBe(72);
-  expect(await hub.service.models()).toEqual(await hub.app.models());
-});
-
-test("Hub detects a silent transport blackhole via Pong and reconnects only that host", async () => {
-  const { createServer, connect } = await import("node:net");
-  const hub = fixture(true, false, true),
-    peer = fixture(false),
-    other = fixture(false);
-  let blackhole = false;
-  const sockets = new Set<import("node:net").Socket>();
-  const relay = createServer((incoming) => {
-    const outgoing = connect(Number(new URL(peer.origin).port), "127.0.0.1");
-    sockets.add(incoming);
-    sockets.add(outgoing);
-    let headers: Buffer | undefined = Buffer.alloc(0);
-    incoming.on("data", (data) => {
-      if (blackhole) return;
-      if (headers !== undefined) {
-        headers = Buffer.concat([
-          headers,
-          typeof data === "string" ? Buffer.from(data) : data,
-        ]);
-        const end = headers.indexOf("\r\n\r\n");
-        if (end < 0) return;
-        const head = headers
-          .subarray(0, end)
-          .toString()
-          .replace(/^Host:.*$/im, `Host: ${new URL(peer.origin).host}`);
-        outgoing.write(
-          Buffer.concat([
-            Buffer.from(head + "\r\n\r\n"),
-            headers.subarray(end + 4),
-          ]),
-        );
-        headers = undefined;
-      } else outgoing.write(data);
-    });
-    outgoing.on("data", (data) => {
-      if (!blackhole) incoming.write(data);
-    });
-    incoming.on("error", () => outgoing.destroy());
-    outgoing.on("error", () => incoming.destroy());
-    incoming.on("close", () => {
-      sockets.delete(incoming);
-      outgoing.destroy();
-    });
-    outgoing.on("close", () => {
-      sockets.delete(outgoing);
-      incoming.destroy();
-    });
-  });
-  await new Promise<void>((resolve) => relay.listen(0, "127.0.0.1", resolve));
-  cleanup.push(() => {
-    for (const socket of sockets) socket.destroy();
-    relay.close();
-  });
-  const url = `http://127.0.0.1:${(relay.address() as import("node:net").AddressInfo).port}`;
-  await hub.service.register({
-    name: "Blackhole peer",
-    url,
-    credential: peer.service.credential,
-  });
-  await hub.service.register({
-    name: "Healthy peer",
-    url: other.origin,
-    credential: other.service.credential,
-  });
-  const connected = (id: string) =>
-    hub.service.snapshot().hosts?.find((h) => h.id === id)?.connected;
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  expect(connected(peer.service.identity.id)).toBe(true);
-  blackhole = true;
-  await until(() => connected(peer.service.identity.id) === false);
-  expect(connected(other.service.identity.id)).toBe(true);
-  blackhole = false;
-  await until(() => connected(peer.service.identity.id) === true);
-  expect(connected(other.service.identity.id)).toBe(true);
-});
-
-test("lost initial and reconnect selection results leave verified Pong-responsive hosts available", async () => {
-  const hub = fixture(true, false, true),
-    peer = fixture(false);
-  peer.setDropSelect(true);
-  await hub.service.register({
-    name: "Mac",
-    url: peer.origin,
-    credential: peer.service.credential,
-  });
-  const connected = () =>
-    hub.service.snapshot().hosts?.find((h) => h.id === peer.service.identity.id)
-      ?.connected;
-  expect(connected()).toBe(true);
-  const agent = await hub.service.createOrc("alpha", peer.service.identity.id);
-  expect(agent.hostId).toBe(peer.service.identity.id);
-  peer.setDrop(true);
-  await until(() => connected() === false);
-  peer.setDrop(false);
-  await until(() => connected() === true);
-  // Wait beyond the fixture's business deadline; native probes continue meanwhile.
-  await new Promise((resolve) => setTimeout(resolve, 220));
-  expect(connected()).toBe(true);
-  expect(await hub.service.lookup(agent.id, "never-submitted")).toMatchObject({
-    state: "missing",
-  });
-  expect(peer.count()).toBe(0);
+  expect(foreign.status).toBe(403);
 });

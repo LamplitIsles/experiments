@@ -10,12 +10,13 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import { navigation, initializeNavigation, openConversation, setSurface, back, validateNavigation } from "./navigation.svelte";
   import { storagePrefix } from "./api";
+  import { Peers, preferences } from "./peers";
   import { onMount, tick } from "svelte";
   import type { Answer, Agent, Detail, HistorySession, Model, Project, Settings, Skill, Snapshot } from "./contracts";
   import { api, editable, setClient } from "./api";
-  import { RequestRejected, openGrove, type GroveClient } from "./chord-client";
+  import { RequestRejected } from "./chord-client";
   import { receiptSchema, type Receipt } from "./chord-contract";
-  import { addOutgoing, observeOutgoing, outgoing, withOutgoing, acceptReceipt, unknownOutgoing } from "./outgoing.svelte";
+  import { addOutgoing, observeOutgoing, outgoing, withOutgoing, acceptReceipt, unknownOutgoing, dismissOutgoing } from "./outgoing.svelte";
   import { observeQuestions, questionPanels, setQuestionPanel } from "./question-state.svelte";
   import HostFilter from "./HostFilter.svelte";
   import Hosts from "./Hosts.svelte";
@@ -25,12 +26,12 @@
   import SessionHistory from "./SessionHistory.svelte";
   import * as m from "./paraglide/messages";
 
-  let client: GroveClient | undefined;
+  let client: Peers | undefined;
   let composing = false;
   let snapshot = $state<Snapshot>({ agents: [], settings: null, revision: 0 });
   let selectedId = $state<string | null>(localStorage.getItem(`${storagePrefix}/selected`));
   let detail = $state<Detail | null>(null); let skills = $state<Skill[]>([]);
-  let projects = $state<Project[]>([]); let models = $state<Model[]>([]);
+  let projects = $state<Project[]>([]); let models = $state<Model[]>(preferences.models);
   let connected = $state(false); let loading = $state(true); let error = $state("");
   let now = $state(Date.now()); let sessionList: { visibleIds(): string[]; keydown(event: KeyboardEvent): Promise<void>; expandFocused(): void; reveal(id: string): Promise<void>; closeTarget(): string | null; navigate(offset: number, index?: number): Promise<string | null> };
   let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | null>(null);
@@ -54,16 +55,16 @@
     previousVisible = sessionList?.visibleIds() ?? visibleAgents.filter(a => a.role === "orc").map(a => a.id);
     lostSelection = null;
   });
-  let createHost = $state(""); let catalogSequence = 0;
+  let createHost = $state(preferences.host); let catalogSequence = 0;
   const shownDetail = $derived(detail ? withOutgoing(detail) : null);
   const hosts = $derived(snapshot.hosts ?? []);
   const selectedHost = $derived(hosts.find(h => h.id === detail?.hostId));
-  const hostConnected = $derived(connected && (!selectedHost || selectedHost.connected));
+  const hostConnected = $derived(!!selectedHost?.connected);
   const visibleAgents = $derived(snapshot.agents.filter(a => !hostFilter || a.hostId === hostFilter));
   $effect(() => { localStorage.setItem(`${storagePrefix}/host-filter`, hostFilter); });
   async function chooseHost(id: string) {
-    createHost = id; projectId = ""; projects = []; const seq = ++catalogSequence;
-    try { const [registered, catalog] = await Promise.all([api<Project[]>(`/projects?host=${encodeURIComponent(id)}`), api<Model[]>("/models")]); if (seq === catalogSequence) { projects = registered; models = catalog; projectId = registered[0]?.alias ?? ""; } }
+    createHost = id; preferences.host = id; projectId = ""; projects = []; const seq = ++catalogSequence;
+    try { const registered = await api<Project[]>(`/projects?host=${encodeURIComponent(id)}`); if (seq === catalogSequence) { projects = registered; projectId = registered[0]?.alias ?? ""; } }
     catch(e) { if (seq === catalogSequence) error = e instanceof Error ? e.message : m.load_failure(); }
   }
   const roots = $derived(snapshot.agents.filter(a => a.role === "orc"));
@@ -92,7 +93,7 @@
   async function restoreDetail(id: string) {
     error = ""; selectedId = id; localStorage.setItem(`${storagePrefix}/selected`, id);
     const cached = localStorage.getItem(`${storagePrefix}/detail/${id}`); detail = cached ? JSON.parse(cached) : null; skills = [];
-    if (connected) {
+    if (hosts.find(h=>h.id===id.split(":")[0])?.connected) {
       void client?.call('select', {ids:[id]}).catch(e => { if(selectedId === id) error = e instanceof Error ? e.message : m.load_failure(); });
       if (snapshot.agents.find(a => a.id === id)?.role === "orc" && hosts.find(h => h.id === snapshot.agents.find(a => a.id === id)?.hostId)?.connected) {
         try { const list = await api<Skill[]>(`/agents/${id}/skills`); if (selectedId === id) skills = list; }
@@ -102,8 +103,7 @@
   }
   function adopt(value: Snapshot, authoritative = false) {
     if (!authoritative && value.revision < snapshot.revision) return;
-    // Hub restart can temporarily lack remote display caches. Retain this
-    // device's read-only cache until that host supplies authoritative state.
+    // Retain read-only state until each Peer supplies an authoritative snapshot.
     const retained = snapshot.agents.filter(a => value.hosts?.some(h => h.id === a.hostId && !h.connected) && !value.agents.some(next => next.hostId === a.hostId));
     value = { ...value, agents: [...value.agents, ...retained], hosts: value.hosts?.map(h => !h.connected && !h.lastSeen ? { ...h, lastSeen: snapshot.hosts?.find(old => old.id === h.id)?.lastSeen } : h) };
     observeQuestions(value.agents, selectedId);
@@ -114,9 +114,10 @@
   }
   async function load() {
     loading = true; error = "";
+    if(!hosts.find(h=>h.id===snapshot.entryId)?.connected){if(selectedId)await restoreDetail(selectedId);loading=false;return;}
     try {
       const [state, registered, catalog] = await Promise.all([api<Snapshot>("/snapshot"), api<Project[]>("/projects"), api<Model[]>("/models")]);
-      projects = registered; models = catalog; if(!connected) adopt(state, true);
+      projects = registered; models = catalog;preferences.models=catalog; if(!preferences.settings&&catalog.length){const model=catalog.find(m=>m.isDefault)??catalog[0];preferences.settings={fast:false,orc:{model:model.id,effort:model.defaultEffort},worker:{model:model.id,effort:model.defaultEffort}};snapshot={...snapshot,settings:preferences.settings};} if(!connected) adopt(state, true);
       if (selectedId) await restoreDetail(selectedId);
     } catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { loading = false; }
@@ -124,6 +125,7 @@
   function notifications(before: Snapshot, after: Snapshot) {
     if (!("Notification" in window) || Notification.permission !== "granted") return;
     for (const a of after.agents) {
+      if(!before.hosts?.find(h=>h.id===a.hostId)?.connected || !after.hosts?.find(h=>h.id===a.hostId)?.connected)continue;
       const previous = before.agents.find(p => p.id === a.id); if (!previous) continue;
       const newQuestion = a.role === "orc" && a.questions.some(q => q.state === "unanswered" && !previous.questions.some(p => p.id === q.id));
       const idle = previous.state === "working" && a.state === "idle";
@@ -138,18 +140,19 @@
   function show(kind: "new" | "settings" | "keys") { setSurface(kind, true); }
   async function prepareModal(kind: "new" | "settings" | "keys") {
     error = "";
-    if (kind === "new") { search = ""; void chooseHost(hostFilter || snapshot.hubId || ""); }
+    if (kind === "new") { search = ""; void chooseHost(hostFilter || preferences.host || snapshot.entryId || ""); }
     if (kind === "settings") {
-      models = await api<Model[]>("/models");
+      settings=preferences.settings;
+      try{models = await api<Model[]>("/models");preferences.models=models;}catch(e){if(!models.length)error=e instanceof Error?e.message:m.load_failure();}
       const model = models.find(m => m.isDefault) ?? models[0];
-      settings = snapshot.settings ? structuredClone($state.snapshot(snapshot.settings)) : model ? { fast: false, orc: { model: model.id, effort: model.defaultEffort }, worker: { model: model.id, effort: model.defaultEffort } } : null;
+      settings = preferences.settings ? structuredClone(preferences.settings) : model ? { fast: false, orc: { model: model.id, effort: model.defaultEffort }, worker: { model: model.id, effort: model.defaultEffort } } : null;
     }
     if (kind === "settings" && settings) { settings.fast = !!settings.fast; }
     await tick(); if (modal === kind && kind === "new") projectSearch?.focus();
   }
   async function closeModal() { const kind = modal; do { await back(); } while (kind && navigation.surfaces.includes(kind)); }
   async function resumeHistory(session: HistorySession, project: string) {
-    const agent = await api<Agent>(`/history/resume?host=${encodeURIComponent(createHost)}`, { project, threadId: session.threadId, archived: session.archived });
+    const agent = await api<Agent>(`/history/resume?host=${encodeURIComponent(createHost)}`, { project, threadId: session.threadId, archived: session.archived, settings: await creationSettings() });
     adopt(await api<Snapshot>("/snapshot"));
     focusCreatedId = agent.id;
     await openConversation(agent.id);
@@ -157,22 +160,33 @@
     toast.success(m.session_resumed(), { duration: 3000 });
   }
   $effect(() => { if (detail?.id === focusCreatedId && focusCreatedId) { focusCreatedId = null; void tick().then(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus()); } });
+  async function creationSettings():Promise<Settings> {
+    if(preferences.settings)return preferences.settings;
+    const catalog=await api<Model[]>("/models");
+    const model=catalog.find(m=>m.isDefault)??catalog[0];
+    if(!model)throw new Error("No models available");
+    const settings:Settings={fast:false,orc:{model:model.id,effort:model.defaultEffort},worker:{model:model.id,effort:model.defaultEffort}};
+    preferences.settings=settings;return settings;
+  }
   async function create() {
     if (!projectId || saving || !connected) return; saving = true;
-    try { const agent = await api<Agent>(`/agents?host=${encodeURIComponent(createHost)}`, { project: projectId }); await closeModal(); adopt(await api<Snapshot>("/snapshot")); focusCreatedId = agent.id; open(agent.id); await sessionList?.reveal(agent.id); }
+    try { const agent = await api<Agent>(`/agents?host=${encodeURIComponent(createHost)}`, { project: projectId, settings: await creationSettings() }); await closeModal(); adopt(await api<Snapshot>("/snapshot")); focusCreatedId = agent.id; open(agent.id); await sessionList?.reveal(agent.id); }
     catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { saving = false; }
   }
   async function saveSettings() {
     if (!settings || saving) return; saving = true;
-    try { adopt(await api<Snapshot>("/settings", settings, "PUT")); closeModal(); }
+    try { preferences.settings = $state.snapshot(settings); snapshot = {...snapshot,settings:preferences.settings}; closeModal(); }
     catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { saving = false; }
   }
+  const lookups=new Set<string>();
   async function lookup(agentId: string, operationId: string) {
     if(!client || !connected || hosts.find(h => h.id === agentId.split(':')[0])?.connected === false) return;
+    const key=agentId+"/"+operationId;if(lookups.has(key))return;lookups.add(key);
     try { acceptReceipt(agentId, receiptSchema.parse(await client.call<Receipt>('lookup',{id:agentId,operationId}))); }
     catch(e) { unknownOutgoing(agentId,operationId,e instanceof Error?e.message:m.load_failure()); }
+    finally{lookups.delete(key);}
   }
   async function retryDelivery(operationId: string) {
     if (!selectedId || !hostConnected || !client) return;
@@ -195,7 +209,8 @@
       const delivery = result.deliveries.find(d => d.id === operationId);
       if(!delivery) unknownOutgoing(id,operationId,m.unknown_delivery());
     } catch(e) {
-      unknownOutgoing(id,operationId,e instanceof Error?e.message:m.load_failure());
+      if(e instanceof RequestRejected)acceptReceipt(id,{operationId,state:"rejected",turnId:null,error:e.message});
+      else unknownOutgoing(id,operationId,e instanceof Error?e.message:m.load_failure());
     }
     void lookup(id,operationId);
     return true;
@@ -276,73 +291,64 @@
     if (event.key.toLowerCase() === "i" && detail?.role === "orc") { event.preventDefault(); document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(); return; }
     if (event.target instanceof HTMLElement && event.target.closest(".question-card")) return;
     if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter"].includes(event.key)) { void sessionList?.keydown(event); return; }
-    if (event.key.toLowerCase() === "n" && connected) { event.preventDefault(); void show("new"); }
+    if (event.key.toLowerCase() === "n") { event.preventDefault(); void show("new"); }
     else if (event.key.toLowerCase() === "e") { event.preventDefault(); sessionList?.expandFocused(); }
     else if (event.key === "?") { event.preventDefault(); void show("keys"); }
   }
   onMount(() => {
-    const cached = localStorage.getItem(`${storagePrefix}/snapshot`); if (cached) snapshot = JSON.parse(cached);
+    const cached = localStorage.getItem(`${storagePrefix}/snapshot`); if (cached) {const saved=JSON.parse(cached);snapshot={...saved,hosts:saved.hosts?.map((h:import("./contracts").Host)=>({...h,connected:false}))};}
     const cachedDetail = selectedId && localStorage.getItem(`${storagePrefix}/detail/${selectedId}`); if (cachedDetail) detail = JSON.parse(cachedDetail);
     const cleanupNavigation = initializeNavigation(selectedId);
     const media = matchMedia("(min-width: 701px)");
     const resize = () => desktop = media.matches;
     media.addEventListener("change", resize);
-    void load();
-    let disposed = false; let generation = 0; let reconnect: ReturnType<typeof setTimeout> | undefined;
-    const connect = async () => {
-      const gen = ++generation; let baseline = true;
-      const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/socket`);
-      const offline = () => {
-        if(disposed || gen !== generation) return;
-        connected = false; client = undefined; setClient(undefined);
-        for(const pending of outgoing.entries) if(pending.status === 'sending') unknownOutgoing(pending.agentId,pending.id,m.unknown_delivery());
-        clearTimeout(reconnect); reconnect = setTimeout(() => { void connect(); },1000);
-      };
-      try {
-        const next = await openGrove(socket, value => {
-          if(disposed || gen !== generation) return;
-          connected = true;
-          if(!baseline) notifications(snapshot,value.snapshot);
-          const wasAvailable = selectedId && snapshot.hosts?.find(h => h.id === snapshot.agents.find(a => a.id === selectedId)?.hostId)?.connected;
-          adopt(value.snapshot,baseline); baseline = false;
-          const nowAvailable = selectedId && value.snapshot.hosts?.find(h => h.id === value.snapshot.agents.find(a => a.id === selectedId)?.hostId)?.connected;
-          if(selectedId && !wasAvailable && nowAvailable && client) void client.call("select",{ids:[selectedId]}).catch(() => {});
-          const incoming = selectedId && value.details[selectedId];
-          if(incoming) { observeOutgoing(incoming);detail = incoming;localStorage.setItem(`${storagePrefix}/detail/${incoming.id}`,JSON.stringify(incoming)); }
-          void reconcilePending();
-        },offline);
-        if(disposed || gen !== generation) {next.close();return;}
-        client = next; setClient(next); connected = true;
-        if(selectedId) await restoreDetail(selectedId);
-        void reconcilePending();
-      } catch { offline(); }
-    };
-    void connect();
+    let disposed=false;
+    client=new Peers(value=>{
+      if(disposed)return;
+      const before=snapshot;
+      const entryWasConnected=before.hosts?.find(h=>h.id===value.snapshot.entryId)?.connected;
+      connected=value.snapshot.hosts?.some(h=>h.connected)??false;
+      notifications(before,value.snapshot);
+      adopt(value.snapshot,true);const entry=value.snapshot.hosts?.find(h=>h.id===value.snapshot.entryId);loading=!!entry&&!entry.connected&&!entry.error;
+      const incoming=selectedId&&value.details[selectedId];
+      if(incoming){observeOutgoing(incoming);detail=incoming;localStorage.setItem(`${storagePrefix}/detail/${incoming.id}`,JSON.stringify(incoming));}
+      void reconcilePending();
+      if(selectedId){const id=selectedId.split(":")[0];if(!before.hosts?.find(h=>h.id===id)?.connected&&value.snapshot.hosts?.find(h=>h.id===id)?.connected)void restoreDetail(selectedId);}
+      if(!entryWasConnected&&value.snapshot.hosts?.find(h=>h.id===value.snapshot.entryId)?.connected){
+        void load();
+        if(modal==="new"&&!hosts.some(h=>h.id===createHost))void chooseHost(preferences.host&&hosts.some(h=>h.id===preferences.host)?preferences.host:value.snapshot.entryId!);
+      }
+    },id=>{
+      for(const pending of outgoing.entries)if(pending.agentId.startsWith(id+":")&&pending.status==='sending')unknownOutgoing(pending.agentId,pending.id,m.unknown_delivery());
+    });
+    setClient(client);
+    void client.start().then(()=>load()).catch(e=>{loading=false;error=e.message;});
     const compositionStart = () => composing = true;
     const compositionEnd = () => composing = false;
     window.addEventListener("compositionstart", compositionStart);
     window.addEventListener("compositionend", compositionEnd);
     const timer = setInterval(() => now = Date.now(), 1000);
+    const receiptTimer=setInterval(()=>void reconcilePending(),10_000);
     const permission = () => { if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission().catch(() => {}); };
     const completionTab = (e: KeyboardEvent) => { if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey) e.preventDefault(); };
     window.addEventListener("keydown", completionTab, true);
     const installer = (e: Event) => { e.preventDefault(); install = e as Event & { prompt: () => Promise<void> }; };
     window.addEventListener("pointerdown", permission, { once: true }); window.addEventListener("keydown", permission, { once: true }); window.addEventListener("keydown", keydown); window.addEventListener("beforeinstallprompt", installer);
-    return () => { window.removeEventListener("compositionstart", compositionStart); window.removeEventListener("compositionend", compositionEnd); media.removeEventListener("change", resize); cleanupNavigation(); window.removeEventListener("keydown", completionTab, true); disposed = true; ++generation; clearTimeout(reconnect); client?.close(); setClient(undefined); clearInterval(timer); window.removeEventListener("pointerdown", permission); window.removeEventListener("keydown", permission); window.removeEventListener("keydown", keydown); window.removeEventListener("beforeinstallprompt", installer); };
+    return () => { window.removeEventListener("compositionstart", compositionStart); window.removeEventListener("compositionend", compositionEnd); media.removeEventListener("change", resize); cleanupNavigation(); window.removeEventListener("keydown", completionTab, true); disposed = true; client?.close(); setClient(undefined); clearInterval(timer);clearInterval(receiptTimer); window.removeEventListener("pointerdown", permission); window.removeEventListener("keydown", permission); window.removeEventListener("keydown", keydown); window.removeEventListener("beforeinstallprompt", installer); };
   });
 </script>
 
 <Toaster theme="dark" position="bottom-center" />
 <header class="app-header" class:has-selection={!!selectedId}><strong>{m.product()}</strong><span class="session-count">{m.session_count({ count: roots.length })}</span>
   <HostFilter {hosts} bind:value={hostFilter} />
-  <div class="header-actions"><Weekly hostId={snapshot.hubId} {connected} /><Button variant="ghost" size="icon-sm" aria-label={m.settings()} disabled={!connected} onclick={() => show("settings")}><SettingsIcon /></Button></div>
+  <div class="header-actions"><Weekly hostId={snapshot.entryId} connected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} /><Button variant="ghost" size="icon-sm" aria-label={m.settings()} onclick={() => show("settings")}><SettingsIcon /></Button></div>
 </header>
 <main class:with-detail={!!selectedId}>
   <SessionList bind:this={sessionList} agents={visibleAgents} {hosts} {selectedId} {loading} {connected} {closingId} closeError={selectedId === closeError?.id ? null : closeError} onclosetree={closeTree} onopen={open} onnew={() => show("new")} />
   {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !detail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
   {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
   {#if error && !modal && !detail}<div class="app-error" role="alert"><span>{error}</span><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => error = ""}><X /></Button></div>{/if}
-  {#if detail && selectedId}{#key detail.id}<AgentDetail detail={shownDetail!} {owner} {skills} {now} connected={hostConnected} hubId={snapshot.hubId} hubConnected={connected} onstop={stop} onrename={rename} onrefresh={load} actionError={error} closeError={closeError?.id === detail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} onlookup={operationId => selectedId ? lookup(selectedId,operationId) : Promise.resolve()} />{/key}{/if}
+  {#if detail && selectedId}{#key detail.id}<AgentDetail detail={shownDetail!} {owner} {skills} {now} connected={hostConnected} entryId={snapshot.entryId} entryConnected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} onstop={stop} onrename={rename} onrefresh={load} actionError={error} closeError={closeError?.id === detail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} onlookup={operationId => selectedId ? lookup(selectedId,operationId) : Promise.resolve()} ondismiss={operationId=>{if(selectedId)dismissOutgoing(selectedId,operationId);}} />{/key}{/if}
 </main>
 
 <Dialog.Root open={modalOpen} onOpenChange={value => { if (!value && modal) void closeModal(); }}>
@@ -367,7 +373,7 @@
     {:else if modal === "settings"}
       <Dialog.Title>{m.settings()}</Dialog.Title><p class="modal-help">{m.settings_help()}</p>
       {#if settings}{#each ["orc", "worker"] as role}{@const key = role as "orc" | "worker"}<section class="role-settings"><h3>{key === "orc" ? m.orc() : m.worker()}</h3><div class="model-fields"><label>{m.model()}<NativeSelect class="model-select" bind:value={settings[key].model} onchange={() => { if (settings) settings[key].effort = models.find(model => model.id === settings![key].model)?.defaultEffort ?? ""; if (settings && !models.find(model => model.id === settings![key].model)?.fastTier) settings.fast = false; }}>{#each models as model}<option value={model.id}>{model.name}</option>{/each}</NativeSelect></label><label>{m.effort()}<NativeSelect class="model-select" bind:value={settings[key].effort}>{#each models.find(model => model.id === settings![key].model)?.efforts ?? [] as effort}<option value={effort}>{effort}</option>{/each}</NativeSelect></label></div></section>{/each}<label class="fast-setting"><span><strong>{m.fast_mode()}</strong><small>{fastAvailable ? m.fast_help() : m.fast_unavailable()}</small></span><Switch aria-label={m.fast_mode()} bind:checked={settings.fast} disabled={!fastAvailable} /></label>{/if}
-      <p class="settings-scope">{m.settings_scope()}</p><div class="modal-action">{#if install}<button class="install-link" onclick={() => install?.prompt()}>{m.install_app()}</button>{/if}<Button variant="default" size="sm" disabled={!settings || !connected || saving} onclick={saveSettings}>{saving ? m.sending() : m.save_changes()}</Button></div>
+      <p class="settings-scope">{m.settings_scope()}</p><div class="modal-action">{#if install}<button class="install-link" onclick={() => install?.prompt()}>{m.install_app()}</button>{/if}<Button variant="default" size="sm" disabled={!settings || saving} onclick={saveSettings}>{saving ? m.sending() : m.save_changes()}</Button></div>
       <details class="settings-hosts"><summary>{m.hosts()}</summary><Hosts {hosts} sessionCount={roots.length} onadopt={value => adopt(value, true)} /></details>
     {:else if modal === "keys"}
       <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Option + J / K", m.key_session_loop()], ["⌘ 1–9", m.key_visible_session()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Option/Alt + X", m.close_tree()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>

@@ -30,6 +30,7 @@ export type RuntimeEvent =
   | { type: "disconnected"; error: string };
 export interface RuntimeAgent extends Detail {
   token: string;
+  workerDefaults?: { model: string; effort: string; serviceTier: string };
   inheritSettings?: boolean;
   restoreArchived?: boolean;
   turnEnded?: boolean;

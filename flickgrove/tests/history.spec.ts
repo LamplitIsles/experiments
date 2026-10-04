@@ -62,13 +62,13 @@ for (const mobile of [false, true]) {
       path: `../.scratch/flickgrove-session-history/resumed-${mobile ? "mobile" : "desktop"}.png`,
       animations: "disabled",
     });
-    const snapshot = await (await page.request.get("/api/snapshot")).json();
+    const snapshot = await (await page.request.get("/fixture/snapshot")).json();
     const agent = snapshot.agents.find(
       (a: { threadId: string }) => a.threadId === "history-reader",
     );
     expect(agent).toBeTruthy();
     const detail = await (
-      await page.request.get(`/api/agents/${encodeURIComponent(agent.id)}`)
+      await page.request.get(`/fixture/agents/${encodeURIComponent(agent.id)}`)
     ).json();
     expect(detail.messages).toEqual([]);
     await page.keyboard.press("Alt+x");
@@ -130,7 +130,7 @@ test("restored Grove history includes external turns once and retains folded Wor
     await input.press("Enter");
     await expect(page.getByText(result, { exact: true })).toBeVisible();
   }
-  const snapshot = await (await page.request.get("/api/snapshot")).json();
+  const snapshot = await (await page.request.get("/fixture/snapshot")).json();
   const agent = snapshot.agents.find((a: { role: string }) => a.role === "orc");
   await page.request.post("/fixture/history-continuation", {
     data: { id: agent.id },

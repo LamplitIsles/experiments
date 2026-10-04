@@ -256,7 +256,7 @@ for (const width of [1440, 390])
       .toBe(before + 1);
     const { hub } = await (await request.get(`${origin}/fixture/info`)).json();
     const detail = await (
-      await request.get(`${origin}/api/agents/${hub}:orc`)
+      await request.get(`${origin}/fixture/agents/${hub}:orc`)
     ).json();
     expect(
       detail.deliveries.filter(
@@ -408,7 +408,7 @@ test("unknown batch retains its immutable operation across reload and lookup, an
   ).toBe(after);
   const { hub } = await (await request.get(`${origin}/fixture/info`)).json();
   const detail = await (
-    await request.get(`${origin}/api/agents/${hub}:orc`)
+    await request.get(`${origin}/fixture/agents/${hub}:orc`)
   ).json();
   expect(
     detail.deliveries.find((d: { id: string }) => d.id === operation).status,
@@ -566,7 +566,7 @@ test("an unadmitted batch reloads its original envelope and missing lookup never
     .getByRole("button", { name: "Check receipt", exact: true })
     .click();
   await expect(page.locator(".answer-batch")).toContainText(
-    "Delivery could not be confirmed",
+    "No submission record found",
   );
   expect(
     (await (await request.get(`${origin}/fixture/info`)).json()).inputs.length,

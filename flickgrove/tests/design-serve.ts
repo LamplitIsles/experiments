@@ -31,6 +31,10 @@ const defaults = {
   worker: { model: "gpt-6.1-sol", effort: "low" },
 };
 let usage: number | null = 72;
+let quotaFailure = false;
+let modelFailure = false;
+let quotaResets: number | undefined = 1791252000;
+let quotaReads = 0;
 let stopMode = "pending";
 let sendMode = "accepted";
 let sendGate = Promise.withResolvers<void>();
@@ -72,24 +76,27 @@ function unit(
   const runtime = new FakeRuntime();
   for (const a of agents)
     runtime.names.set(a.threadId ?? `thread-${a.id}`, a.title);
-  runtime.models = async () => [
-    {
-      id: "gpt-6.1-sol",
-      name: "GPT-6.1-Sol",
-      efforts: ["low", "medium", "high"],
-      defaultEffort: "low",
-      isDefault: true,
-      fastTier: "priority",
-    },
-    {
-      id: "gpt-6-luna",
-      name: "GPT-6-Luna",
-      efforts: ["low", "medium"],
-      defaultEffort: "low",
-      isDefault: false,
-      fastTier: "priority",
-    },
-  ];
+  runtime.models = async () => {
+    if (modelFailure) throw new Error("Synthetic model outage");
+    return [
+      {
+        id: "gpt-6.1-sol",
+        name: "GPT-6.1-Sol",
+        efforts: ["low", "medium", "high"],
+        defaultEffort: "low",
+        isDefault: true,
+        fastTier: "priority",
+      },
+      {
+        id: "gpt-6-luna",
+        name: "GPT-6-Luna",
+        efforts: ["low", "medium"],
+        defaultEffort: "low",
+        isDefault: false,
+        fastTier: "priority",
+      },
+    ];
+  };
   runtime.skills = async () => [
     { name: "to-orc-impl", description: "Implement one spec with one Worker" },
     {
@@ -97,13 +104,20 @@ function unit(
       description: "Review code and verify tests",
       shortDescription: "Review changes",
     },
+    { name: "grill-with-docs", description: "Interview a design" },
   ];
-  runtime.weekly = async (): Promise<WeeklyUsage> => ({
-    remaining: usage,
-    fetchedAt: Date.now(),
-    accountId: name === "NUC" ? "fixture-nuc-account" : "fixture-mac-account",
-    ...(usage === null ? {} : { resetsAt: 1791252000 }),
-  });
+  runtime.weekly = async (): Promise<WeeklyUsage> => {
+    quotaReads++;
+    if (quotaFailure) throw new Error("Synthetic quota outage");
+    return {
+      remaining: usage,
+      fetchedAt: Date.now(),
+      accountId: name === "NUC" ? "fixture-nuc-account" : "fixture-mac-account",
+      ...(usage === null || quotaResets === undefined
+        ? {}
+        : { resetsAt: quotaResets }),
+    };
+  };
   runtime.sendOverride = async (_id, _text, turnId) => {
     if (sendMode === "held") await sendGate.promise;
     if (sendMode === "rejected")
@@ -122,17 +136,15 @@ function unit(
   });
   const service = new HostService(app, {
     directory: stateDirectory,
-    hub,
     name,
     origin,
     // Browser startup can contend with compilation on the host; keep synthetic
     // peer admission within the browser test budget without treating it as an outage.
-    timeoutMs: 10000,
   });
   const handler = createHandler(app, {
     service,
     origin,
-    ...(hub ? { assets: resolve("dist") } : {}),
+    assets: resolve("../.scratch/flickgrove-browser/assets"),
   });
   return {
     app,
@@ -216,6 +228,10 @@ async function reset(mode = "working") {
   freshNoWorkers = mode === "no-workers";
   longConversations = mode === "long";
   peerDrop = false;
+  quotaFailure = false;
+  modelFailure = false;
+  quotaResets = 1791252000;
+  quotaReads = 0;
   usage = 72;
   stopMode = "pending";
   sendMode = "accepted";
@@ -293,11 +309,6 @@ async function reset(mode = "working") {
     },
   });
   emptyOrigin = `http://127.0.0.1:${empty.server.port}`;
-  await current.service.register({
-    name: "Neil’s Mac",
-    url: peerOrigin,
-    credential: peer.service.credential,
-  });
   if (mode !== "idle" && mode !== "no-workers") {
     await current.app.send(
       "orc",
@@ -347,9 +358,32 @@ const server = Bun.serve({
       await reset(body.mode);
       return Response.json({ ok: true });
     }
+    if (url.pathname === "/fixture/snapshot")
+      return Response.json({
+        ...current.service.snapshot(),
+        agents: [
+          ...current.service.snapshot().agents,
+          ...peer.service.snapshot().agents,
+        ],
+      });
+    if (url.pathname.startsWith("/fixture/agents/")) {
+      const id = decodeURIComponent(
+        url.pathname.slice("/fixture/agents/".length),
+      );
+      const service = id.startsWith(peer.service.identity.id + ":")
+        ? peer.service
+        : current.service;
+      return Response.json(await service.detail(id));
+    }
     if (url.pathname === "/fixture/info")
       return Response.json({
         hub: current.service.identity.id,
+        peerUrl: peerOrigin,
+        peerToken: peer.service.credential,
+        peerInputs: peer.runtime.inputs,
+        quotaReads,
+        localAgents: current.app.snapshot().agents,
+        peerAgents: peer.app.snapshot().agents,
         peer: peer.service.identity.id,
         emptyUrl: emptyOrigin,
         emptyToken: empty.service.credential,
@@ -357,6 +391,9 @@ const server = Bun.serve({
       });
     if (url.pathname === "/fixture/change" && request.method === "POST") {
       const body = (await request.json()) as {
+        quotaFailure?: boolean;
+        modelFailure?: boolean;
+        quotaResets?: number | null;
         outage?: boolean;
         usage?: number | null;
         stopMode?: string;
@@ -427,6 +464,10 @@ const server = Bun.serve({
           });
         }
       }
+      if (body.modelFailure !== undefined) modelFailure = body.modelFailure;
+      if (body.quotaFailure !== undefined) quotaFailure = body.quotaFailure;
+      if (body.quotaResets !== undefined)
+        quotaResets = body.quotaResets ?? undefined;
       if (body.usage !== undefined) usage = body.usage;
       if (body.stopMode) stopMode = body.stopMode;
       if (body.sendMode) {
@@ -474,6 +515,23 @@ const server = Bun.serve({
       }
 
       return Response.json({ ok: true });
+    }
+    if (url.pathname === "/" && request.method === "GET") {
+      const file = await Bun.file(
+        resolve("../.scratch/flickgrove-browser/assets/index.html"),
+      ).text();
+      const configs = [
+        {
+          id: peer.service.identity.id,
+          name: peer.service.identity.name,
+          url: peerOrigin,
+          credential: peer.service.credential,
+        },
+      ];
+      const script = `<script>if(!localStorage.getItem('flickgrove/'+location.origin+'/peers'))localStorage.setItem('flickgrove/'+location.origin+'/peers',${JSON.stringify(JSON.stringify(configs))});if(!localStorage.getItem('flickgrove/'+location.origin+'/preferences'))localStorage.setItem('flickgrove/'+location.origin+'/preferences',${JSON.stringify(JSON.stringify(defaults))});</script>`;
+      return new Response(file.replace("<head>", "<head>" + script), {
+        headers: { "Content-Type": "text/html" },
+      });
     }
     return current.handler(request);
   },

@@ -2,14 +2,14 @@
   import { Input } from "$lib/components/ui/input/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import type { Host, Snapshot } from "./contracts";
-  import { api } from "./api";
+  import { peers } from "./api";
   import * as m from "./paraglide/messages";
   let { hosts, sessionCount, onadopt }: { hosts: Host[]; sessionCount: number; onadopt: (s: Snapshot) => void } = $props();
   let editing = $state<string | null>(null); let name = $state(""); let url = $state(""); let credential = $state(""); let busy = $state(false); let error = $state(""); let saved = $state(false);
   function edit(host?: Host) { editing = host?.id ?? ""; name = host?.name ?? ""; url = host?.url ?? ""; credential = ""; error = ""; saved = false; }
   async function save() {
     if (busy) return; busy = true; error = "";
-    try { onadopt(await api<Snapshot>("/hosts", { ...(editing ? { id: editing } : {}), name, url, credential })); credential = ""; editing = null; saved = true; }
+    try { onadopt(await peers().register({ ...(editing ? { id: editing } : {}), name, url, credential })); credential = ""; editing = null; saved = true; }
     catch(e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { busy = false; }
   }
@@ -17,7 +17,7 @@
 {#if editing === null}
   <p class="modal-help">{m.host_help()}</p>
   <div class="host-table" class:many-hosts={hosts.length > 2}><div class="host-table-heading"><span>{m.execution_host()}</span><span>{m.connected_host()}</span></div>
-    {#each hosts as host}<div class="host-row"><div><strong>{host.name}</strong><p class="host-address">{host.url}</p></div><div class:host-warning={!host.connected}><span>{host.connected ? m.connected_host() : m.disconnected_host()}</span><small>{host.role === "hub" ? m.hub_local() : m.defaults_status({ status: host.defaults })}</small>{#if !host.connected && host.lastSeen}<small>{m.last_seen({ time: new Date(host.lastSeen).toLocaleTimeString() })}</small>{/if}</div>{#if host.role !== "hub"}<Button variant="ghost" size="sm" aria-label={`${m.edit_host()} ${host.name}`} onclick={() => edit(host)}>{m.edit_host()}</Button>{/if}</div>{/each}
+    {#each hosts as host}<div class="host-row"><div><strong>{host.name}</strong><p class="host-address">{host.url}</p></div><div class:host-warning={!host.connected}><span>{host.connected ? m.connected_host() : m.disconnected_host()}</span>{#if !host.connected && host.lastSeen}<small>{m.last_seen({ time: new Date(host.lastSeen).toLocaleTimeString() })}</small>{/if}</div>{#if host.id !== peers().entryId}<Button variant="ghost" size="sm" aria-label={`${m.edit_host()} ${host.name}`} onclick={() => edit(host)}>{m.edit_host()}</Button><Button variant="ghost" size="sm" onclick={()=>{peers().remove(host.id);onadopt(peers().snapshot());}}>{m.remove_peer()}</Button>{/if}</div>{/each}
   </div>
   {#if saved}<p class="stop-confirmed" role="status">{m.host_saved()}</p>{/if}
   <footer class="host-footer"><span>{m.host_count({ count: hosts.length })} · {m.session_count({ count: sessionCount })}</span><Button variant="default" size="sm" onclick={() => edit()}>{m.add_host()}</Button></footer>

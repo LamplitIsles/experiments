@@ -11,7 +11,8 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "bun tests/serve.ts",
+      command:
+        "bun run build --outDir ../.scratch/flickgrove-browser/assets && bun tests/serve.ts",
       url: "http://127.0.0.1:14318",
       reuseExistingServer: false,
     },

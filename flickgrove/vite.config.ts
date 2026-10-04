@@ -1,10 +1,12 @@
 import { fileURLToPath, URL } from "node:url";
+import { resolve } from "node:path";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwind from "@tailwindcss/vite";
 import { paraglideVitePlugin } from "@inlang/paraglide-js";
+let outputDirectory = resolve("dist");
 export default defineConfig({
   resolve: {
     alias: { $lib: fileURLToPath(new URL("./src/lib", import.meta.url)) },
@@ -20,8 +22,11 @@ export default defineConfig({
     tailwind(),
     {
       name: "offline-shell",
+      configResolved(config) {
+        outputDirectory = resolve(config.root, config.build.outDir);
+      },
       closeBundle() {
-        const assets = readdirSync("dist/assets").map(
+        const assets = readdirSync(resolve(outputDirectory, "assets")).map(
           (file) => `/assets/${file}`,
         );
         const version = createHash("sha256")
@@ -31,7 +36,7 @@ export default defineConfig({
         const source = readFileSync("public/sw.js", "utf8")
           .replace("flickgrove-v1", `flickgrove-${version}`)
           .replace("/* BUILD_ASSETS */ []", JSON.stringify(assets));
-        writeFileSync("dist/sw.js", source);
+        writeFileSync(resolve(outputDirectory, "sw.js"), source);
       },
     },
   ],

@@ -4,8 +4,6 @@ import type { Server } from "bun";
 import type { Workspace } from "./workspace";
 import type { HostService } from "./hosts";
 import type { SocketData } from "./chord-socket";
-import { invoke } from "./chord-methods";
-import { routeCall } from "../src/chord-contract";
 const json = (value: unknown, status = 200) =>
   Response.json(value, { status, headers: { "Cache-Control": "no-store" } });
 type Options = {
@@ -20,42 +18,41 @@ export function createUpgrade(workspace: Workspace, options: Options) {
     server: Pick<Server<SocketData>, "upgrade">,
   ): Response | true | undefined => {
     const url = new URL(request.url);
-    const peer = url.pathname === "/execution/socket";
-    if (!peer && url.pathname !== "/api/socket") return;
+    if (url.pathname !== "/api/socket") return;
     const origin = options.origin();
+    const protocols = (request.headers.get("sec-websocket-protocol") ?? "")
+      .split(",")
+      .map((p) => p.trim());
+    const token = protocols
+      .find((p) => p.startsWith("grove-auth."))
+      ?.slice("grove-auth.".length);
+    const origins = [origin, options.localOrigin?.()].filter(
+      (value): value is string => !!value,
+    );
+    const local = origins.includes(request.headers.get("origin") ?? "");
+    const authorized = token === options.service.credential;
     if (
       request.method !== "GET" ||
-      url.host !== new URL(origin).host ||
-      (request.headers.get("origin") &&
-        request.headers.get("origin") !== origin)
+      !origins.some((value) => url.host === new URL(value).host)
     )
       return json(
         { error: "Open FlickGrove from its configured address" },
         403,
       );
-    if (peer) {
-      if (
-        request.headers.get("authorization") !==
-        `Bearer ${options.service.credential}`
-      )
-        return json({ error: "Service authorization required" }, 401);
-      if (
-        options.service.identity.role !== "execution" ||
-        request.headers.get("grove-host") !== options.service.identity.id
-      )
-        return json({ error: "Wrong execution host identity" }, 403);
-    } else {
-      if (!options.service.options.hub)
-        return json({ error: "Execution service has no browser entry" }, 404);
-      if (request.headers.get("origin") !== origin)
-        return json({ error: "This action requires the FlickGrove page" }, 403);
-    }
+    // Same-origin page access remains local. Cross-origin access requires possession
+    // of this Peer's credential; it is carried by a subprotocol, never a URL.
+    if (!local && !authorized)
+      return json({ error: "Peer authorization required" }, 401);
+    if (token && !authorized)
+      return json({ error: "Peer authorization required" }, 401);
     if (
       server.upgrade(request, {
+        ...(protocols.includes("grove.v1")
+          ? { headers: { "Sec-WebSocket-Protocol": "grove.v1" } }
+          : {}),
         data: {
-          app: peer ? workspace : options.service,
+          app: options.service,
           service: options.service,
-          peer,
         },
       })
     )
@@ -66,36 +63,24 @@ export function createUpgrade(workspace: Workspace, options: Options) {
 export function createHandler(workspace: Workspace, options: Options) {
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
-    const execution = url.pathname.startsWith("/execution/");
     const mcp = url.pathname.startsWith("/api/mcp/");
     const origin = mcp
       ? (options.localOrigin?.() ?? options.origin())
       : options.origin();
+    const origins = mcp
+      ? [origin]
+      : [origin, options.localOrigin?.()].filter(
+          (value): value is string => !!value,
+        );
     if (
-      url.host !== new URL(origin).host ||
+      !origins.some((value) => url.host === new URL(value).host) ||
       (request.headers.get("origin") &&
-        request.headers.get("origin") !== origin)
+        !origins.includes(request.headers.get("origin")!))
     )
       return json(
         { error: "Open FlickGrove from its configured address" },
         403,
       );
-    if (execution) {
-      if (
-        request.headers.get("authorization") !==
-        `Bearer ${options.service.credential}`
-      )
-        return json({ error: "Service authorization required" }, 401);
-      if (url.pathname === "/execution/identity" && request.method === "GET")
-        return json(options.service.identity);
-      // Peer control/state have a single WebSocket transport. No HTTP fallback.
-      return json({ error: "Execution action not found" }, 404);
-    } else if (!mcp) {
-      if (!options.service.options.hub)
-        return json({ error: "Execution service has no browser entry" }, 404);
-      if (request.method !== "GET" && request.headers.get("origin") !== origin)
-        return json({ error: "This action requires the FlickGrove page" }, 403);
-    }
     try {
       if (mcp) {
         const token = /^Bearer (.+)$/.exec(
@@ -112,26 +97,8 @@ export function createHandler(workspace: Workspace, options: Options) {
         }
         return json({ error: "Tool action not found" }, 404);
       }
-      if (request.method === "GET" && url.pathname === "/api/snapshot")
-        return json(options.service.snapshot());
-      if (request.method === "GET" && url.pathname.startsWith("/api/")) {
-        const call = routeCall(url.pathname.slice(4) + url.search);
-        if (
-          ![
-            "projects",
-            "models",
-            "weekly",
-            "history",
-            "historySession",
-            "historyMessages",
-            "agentHistory",
-            "detail",
-            "skills",
-          ].includes(call.member)
-        )
-          return json({ error: "Action not found" }, 404);
-        return json(await invoke(options.service, call.member, call.input));
-      }
+      if (request.method === "GET" && url.pathname === "/api/identity")
+        return json(options.service.identity);
       if (url.pathname.startsWith("/api/"))
         return json({ error: "Action not found" }, 404);
       if (request.method !== "GET" || !options.assets)

@@ -276,7 +276,7 @@ test("Tab completes without moving focus, skill search preserves drafts, and clo
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
-  await page.keyboard.press("n");
+  await newSession(page);
   await expect(
     page.getByRole("textbox", { name: "Search projects" }),
   ).toBeFocused();

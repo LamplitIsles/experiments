@@ -29,12 +29,11 @@ function fixture() {
 test("new Orcs capture defaults and retain their own project and conversation", async () => {
   const { app } = fixture();
   const first = await app.createOrc("alpha");
-  await app.saveSettings({
+  const second = await app.createOrc("beta", {
     fast: false,
     orc: { model: "luna", effort: "low" },
     worker: { model: "sol", effort: "high" },
   });
-  const second = await app.createOrc("beta");
   await app.send(first.id, "Build a reader", "message-1");
   expect(
     app
@@ -430,15 +429,14 @@ test("lookup retains an uncertain answer without replaying or inventing native a
   await expect(app.closeTree(a.id)).rejects.toThrow("unconfirmed");
 });
 
-test("one global Fast setting applies to new Orcs and Workers while existing sessions retain their tier", async () => {
+test("each tree captures independent Orc and Worker settings while other trees cannot change its tier", async () => {
   const { app, runtime } = fixture();
   const settings = {
     orc: { model: "sol", effort: "high" },
     worker: { model: "sol", effort: "medium" },
   };
   const first = await app.createOrc("alpha");
-  await app.saveSettings({ ...settings, fast: true });
-  const second = await app.createOrc("alpha");
+  const second = await app.createOrc("alpha", { ...settings, fast: true });
   expect(app.detail(first.id).serviceTier).toBe("default");
   expect(app.detail(second.id).serviceTier).toBe("priority");
   const token = runtime.agents.get(second.id)!.token;
@@ -449,13 +447,13 @@ test("one global Fast setting applies to new Orcs and Workers while existing ses
     message: "Implement",
   })) as { id: string };
   expect(app.detail(worker.id).serviceTier).toBe("priority");
-  await app.saveSettings({ ...settings, fast: false });
+  await app.createOrc("alpha", { ...settings, fast: false });
   expect(app.detail(second.id).serviceTier).toBe("priority");
   expect(app.detail(worker.id).serviceTier).toBe("priority");
   const third = await app.createOrc("alpha");
   expect(app.detail(third.id).serviceTier).toBe("default");
   await expect(
-    app.saveSettings({
+    app.createOrc("alpha", {
       ...settings,
       fast: true,
       orc: { model: "luna", effort: "low" },

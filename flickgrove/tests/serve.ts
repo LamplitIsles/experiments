@@ -149,14 +149,14 @@ runtime.sendOverride = async (id, text) => {
 };
 const service = new HostService(app, {
   directory,
-  hub: true,
+
   name: "NUC",
   origin: () => "http://127.0.0.1:14318",
 });
 const handler = createHandler(app, {
   origin: () => "http://127.0.0.1:14318",
   service,
-  assets: resolve("dist"),
+  assets: resolve("../.scratch/flickgrove-browser/assets"),
 });
 const server = Bun.serve({
   hostname: "127.0.0.1",
@@ -193,6 +193,16 @@ const server = Bun.serve({
       ]);
       return Response.json({ threadId });
     }
+    if (new URL(request.url).pathname === "/fixture/snapshot")
+      return Response.json(service.snapshot());
+    if (new URL(request.url).pathname.startsWith("/fixture/agents/"))
+      return Response.json(
+        await service.detail(
+          decodeURIComponent(
+            new URL(request.url).pathname.slice("/fixture/agents/".length),
+          ),
+        ),
+      );
     return handler(request);
   },
 });
