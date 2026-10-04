@@ -62,11 +62,11 @@ type Directory = {
   value?: string | null;
   controller?: AbortController;
 };
-function key(path: string) {
+function key(path: string, previous = path) {
   try {
     return realpathSync(path);
   } catch {
-    return path;
+    return previous;
   }
 }
 
@@ -95,7 +95,11 @@ export class DirectoryBranches {
   update(paths: string[]) {
     if (this.disposed) return;
     const nextKeys = new Map(
-      paths.map((path) => [path, this.keys.get(path) ?? key(path)]),
+      paths.map((path) => [path, key(path, this.keys.get(path))]),
+    );
+    const remapped = [...nextKeys].some(
+      ([path, resolved]) =>
+        this.keys.has(path) && this.keys.get(path) !== resolved,
     );
     this.keys = nextKeys;
     const wanted = new Set(nextKeys.values());
@@ -114,6 +118,9 @@ export class DirectoryBranches {
       clearTimeout(this.timer);
       this.timer = undefined;
     }
+    // A confirmed new checkout must not keep advertising the old value while
+    // its first read is pending (or if that read fails).
+    if (remapped) this.changed();
     if (this.queue.length && !this.running) void this.poll();
   }
   private async poll() {
@@ -123,6 +130,7 @@ export class DirectoryBranches {
       this.timer = undefined;
     }
     this.running = true;
+    this.update([...this.keys.keys()]);
     const worker = async () => {
       for (;;) {
         const entry = this.queue.shift();

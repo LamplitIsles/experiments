@@ -170,3 +170,39 @@ test("bounded concurrency without overlapping polls; removed/re-added entries an
   expect(publishes).toBe(4);
   expect(pending).toHaveLength(7);
 });
+
+test("polling follows symlink retarget without workspace mutation and retains failed resolution", async () => {
+  const root = fixture(),
+    left = temporaryGit(join(root, "left"), "left-branch"),
+    right = temporaryGit(join(root, "right"), "right-branch"),
+    alias = join(root, "alias");
+  symlinkSync(left, alias);
+  const calls: string[] = [];
+  const observed: (string | undefined)[] = [];
+  const poller = new DirectoryBranches(
+    () => observed.push(poller.value(alias)),
+    {
+      intervalMs: 20,
+      read: async (path, signal) => {
+        calls.push(path);
+        return readDirectoryBranch(path, signal);
+      },
+    },
+  );
+  cleanups.push(() => poller.dispose());
+  poller.update([alias]);
+  await until(() => poller.value(alias) === "left-branch");
+  rmSync(alias);
+  symlinkSync(right, alias);
+  await until(() => calls.length >= 4);
+  expect(poller.value(alias)).toBe("right-branch");
+  expect(observed).toContain(undefined);
+  const stopped = calls.filter((p) => p === left).length;
+  rmSync(alias);
+  await until(() => calls.length >= 6);
+  expect(poller.value(alias)).toBe("right-branch");
+  expect(calls.filter((p) => p === left).length).toBe(stopped);
+  symlinkSync(right, alias);
+  poller.update([alias, right]);
+  expect(poller.shares(alias, right)).toBe(true);
+});
