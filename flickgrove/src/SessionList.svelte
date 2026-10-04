@@ -30,6 +30,7 @@
       else if (dx > 40) revealedId = null;
     }
   }
+  export function visibleIds() { return visible.map(a => a.id); }
   export function closeTarget() { return agents.find(a => a.id === focusedId && a.role === "orc")?.id ?? null; }
   let list: HTMLElement;
   const roots = $derived(agents.filter(a => a.role === "orc"));
@@ -37,16 +38,22 @@
   $effect(() => { localStorage.setItem(`${storagePrefix}/expanded`, JSON.stringify(expanded)); });
   $effect(() => { const selected = agents.find(a => a.id === selectedId); if (selected?.ownerId) untrack(() => { if (!expanded.includes(selected.ownerId!)) expanded = [...expanded, selected.ownerId!]; }); });
   $effect(() => { if (focusedId && !visible.some(a => a.id === focusedId)) focusedId = agents.find(a => a.id === focusedId)?.ownerId ?? null; });
-  function toggle(id: string) { expanded = expanded.includes(id) ? expanded.filter(v => v !== id) : [...expanded, id]; }
+  function toggle(id: string) { if (expanded.includes(id) && agents.find(a => a.id === selectedId)?.ownerId === id) onopen(id); expanded = expanded.includes(id) ? expanded.filter(v => v !== id) : [...expanded, id]; }
   export async function reveal(id: string) { await tick(); list?.querySelector<HTMLButtonElement>(`[data-agent-id="${id}"]`)?.scrollIntoView({ block: "nearest" }); }
   export function expandFocused() { const agent = agents.find(a => a.id === (selectedId ?? focusedId)); if (agent?.role === "orc") toggle(agent.id); }
+  export async function navigate(offset: number, index?: number) {
+    const position = visible.findIndex(a => a.id === (selectedId ?? focusedId));
+    const target = index === undefined ? visible[(position + offset + visible.length) % visible.length] : visible[index];
+    if (!target) return null;
+    focusedId = target.id; onopen(target.id); await reveal(target.id); return target.id;
+  }
   export async function keydown(event: KeyboardEvent) {
     event.preventDefault();
     if (selectedId) focusedId = selectedId;
     if (event.key === "Enter") { if (focusedId) onopen(focusedId); return; }
     const current = visible.find(a => a.id === focusedId);
     if (!current) focusedId = visible[0]?.id ?? null;
-    else if (event.key === "ArrowDown" || event.key === "ArrowUp") { const i = visible.indexOf(current); focusedId = visible[Math.max(0, Math.min(visible.length - 1, i + (event.key === "ArrowDown" ? 1 : -1)))]?.id ?? null; }
+    else if (event.key === "ArrowDown" || event.key === "ArrowUp") { const i = visible.indexOf(current); focusedId = visible[(i + (event.key === "ArrowDown" ? 1 : -1) + visible.length) % visible.length]?.id ?? null; }
     else if (event.key === "ArrowRight" && current.role === "orc") { if (!expanded.includes(current.id)) toggle(current.id); else focusedId = agents.find(a => a.ownerId === current.id)?.id ?? current.id; }
     else if (event.key === "ArrowLeft") { if (current.ownerId) focusedId = current.ownerId; else if (expanded.includes(current.id)) toggle(current.id); }
     if (selectedId && focusedId && focusedId !== selectedId) onopen(focusedId);

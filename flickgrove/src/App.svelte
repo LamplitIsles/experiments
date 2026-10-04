@@ -11,11 +11,12 @@
   import { navigation, initializeNavigation, openConversation, setSurface, back, validateNavigation } from "./navigation.svelte";
   import { storagePrefix } from "./api";
   import { onMount, tick } from "svelte";
-  import type { Agent, Detail, HistorySession, Model, Project, Settings, Skill, Snapshot } from "./contracts";
+  import type { Answer, Agent, Detail, HistorySession, Model, Project, Settings, Skill, Snapshot } from "./contracts";
   import { api, editable, setClient } from "./api";
-  import { openGrove, type GroveClient } from "./chord-client";
+  import { RequestRejected, openGrove, type GroveClient } from "./chord-client";
   import { receiptSchema, type Receipt } from "./chord-contract";
   import { addOutgoing, observeOutgoing, outgoing, withOutgoing, acceptReceipt, unknownOutgoing } from "./outgoing.svelte";
+  import { observeQuestions, questionPanels, setQuestionPanel } from "./question-state.svelte";
   import HostFilter from "./HostFilter.svelte";
   import Hosts from "./Hosts.svelte";
   import Weekly from "./Weekly.svelte";
@@ -25,17 +26,34 @@
   import * as m from "./paraglide/messages";
 
   let client: GroveClient | undefined;
+  let composing = false;
   let snapshot = $state<Snapshot>({ agents: [], settings: null, revision: 0 });
   let selectedId = $state<string | null>(localStorage.getItem(`${storagePrefix}/selected`));
   let detail = $state<Detail | null>(null); let skills = $state<Skill[]>([]);
   let projects = $state<Project[]>([]); let models = $state<Model[]>([]);
   let connected = $state(false); let loading = $state(true); let error = $state("");
-  let now = $state(Date.now()); let sessionList: { keydown(event: KeyboardEvent): Promise<void>; expandFocused(): void; reveal(id: string): Promise<void>; closeTarget(): string | null };
+  let now = $state(Date.now()); let sessionList: { visibleIds(): string[]; keydown(event: KeyboardEvent): Promise<void>; expandFocused(): void; reveal(id: string): Promise<void>; closeTarget(): string | null; navigate(offset: number, index?: number): Promise<string | null> };
   let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | null>(null);
   let search = $state(""); let projectId = $state(""); let saving = $state(false);
   let settings = $state<Settings | null>(null); let sequence = 0; let focusCreatedId = $state<string | null>(null);
   let install = $state<(Event & { prompt: () => Promise<void> }) | null>(null);
   let hostFilter = $state(localStorage.getItem(`${storagePrefix}/host-filter`) ?? "");
+  let desktop = $state(matchMedia("(min-width: 701px)").matches);
+  let previousVisible: string[] = [];
+  let lostSelection: string | null = null;
+  $effect(() => {
+    const ids = visibleAgents.map(a => a.id);
+    const current = navigation.details.at(-1);
+    if (desktop && !loading && (!current || !ids.includes(current))) {
+      const position = previousVisible.indexOf(current ?? lostSelection ?? "");
+      const adjacent = previousVisible.slice(position + 1).find(id => ids.includes(id)) ?? previousVisible.slice(0, Math.max(0, position)).reverse().find(id => ids.includes(id));
+      const next = adjacent ?? visibleAgents.find(a => a.role === "orc")?.id;
+      if (next) void openConversation(next);
+      else validateNavigation(new Set(ids));
+    }
+    previousVisible = sessionList?.visibleIds() ?? visibleAgents.filter(a => a.role === "orc").map(a => a.id);
+    lostSelection = null;
+  });
   let createHost = $state(""); let catalogSequence = 0;
   const shownDetail = $derived(detail ? withOutgoing(detail) : null);
   const hosts = $derived(snapshot.hosts ?? []);
@@ -54,7 +72,7 @@
   const filteredProjects = $derived(projects.filter(p => `${p.alias} ${p.name}`.toLowerCase().includes(search.toLowerCase())));
 
   $effect(() => { if (modal === "new" && !filteredProjects.some(p => p.alias === projectId)) projectId = filteredProjects[0]?.alias ?? ""; });
-  function closeDetail() { void back(); }
+  function closeDetail() { if (navigation.surfaces.length || !desktop) void back(); else if (selectedId && questionPanels[selectedId]) setQuestionPanel(selectedId, false); }
   $effect(() => {
     const id = navigation.details.at(-1) ?? null;
     if (id !== selectedId) { ++sequence; selectedId = id; detail = null; skills = []; error = ""; if (id) void restoreDetail(id); else { localStorage.removeItem(`${storagePrefix}/selected`); void client?.call("select", {ids:[]}).catch(() => {}); } }
@@ -88,6 +106,8 @@
     // device's read-only cache until that host supplies authoritative state.
     const retained = snapshot.agents.filter(a => value.hosts?.some(h => h.id === a.hostId && !h.connected) && !value.agents.some(next => next.hostId === a.hostId));
     value = { ...value, agents: [...value.agents, ...retained], hosts: value.hosts?.map(h => !h.connected && !h.lastSeen ? { ...h, lastSeen: snapshot.hosts?.find(old => old.id === h.id)?.lastSeen } : h) };
+    observeQuestions(value.agents, selectedId);
+    if (selectedId && !value.agents.some(a => a.id === selectedId)) lostSelection = selectedId;
     snapshot = value; localStorage.setItem(`${storagePrefix}/snapshot`, JSON.stringify(value));
     validateNavigation(new Set(value.agents.map(a => a.id)));
 
@@ -156,6 +176,8 @@
   }
   async function retryDelivery(operationId: string) {
     if (!selectedId || !hostConnected || !client) return;
+    const batch = outgoing.entries.find(o => o.agentId === selectedId && o.id === operationId && o.answers);
+    if (batch?.answers) { await answerBatch(batch.answers, operationId); return; }
     try { await client.call("retryDelivery", {id:selectedId,deliveryId:operationId}); }
     catch(e) { error = e instanceof Error ? e.message : m.load_failure(); }
   }
@@ -208,13 +230,36 @@
     try { const result = await api<Detail>(`/agents/${id}/stop`, { turnId }); if (selectedId === id) detail = result; return true; }
     catch(e) { error = e instanceof Error ? e.message : m.load_failure(); return false; }
   }
-  async function answer(questionId: string, text: string) {
-    if (!selectedId || !hostConnected) return false; error = ""; const id = selectedId;
-    try { const result = await api<Detail>(`/agents/${id}/answer`, { questionId, answer: text }); if (selectedId === id) detail = result; return result.questions.find(q => q.id === questionId)?.state === "answered"; }
-    catch (e) { error = e instanceof Error ? e.message : m.load_failure(); return false; }
+  async function answerBatch(answers: Answer[], operationId: string) {
+    if (!selectedId || !hostConnected || !client || !detail) return;
+    const id = selectedId;
+    const text = answers.map(answer => `Question: ${detail!.questions.find(q => q.id === answer.questionId)?.text}\nAnswer: ${answer.answer}`).join("\n\n");
+    addOutgoing(id, text, operationId, answers);
+    try {
+      const result = await client.call<Detail>("answerBatch", { id, answers, operationId });
+      const delivery = result.deliveries.find(d => d.id === operationId);
+      if (delivery) acceptReceipt(id, { operationId, state: delivery.status === "sent" ? "accepted" : delivery.status === "failed" ? "rejected" : delivery.status === "uncertain" ? "uncertain" : "pending", turnId: delivery.turnId ?? null, error: delivery.error ?? null });
+    } catch (e) {
+      if (e instanceof RequestRejected) { acceptReceipt(id, { operationId, state: "rejected", turnId: null, error: e.message }); return; }
+      else unknownOutgoing(id, operationId, e instanceof Error ? e.message : m.load_failure());
+    }
+    void lookup(id, operationId);
+  }
+  async function navigate(offset: number, index?: number) {
+    const id = await sessionList?.navigate(offset, index);
+    if (!id) return;
+    if (snapshot.agents.find(a => a.id === id)?.role === "orc") focusCreatedId = id;
   }
   function keydown(event: KeyboardEvent) {
-    if (event.defaultPrevented || event.isComposing) return;
+    if (event.defaultPrevented || composing || event.isComposing || event.keyCode === 229) return;
+    const optionMove = event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && ["KeyJ", "KeyK"].includes(event.code);
+    const numberMove = event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && /^Digit[1-9]$/.test(event.code);
+    if (optionMove || numberMove) {
+      if (navigation.surfaces.length) return;
+      event.preventDefault();
+      void navigate(optionMove ? (event.code === "KeyJ" ? 1 : -1) : 0, numberMove ? Number(event.code.slice(-1)) - 1 : undefined);
+      return;
+    }
     if (event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && event.code === "KeyX") {
       event.preventDefault();
       if (navigation.surfaces.length) return;
@@ -224,7 +269,7 @@
     }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === "Escape") {
-      event.preventDefault(); void back();
+      event.preventDefault(); closeDetail();
       return;
     }
     if (editable(event.target) || navigation.surfaces.length) return;
@@ -239,6 +284,9 @@
     const cached = localStorage.getItem(`${storagePrefix}/snapshot`); if (cached) snapshot = JSON.parse(cached);
     const cachedDetail = selectedId && localStorage.getItem(`${storagePrefix}/detail/${selectedId}`); if (cachedDetail) detail = JSON.parse(cachedDetail);
     const cleanupNavigation = initializeNavigation(selectedId);
+    const media = matchMedia("(min-width: 701px)");
+    const resize = () => desktop = media.matches;
+    media.addEventListener("change", resize);
     void load();
     let disposed = false; let generation = 0; let reconnect: ReturnType<typeof setTimeout> | undefined;
     const connect = async () => {
@@ -270,13 +318,17 @@
       } catch { offline(); }
     };
     void connect();
+    const compositionStart = () => composing = true;
+    const compositionEnd = () => composing = false;
+    window.addEventListener("compositionstart", compositionStart);
+    window.addEventListener("compositionend", compositionEnd);
     const timer = setInterval(() => now = Date.now(), 1000);
     const permission = () => { if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission().catch(() => {}); };
     const completionTab = (e: KeyboardEvent) => { if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey) e.preventDefault(); };
     window.addEventListener("keydown", completionTab, true);
     const installer = (e: Event) => { e.preventDefault(); install = e as Event & { prompt: () => Promise<void> }; };
     window.addEventListener("pointerdown", permission, { once: true }); window.addEventListener("keydown", permission, { once: true }); window.addEventListener("keydown", keydown); window.addEventListener("beforeinstallprompt", installer);
-    return () => { cleanupNavigation(); window.removeEventListener("keydown", completionTab, true); disposed = true; ++generation; clearTimeout(reconnect); client?.close(); setClient(undefined); clearInterval(timer); window.removeEventListener("pointerdown", permission); window.removeEventListener("keydown", permission); window.removeEventListener("keydown", keydown); window.removeEventListener("beforeinstallprompt", installer); };
+    return () => { window.removeEventListener("compositionstart", compositionStart); window.removeEventListener("compositionend", compositionEnd); media.removeEventListener("change", resize); cleanupNavigation(); window.removeEventListener("keydown", completionTab, true); disposed = true; ++generation; clearTimeout(reconnect); client?.close(); setClient(undefined); clearInterval(timer); window.removeEventListener("pointerdown", permission); window.removeEventListener("keydown", permission); window.removeEventListener("keydown", keydown); window.removeEventListener("beforeinstallprompt", installer); };
   });
 </script>
 
@@ -290,7 +342,7 @@
   {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !detail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
   {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
   {#if error && !modal && !detail}<div class="app-error" role="alert"><span>{error}</span><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => error = ""}><X /></Button></div>{/if}
-  {#if detail && selectedId}{#key detail.id}<AgentDetail detail={shownDetail!} {owner} {skills} {now} connected={hostConnected} onstop={stop} onrename={rename} onrefresh={load} actionError={error} closeError={closeError?.id === detail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answer} onretry={retryDelivery} onlookup={operationId => selectedId ? lookup(selectedId,operationId) : Promise.resolve()} />{/key}{/if}
+  {#if detail && selectedId}{#key detail.id}<AgentDetail detail={shownDetail!} {owner} {skills} {now} connected={hostConnected} onstop={stop} onrename={rename} onrefresh={load} actionError={error} closeError={closeError?.id === detail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} onlookup={operationId => selectedId ? lookup(selectedId,operationId) : Promise.resolve()} />{/key}{/if}
 </main>
 
 <Dialog.Root open={modalOpen} onOpenChange={value => { if (!value && modal) void closeModal(); }}>
@@ -318,7 +370,7 @@
       <p class="settings-scope">{m.settings_scope()}</p><div class="modal-action">{#if install}<button class="install-link" onclick={() => install?.prompt()}>{m.install_app()}</button>{/if}<Button variant="default" size="sm" disabled={!settings || !connected || saving} onclick={saveSettings}>{saving ? m.sending() : m.save_changes()}</Button></div>
       <details class="settings-hosts"><summary>{m.hosts()}</summary><Hosts {hosts} sessionCount={roots.length} onadopt={value => adopt(value, true)} /></details>
     {:else if modal === "keys"}
-      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Option/Alt + X", m.close_tree()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()], ["← →", m.key_questions()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
+      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Option + J / K", m.key_session_loop()], ["⌘ 1–9", m.key_visible_session()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Option/Alt + X", m.close_tree()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
     {/if}
     {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
   </Dialog.Content>

@@ -124,8 +124,8 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await request.post("/fixture/reset", { data: {} });
   await page.evaluate(() => localStorage.clear());
   await selected(page);
-  await page.getByRole("button", { name: "Close detail" }).click();
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator(".mobile-back > button").click();
   await expect(page.locator(".host-summary")).toHaveCount(0);
   await expect(
     page
@@ -157,7 +157,9 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await page.keyboard.press("Alt+x");
   await capture(page, "controls-13");
   await page.getByRole("button", { name: "Stop Orc", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Stopping…" })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Stop Orc", exact: true }),
+  ).toBeDisabled();
   await capture(page, "controls-03");
   await request.post("/fixture/change", { data: { complete: "interrupted" } });
   await expect(
@@ -172,7 +174,6 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await selected(page);
   await page.getByRole("button", { name: "Expand Workers" }).first().click();
   await page.getByRole("button", { name: "Expand Workers" }).click();
-  await page.getByRole("button", { name: "Close detail" }).click();
   await page
     .getByRole("button", { name: "Weekly remaining", exact: true })
     .click();
@@ -222,6 +223,18 @@ test("two access devices keep independent view/drafts while answers and outages 
   try {
     const left = await desktop.newPage();
     const right = await mobile.newPage();
+    const answerCalls: (() => void)[] = [];
+    for (const page of [left, right])
+      await page.routeWebSocket("**/api/socket", (ws) => {
+        const server = ws.connectToServer();
+        ws.onMessage((raw) => {
+          if (JSON.parse(String(raw)).call?.member === "answerBatch") {
+            answerCalls.push(() => server.send(raw));
+            if (answerCalls.length === 2)
+              for (const send of answerCalls) send();
+          } else server.send(raw);
+        });
+      });
     await left.goto("http://127.0.0.1:14319/");
     await right.goto("http://127.0.0.1:14319/");
     const info = await (await request.get("/fixture/info")).json();
@@ -248,8 +261,12 @@ test("two access devices keep independent view/drafts while answers and outages 
       right.getByRole("radio", { name: "Recommended choice" }).check(),
     ]);
     await Promise.all([
-      left.getByRole("button", { name: "Send answer", exact: true }).click(),
-      right.getByRole("button", { name: "Send answer", exact: true }).click(),
+      left
+        .getByRole("button", { name: "Send all answers", exact: true })
+        .click(),
+      right
+        .getByRole("button", { name: "Send all answers", exact: true })
+        .click(),
     ]);
     await expect(left.getByText("All 1 answers sent")).toBeVisible();
     await expect(right.getByText("All 1 answers sent")).toBeVisible();
@@ -270,6 +287,8 @@ test("two access devices keep independent view/drafts while answers and outages 
         m.text.includes("Answer: Recommended choice"),
       ),
     ).toHaveLength(1);
+    await right.locator(".question-panel-heading button").click();
+    await expect(right.locator(".question-panel")).toHaveCount(0);
     await right.getByRole("button", { name: "‹ Sessions" }).click();
     await right
       .getByRole("button", { name: "Open Reader performance Orc" })
@@ -389,7 +408,9 @@ test("mobile supplementary forms, Stop and quota stay operable within 390 pixels
   await page.keyboard.press("Escape");
   await expect(page.locator(".weekly-popover")).toHaveCount(0);
   await page.getByRole("button", { name: "Stop Orc", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Stopping…" })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Stop Orc", exact: true }),
+  ).toBeDisabled();
   await request.post("/fixture/change", { data: { complete: "interrupted" } });
   await expect(
     page.getByText("Orc stopped. Workers continue independently."),

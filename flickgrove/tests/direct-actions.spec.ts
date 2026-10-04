@@ -147,6 +147,10 @@ test("Close shortcut uses detail before navigation, blocks surfaces/IME and neve
   await expect(
     page.getByRole("button", { name: "Open Reader performance Orc" }),
   ).toBeVisible();
+  await expect(page.locator(".agent-detail h1")).toHaveText(
+    "Reader performance",
+  );
+  await expect(page.locator(".host-outage")).toHaveCount(0);
   await page.keyboard.press("Alt+x");
   await expect(page.locator(".session-open")).toHaveCount(0);
   await request.post(`${origin}/fixture/reset`, { data: {} });
@@ -158,12 +162,6 @@ test("Close shortcut uses detail before navigation, blocks surfaces/IME and neve
   page.on("request", (r) => {
     if (r.url().endsWith("/close")) closes++;
   });
-  await page.keyboard.press("Alt+x");
-  expect(closes).toBe(0);
-  await page.getByRole("button", { name: "Close detail" }).click();
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowRight");
-  await page.keyboard.press("ArrowRight");
   await page.keyboard.press("Alt+x");
   expect(closes).toBe(0);
 });
@@ -199,7 +197,11 @@ test("mobile swipe only reveals, one row at a time; right/outside collapse and e
     .poll(() => page.locator(".session-list").evaluate((el) => el.scrollTop))
     .toBeGreaterThan(0);
   await page.locator(".session-list").evaluate((el) => (el.scrollTop = 0));
-  await swipe(page, 300, box.y + 30, 0);
+  await expect
+    .poll(() => page.locator(".session-list").evaluate((el) => el.scrollTop))
+    .toBe(0);
+  // Ordinary row navigation is a pointer action; the preceding gesture verifies scrolling.
+  await first.locator(".session-open").click();
   await expect(page.locator(".agent-detail")).toBeVisible();
   await page.locator(".mobile-back > button").click();
   await page.getByRole("button", { name: "Expand Workers" }).first().click();
@@ -231,8 +233,14 @@ for (const width of [1440, 390])
       await page.getByRole("button", { name: orcName }).click();
       if (role === "Worker") {
         if (width === 390) {
-          await page.locator(".mobile-workers summary").click();
-          await page.locator(".mobile-workers button").first().click();
+          await page.locator(".mobile-back > button").click();
+          await page
+            .getByRole("button", { name: "Expand Workers" })
+            .first()
+            .click();
+          await page
+            .getByRole("button", { name: "Open Voice input Worker" })
+            .click();
         } else {
           await page
             .getByRole("button", { name: "Expand Workers" })

@@ -8,7 +8,8 @@ export type Surface =
   | "weekly"
   | "weekly-detail"
   | "title"
-  | "host-filter";
+  | "host-filter"
+  | "questions";
 type Route = { details: string[]; surfaces: Surface[] };
 export const navigation = $state<Route>({ details: [], surfaces: [] });
 let initialized = false;

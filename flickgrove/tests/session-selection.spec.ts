@@ -28,9 +28,7 @@ test("mouse and keyboard selection keep the list highlight on the open detail", 
   ).toHaveAttribute("data-agent-id", nextId!);
   await expect(page.locator(".agent-detail h1")).toHaveText(nextTitle!);
   await expect(page.locator(".navigation-focus")).toHaveCount(0);
-  await page.goBack();
-  await expect(page.locator(".agent-detail")).toHaveCount(0);
-  await page.goForward();
+  await page.keyboard.press("Escape");
   await expect(page.locator(".agent-detail h1")).toHaveText(nextTitle!);
   await second.click();
   await page.locator(".role-project").click();

@@ -48,9 +48,10 @@ test("quota retains per-host cache through failed refresh, offline remount and r
   await page.reload();
   await expect(ring).toHaveText("64%");
   await page.setViewportSize({ width: 390, height: 844 });
-  await page
-    .getByRole("button", { name: "Open Streaming voice input Orc" })
-    .click();
+  // The desktop selection remains the same conversation after narrowing.
+  await expect(page.locator(".agent-detail h1")).toHaveText(
+    "Streaming voice input",
+  );
   const mobileRing = page.locator(".mobile-back .weekly-button strong");
   await expect(mobileRing).toHaveText("64%");
   await page.getByRole("button", { name: "‹ Sessions", exact: true }).click();
@@ -119,9 +120,10 @@ test("same-host requests do not overlap and a delayed host response cannot repla
   await page.goto("http://127.0.0.1:14319/");
   await expect.poll(() => hubCalls).toBe(1);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page
-    .getByRole("button", { name: "Open Streaming voice input Orc" })
-    .click();
+  // The desktop selection remains the same conversation after narrowing.
+  await expect(page.locator(".agent-detail h1")).toHaveText(
+    "Streaming voice input",
+  );
   await page.clock.fastForward(120000);
   expect(hubCalls).toBe(1);
   await expect(page.locator(".mobile-back .weekly-button strong")).toHaveText(

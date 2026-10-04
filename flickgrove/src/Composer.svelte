@@ -50,8 +50,8 @@
   <form class="composer" onsubmit={e => {e.preventDefault();void send();}}>
     <Textarea bind:ref={input} bind:value={text} aria-label={m.message_orc()} placeholder={m.message_placeholder()} disabled={stopping} rows={2} oncompositionstart={() => { composing = true; }} oncompositionend={() => { composing = false; }} onbeforeinput={beforeinput} onkeydown={keydown} />
     <div class="composer-bottom"><span>{m.skills_hint()}</span><div class="composer-actions">
-      {#if working || stopping}<Button variant="secondary" size="sm" aria-label={stopping ? m.stopping() : m.stop_orc()} disabled={!connected || stopping} onclick={onstop}><Square />{stopping ? m.stopping() : m.stop_orc()}</Button>{/if}
-      <Button size="icon-sm" aria-label={m.send_message()} title={m.send_message()} disabled={!text.trim() || !connected || stopping} type="submit"><ArrowUp /></Button>
+      {#if working || stopping}<Button variant="secondary" class="round-action" size="icon-sm" title={m.stop_orc()} aria-label={m.stop_orc()} disabled={!connected || stopping} onclick={onstop}><Square /></Button>{/if}
+      <Button class="round-action" size="icon-sm" aria-label={m.send_message()} title={m.send_message()} disabled={!text.trim() || !connected || stopping} type="submit"><ArrowUp /></Button>
     </div></div>
   </form>
 </div>

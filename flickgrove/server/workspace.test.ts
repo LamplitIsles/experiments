@@ -119,8 +119,16 @@ test("explicit answers include their question and duplicate submission never sen
       ],
     },
   });
-  await app.answer(a.id, "ask:0", "Blue");
-  await app.answer(a.id, "ask:0", "Blue");
+  await app.answerBatch(
+    a.id,
+    [{ questionId: "ask:0", answer: "Blue" }],
+    "answer-blue",
+  );
+  await app.answerBatch(
+    a.id,
+    [{ questionId: "ask:0", answer: "Blue" }],
+    "answer-blue",
+  );
   expect(runtime.inputs.map((i) => i.text)).toEqual([
     "Build it",
     "Question: Which color?\nAnswer: Blue",
@@ -240,10 +248,18 @@ test("a rejected question answer can retry and does not clear other unanswered q
   runtime.sendOverride = async () => {
     throw new DeliveryRejected("Unavailable model");
   };
-  await app.answer(a.id, "ask:0", "Yes");
+  await app.answerBatch(
+    a.id,
+    [{ questionId: "ask:0", answer: "Yes" }],
+    "answer-yes",
+  );
   expect(app.detail(a.id).questions[0].state).toBe("unanswered");
   runtime.sendOverride = undefined;
-  await app.answer(a.id, "ask:0", "Yes");
+  await app.answerBatch(
+    a.id,
+    [{ questionId: "ask:0", answer: "Yes" }],
+    "answer-yes",
+  );
   expect(app.detail(a.id).questions.map((q) => q.state)).toEqual([
     "answered",
     "unanswered",
@@ -400,10 +416,14 @@ test("lookup retains an uncertain answer without replaying or inventing native a
   runtime.sendOverride = async () => {
     throw new Error("Disconnected before confirmation");
   };
-  await app.answer(a.id, "ask:0", "Blue");
+  await app.answerBatch(
+    a.id,
+    [{ questionId: "ask:0", answer: "Blue" }],
+    "answer-blue",
+  );
   await expect(app.closeTree(a.id)).rejects.toThrow("unconfirmed");
   const count = runtime.inputs.length;
-  expect(app.lookup(a.id, "answer:ask:0").state).toBe("uncertain");
+  expect(app.lookup(a.id, "answer-blue").state).toBe("uncertain");
   expect(app.detail(a.id).questions[0].state).toBe("unanswered");
   expect(runtime.inputs).toHaveLength(count);
   runtime.emit(a.id, { type: "completed", turnId, status: "completed" });
@@ -1252,3 +1272,186 @@ async function untilClosed(app: Workspace, id: string) {
     await Bun.sleep(5);
   }
 }
+
+test("one immutable answer batch sends once, confirms original IDs, excludes new questions and validates before delivery", async () => {
+  const { app, runtime, directory } = fixture();
+  const a = await app.createOrc("alpha");
+  const other = await app.createOrc("alpha");
+  await app.send(a.id, "Start", "first");
+  const turnId = app.detail(a.id).turnId!;
+  const ask = (id: string, count: number) =>
+    runtime.emit(a.id, {
+      type: "item",
+      turnId,
+      item: {
+        id,
+        type: "agentMessage",
+        delivery: "async",
+        questions: Array.from({ length: count }, (_, i) => ({
+          question: `${id} ${i}`,
+        })),
+      },
+    });
+  ask("original", 2);
+  const answers = [
+    { questionId: "original:0", answer: "One" },
+    { questionId: "original:1", answer: "Two" },
+  ];
+  for (const invalid of [
+    [],
+    [answers[0], answers[0]],
+    [answers[0], { questionId: "wrong", answer: "No" }],
+    [answers[0], { ...answers[1], answer: " " }],
+  ])
+    await expect(app.answerBatch(a.id, invalid, "invalid")).rejects.toThrow();
+  await expect(app.answerBatch(other.id, answers, "foreign")).rejects.toThrow();
+  expect(runtime.inputs).toHaveLength(1);
+  const gate = Promise.withResolvers<void>();
+  runtime.sendOverride = async () => {
+    await gate.promise;
+    return turnId;
+  };
+  const submit = app.answerBatch(a.id, answers, "batch-one");
+  await Bun.sleep(10);
+  const pending = app
+    .detail(a.id)
+    .deliveries.find((d) => d.id === "batch-one")!;
+  expect(pending.status).toBe("sending");
+  expect(pending.answers).toEqual(answers);
+  expect(pending.questionIds).toEqual(["original:0", "original:1"]);
+  expect(
+    app.detail(a.id).questions.every((q) => q.state === "unanswered"),
+  ).toBe(true);
+  ask("later", 1);
+  gate.resolve();
+  await submit;
+  expect(runtime.inputs).toHaveLength(2);
+  expect(runtime.inputs[1].text).toBe(
+    "Question: original 0\nAnswer: One\n\nQuestion: original 1\nAnswer: Two",
+  );
+  expect(
+    app.detail(a.id).questions.map((q) => [q.id, q.state, q.answer]),
+  ).toEqual([
+    ["original:0", "answered", "One"],
+    ["original:1", "answered", "Two"],
+    ["later:0", "unanswered", undefined],
+  ]);
+  await app.answerBatch(a.id, answers, "batch-one");
+  await expect(
+    app.answerBatch(
+      a.id,
+      [{ ...answers[0], answer: "Changed" }, answers[1]],
+      "batch-one",
+    ),
+  ).rejects.toThrow("different content");
+  expect(app.lookup(a.id, "batch-one").state).toBe("accepted");
+  expect(runtime.inputs).toHaveLength(2);
+  app.dispose();
+  const resumedRuntime = new FakeRuntime();
+  const restored = new Workspace({
+    directory,
+    runtime: resumedRuntime,
+    projects: async () => fixtureProjects,
+  });
+  cleanups.push(() => restored.dispose());
+  expect(restored.lookup(a.id, "batch-one").state).toBe("accepted");
+  await restored.answerBatch(a.id, answers, "batch-one");
+  expect(resumedRuntime.inputs).toHaveLength(0);
+});
+
+test("rejected batch retries its persisted answers; unknown batch lookup and duplicate never resend", async () => {
+  const { app, runtime } = fixture();
+  const a = await app.createOrc("alpha");
+  await app.send(a.id, "Start", "first");
+  const turnId = app.detail(a.id).turnId!;
+  runtime.emit(a.id, {
+    type: "item",
+    turnId,
+    item: {
+      id: "batch",
+      type: "agentMessage",
+      delivery: "async",
+      questions: [{ question: "First?" }, { question: "Second?" }],
+    },
+  });
+  const answers = [
+    { questionId: "batch:0", answer: "Yes" },
+    { questionId: "batch:1", answer: "No" },
+  ];
+  runtime.sendOverride = async () => {
+    throw new DeliveryRejected("Synthetic rejection");
+  };
+  await app.answerBatch(a.id, answers, "rejected-batch");
+  expect(app.lookup(a.id, "rejected-batch").state).toBe("rejected");
+  expect(
+    app
+      .detail(a.id)
+      .questions.every((q) => q.state === "unanswered" && !q.answer),
+  ).toBe(true);
+  runtime.sendOverride = undefined;
+  await app.retryDelivery(a.id, "rejected-batch");
+  expect(app.detail(a.id).questions.map((q) => q.answer)).toEqual([
+    "Yes",
+    "No",
+  ]);
+  expect(runtime.inputs).toHaveLength(3);
+  await expect(
+    app.answerBatch(a.id, answers, "already-answered"),
+  ).rejects.toThrow("remain unanswered");
+  runtime.emit(a.id, {
+    type: "item",
+    turnId,
+    item: {
+      id: "next",
+      type: "agentMessage",
+      delivery: "async",
+      questions: [{ question: "Third?" }],
+    },
+  });
+  const next = [{ questionId: "next:0", answer: "Unknown" }];
+  runtime.sendOverride = async () => {
+    throw new Error("Synthetic unknown acceptance");
+  };
+  await app.answerBatch(a.id, next, "unknown-batch");
+  const count = runtime.inputs.length;
+  await app.answerBatch(a.id, next, "unknown-batch");
+  await expect(app.answerBatch(a.id, next, "different-batch")).rejects.toThrow(
+    "original answer batch",
+  );
+  await expect(app.retryDelivery(a.id, "unknown-batch")).rejects.toThrow(
+    "rejected",
+  );
+  expect(app.lookup(a.id, "unknown-batch").state).toBe("uncertain");
+  expect(app.lookup(a.id, "never-submitted").state).toBe("missing");
+  expect(runtime.inputs).toHaveLength(count);
+  expect(app.detail(a.id).questions.at(-1)?.state).toBe("unanswered");
+});
+
+test("a rejected answer retry validates originals already accepted by another operation", async () => {
+  const { app, runtime } = fixture();
+  const a = await app.createOrc("alpha");
+  await app.send(a.id, "Start", "start");
+  const turnId = app.detail(a.id).turnId!;
+  runtime.emit(a.id, {
+    type: "item",
+    turnId,
+    item: {
+      id: "original",
+      type: "agentMessage",
+      delivery: "async",
+      questions: [{ question: "Choice?" }],
+    },
+  });
+  const answers = [{ questionId: "original:0", answer: "Yes" }];
+  runtime.sendOverride = async () => {
+    throw new DeliveryRejected("Rejected");
+  };
+  await app.answerBatch(a.id, answers, "failed");
+  runtime.sendOverride = undefined;
+  await app.answerBatch(a.id, answers, "accepted-elsewhere");
+  const count = runtime.inputs.length;
+  await expect(app.retryDelivery(a.id, "failed")).rejects.toThrow(
+    "remain unanswered",
+  );
+  expect(runtime.inputs).toHaveLength(count);
+});

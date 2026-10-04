@@ -1,6 +1,6 @@
 import { z } from "zod";
-import type { Detail } from "./contracts";
-import { receiptSchema, type Receipt } from "./chord-contract";
+import type { Detail, Answer } from "./contracts";
+import { answerSchema, receiptSchema, type Receipt } from "./chord-contract";
 const prefix = `flickgrove/${location.origin}/outgoing/`;
 const key = (o: Outgoing) =>
   `${prefix}${encodeURIComponent(o.agentId)}/${encodeURIComponent(o.id)}`;
@@ -11,6 +11,7 @@ const entry = z.object({
   at: z.number(),
   status: z.enum(["sending", "sent", "failed", "uncertain"]),
   error: z.string().optional(),
+  answers: z.array(answerSchema).optional(),
 });
 export type Outgoing = z.infer<typeof entry>;
 const saved: Outgoing[] = [];
@@ -41,13 +42,33 @@ function persist(o: Outgoing) {
   }
   localStorage.setItem(key(o), JSON.stringify(o));
 }
-export function addOutgoing(agentId: string, text: string, id: string) {
+export function addOutgoing(
+  agentId: string,
+  text: string,
+  id: string,
+  answers?: Answer[],
+) {
+  const previous = outgoing.entries.find(
+    (o) => o.agentId === agentId && o.id === id,
+  );
+  if (previous) {
+    if (
+      previous.text !== text ||
+      JSON.stringify(previous.answers) !== JSON.stringify(answers)
+    )
+      throw new Error("Operation ID is bound to different content");
+    previous.status = "sending";
+    previous.error = undefined;
+    persist(previous);
+    return;
+  }
   const o: Outgoing = {
     agentId,
     text,
     id,
     at: Date.now(),
     status: "sending",
+    ...(answers ? { answers: structuredClone(answers) } : {}),
   };
   outgoing.entries.push(o);
   persist(o);
@@ -108,14 +129,26 @@ export function withOutgoing(detail: Detail): Detail {
   );
   return {
     ...detail,
+    questions: detail.questions.map((q) => {
+      const confirmed = local.find(
+        (o) =>
+          o.status === "sent" && o.answers?.some((a) => a.questionId === q.id),
+      );
+      const answer = confirmed?.answers?.find((a) => a.questionId === q.id);
+      return answer
+        ? { ...q, state: "answered" as const, answer: answer.answer }
+        : q;
+    }),
     messages: [
       ...detail.messages,
-      ...local.map((o) => ({
-        id: o.id,
-        text: o.text,
-        role: "user" as const,
-        at: o.at,
-      })),
+      ...local
+        .filter((o) => !o.answers)
+        .map((o) => ({
+          id: o.id,
+          text: o.text,
+          role: "user" as const,
+          at: o.at,
+        })),
       ...unobserved.map((d) => ({
         id: d.id,
         text: d.text,
@@ -129,8 +162,9 @@ export function withOutgoing(detail: Detail): Detail {
         id: o.id,
         text: o.text,
         status: o.status,
-        source: "user" as const,
-        questionIds: [],
+        source: o.answers ? ("question" as const) : ("user" as const),
+        questionIds: o.answers?.map((a) => a.questionId) ?? [],
+        ...(o.answers ? { answers: o.answers } : {}),
         error: o.error,
         at: o.at,
       })),
