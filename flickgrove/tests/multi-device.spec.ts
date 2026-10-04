@@ -386,7 +386,7 @@ test("mobile supplementary forms, Stop and quota stay operable within 390 pixels
   await expect(
     page
       .locator(".weekly-source dd")
-      .getByText("fixture-mac-account", { exact: true }),
+      .getByText("fixture-nuc-account", { exact: true }),
   ).toBeVisible();
   await page
     .locator(".weekly-popover")
@@ -463,4 +463,61 @@ test("compact detail uses the full height and keeps metadata above the title", a
     page.getByRole("button", { name: "Edit host Neil’s Mac" }),
   ).toBeVisible();
   await capture(page, "compact-settings-hosts");
+});
+
+test("browser access disconnect retains Hub-known host state without a host outage notice", async ({
+  page,
+  request,
+}) => {
+  await request.post("/fixture/reset", { data: {} });
+  let disconnected = false;
+  let cut = () => {};
+  await page.routeWebSocket("**/api/socket", (ws) => {
+    if (disconnected) {
+      ws.close();
+      return;
+    }
+    ws.connectToServer();
+    cut = () => ws.close({ code: 1001, reason: "Synthetic access disconnect" });
+  });
+  await selected(page);
+  const before = await (await request.get("/api/snapshot")).json();
+  expect(
+    before.hosts.every((host: { connected: boolean }) => host.connected),
+  ).toBe(true);
+  disconnected = true;
+  cut();
+  await expect(page.locator(".connection-banner")).toContainText(
+    "Connection lost",
+  );
+  await expect(page.locator(".host-outage")).toHaveCount(0);
+  await expect(page.locator(".agent-detail h1")).toHaveText(
+    "Streaming voice input",
+  );
+  await expect(
+    page.getByRole("button", { name: "Send message", exact: true }),
+  ).toBeDisabled();
+  const after = await (await request.get("/api/snapshot")).json();
+  expect(
+    after.hosts.map((host: { id: string; connected: boolean }) => [
+      host.id,
+      host.connected,
+    ]),
+  ).toEqual(
+    before.hosts.map((host: { id: string; connected: boolean }) => [
+      host.id,
+      host.connected,
+    ]),
+  );
+  expect(
+    after.agents.map((agent: { id: string; state: string }) => [
+      agent.id,
+      agent.state,
+    ]),
+  ).toEqual(
+    before.agents.map((agent: { id: string; state: string }) => [
+      agent.id,
+      agent.state,
+    ]),
+  );
 });

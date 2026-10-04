@@ -44,9 +44,7 @@ export function requestWeekly(hostId?: string): Promise<WeeklyUsage> {
   const key = weeklyKey(hostId);
   const existing = requests.get(key);
   if (existing) return existing;
-  const request = api<WeeklyUsage>(
-    `/weekly${hostId ? `?host=${encodeURIComponent(hostId)}` : ""}`,
-  );
+  const request = api<WeeklyUsage>("/weekly");
   requests.set(key, request);
   void request
     .finally(() => {

@@ -15,9 +15,11 @@ export async function invoke(
     case "projects":
       return await app.projects(parse(member).host);
     case "models":
-      return await app.models(parse(member).host);
+      parse(member);
+      return await app.models();
     case "weekly":
-      return await app.weekly(parse(member).host);
+      parse(member);
+      return await app.weekly();
     case "history": {
       const p = parse(member);
       return await app.history(p.project, p.query, p.cursor, p.host);

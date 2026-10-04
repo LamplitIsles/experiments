@@ -270,7 +270,7 @@ export class Workspace {
       return this.detail(id);
     });
   }
-  async weekly(_hostId?: string) {
+  async weekly() {
     try {
       return await this.options.runtime.weekly();
     } catch {
@@ -303,7 +303,7 @@ export class Workspace {
     }
     return this.detail(id);
   }
-  models(_hostId?: string) {
+  models() {
     return this.options.runtime.models();
   }
   projects(_hostId?: string) {

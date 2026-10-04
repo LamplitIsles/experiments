@@ -79,7 +79,7 @@ test("history searches and resumes on the selected execution host through authen
   expect(results.sessions[0].agentId).toBe(agent.id);
   expect(peer.runtime.inputs).toHaveLength(0);
 });
-function fixture(hub: boolean, collision = false) {
+function fixture(hub: boolean, collision = false, probe = false) {
   const directory = mkdtempSync(join(tmpdir(), "grove-host-test-"));
   if (collision) {
     // Own synthetic durable state, with equal local IDs on two hosts.
@@ -122,10 +122,13 @@ function fixture(hub: boolean, collision = false) {
     origin: () => origin,
 
     timeoutMs: 150,
+    ...(probe ? { probeIntervalMs: 20, probeTimeoutMs: 100 } : {}),
   });
   const handler = createHandler(app, { service, origin: () => origin });
   let drop = false;
   let loseResponse: string | null = null;
+  let dropSelect = false;
+  const selectedResponses = new Set<string>();
   const responseIds = new Set<string>();
   const serverOptions = {
     websocket: {
@@ -136,6 +139,11 @@ function fixture(hub: boolean, collision = false) {
             if (key === "send")
               return (raw: string) => {
                 const frame = JSON.parse(raw);
+                if (
+                  frame.type === "result" &&
+                  selectedResponses.delete(frame.id)
+                )
+                  return 1;
                 if (frame.type === "result" && responseIds.has(frame.id)) {
                   responseIds.delete(frame.id);
                   target.close();
@@ -155,6 +163,8 @@ function fixture(hub: boolean, collision = false) {
       ) {
         if (typeof raw === "string") {
           const frame = JSON.parse(raw);
+          if (dropSelect && frame.call?.member === "select")
+            selectedResponses.add(frame.id);
           if (
             loseResponse &&
             frame.call?.member ===
@@ -239,6 +249,9 @@ function fixture(hub: boolean, collision = false) {
     },
     loseResponse: (path = "/messages") => {
       loseResponse = path;
+    },
+    setDropSelect: (value: boolean) => {
+      dropSelect = value;
     },
     count: () => runtime.inputs.length,
   };
@@ -468,9 +481,9 @@ test("two-host collision routing, shared defaults, simultaneous answers, outage 
   expect(
     ((await fetched.json()) as Snapshot).agents.some((a) => a.id === remoteId),
   ).toBe(true);
-  const quota = await hub.service.weekly(peer.service.identity.id);
+  const quota = await hub.service.weekly();
   expect(quota.remaining).toBe(72);
-  expect(quota.source).toBe("Mac");
+  expect(quota.source).toBe("NUC");
 });
 test("unknown mutation response is not replayed; rejected close preserves connection and defaults capability is enforced", async () => {
   const hub = fixture(true);
@@ -656,8 +669,8 @@ test("dedicated Close reaches the execution owner, preserves guards and never se
   ).toBe(401);
 });
 
-test("slow native admission times out then reconnects for receipt lookup without replay or host interference", async () => {
-  const hub = fixture(true),
+test("slow native admission times out but stays connected for receipt lookup without replay or host interference", async () => {
+  const hub = fixture(true, false, true),
     peer = fixture(false),
     other = fixture(false);
   for (const host of [peer, other])
@@ -673,6 +686,10 @@ test("slow native admission times out then reconnects for receipt lookup without
   await expect(
     hub.service.send(a.id, "Held native input", "slow-once"),
   ).rejects.toThrow("Outcome unknown");
+  expect(
+    hub.service.snapshot().hosts?.find((h) => h.id === peer.service.identity.id)
+      ?.connected,
+  ).toBe(true);
   expect(peer.count()).toBe(1);
   await hub.service.send(b.id, "Independent host", "other-once");
   expect(other.count()).toBe(1);
@@ -720,4 +737,139 @@ test("a selected remote conversation disappearing is a rejected detail read, not
       ?.connected,
   ).toBe(true);
   unobserve();
+});
+
+test("quota and UI catalogue come only from Hub, including while a peer is offline", async () => {
+  const hub = fixture(true),
+    peer = fixture(false);
+  await hub.service.register({
+    name: "Mac",
+    url: peer.origin,
+    credential: peer.service.credential,
+  });
+  peer.runtime.weekly = async () => {
+    throw new Error("Peer quota must not be queried");
+  };
+  // Peer still validates its own capabilities when creating or applying defaults.
+  peer.runtime.models = async () => {
+    throw new Error("Peer catalogue must not be queried by UI");
+  };
+  const quota = await hub.service.weekly();
+  expect(quota.remaining).toBe(72);
+  expect(quota.hostId).toBe(hub.service.identity.id);
+  expect(quota.source).toBe("NUC");
+  expect(await hub.service.models()).toEqual(await hub.app.models());
+  peer.setDrop(true);
+  await until(
+    () =>
+      !hub.service
+        .snapshot()
+        .hosts?.find((h) => h.id === peer.service.identity.id)?.connected,
+  );
+  expect((await hub.service.weekly()).remaining).toBe(72);
+  expect(await hub.service.models()).toEqual(await hub.app.models());
+});
+
+test("Hub detects a silent transport blackhole via Pong and reconnects only that host", async () => {
+  const { createServer, connect } = await import("node:net");
+  const hub = fixture(true, false, true),
+    peer = fixture(false),
+    other = fixture(false);
+  let blackhole = false;
+  const sockets = new Set<import("node:net").Socket>();
+  const relay = createServer((incoming) => {
+    const outgoing = connect(Number(new URL(peer.origin).port), "127.0.0.1");
+    sockets.add(incoming);
+    sockets.add(outgoing);
+    let headers: Buffer | undefined = Buffer.alloc(0);
+    incoming.on("data", (data) => {
+      if (blackhole) return;
+      if (headers !== undefined) {
+        headers = Buffer.concat([
+          headers,
+          typeof data === "string" ? Buffer.from(data) : data,
+        ]);
+        const end = headers.indexOf("\r\n\r\n");
+        if (end < 0) return;
+        const head = headers
+          .subarray(0, end)
+          .toString()
+          .replace(/^Host:.*$/im, `Host: ${new URL(peer.origin).host}`);
+        outgoing.write(
+          Buffer.concat([
+            Buffer.from(head + "\r\n\r\n"),
+            headers.subarray(end + 4),
+          ]),
+        );
+        headers = undefined;
+      } else outgoing.write(data);
+    });
+    outgoing.on("data", (data) => {
+      if (!blackhole) incoming.write(data);
+    });
+    incoming.on("error", () => outgoing.destroy());
+    outgoing.on("error", () => incoming.destroy());
+    incoming.on("close", () => {
+      sockets.delete(incoming);
+      outgoing.destroy();
+    });
+    outgoing.on("close", () => {
+      sockets.delete(outgoing);
+      incoming.destroy();
+    });
+  });
+  await new Promise<void>((resolve) => relay.listen(0, "127.0.0.1", resolve));
+  cleanup.push(() => {
+    for (const socket of sockets) socket.destroy();
+    relay.close();
+  });
+  const url = `http://127.0.0.1:${(relay.address() as import("node:net").AddressInfo).port}`;
+  await hub.service.register({
+    name: "Blackhole peer",
+    url,
+    credential: peer.service.credential,
+  });
+  await hub.service.register({
+    name: "Healthy peer",
+    url: other.origin,
+    credential: other.service.credential,
+  });
+  const connected = (id: string) =>
+    hub.service.snapshot().hosts?.find((h) => h.id === id)?.connected;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(connected(peer.service.identity.id)).toBe(true);
+  blackhole = true;
+  await until(() => connected(peer.service.identity.id) === false);
+  expect(connected(other.service.identity.id)).toBe(true);
+  blackhole = false;
+  await until(() => connected(peer.service.identity.id) === true);
+  expect(connected(other.service.identity.id)).toBe(true);
+});
+
+test("lost initial and reconnect selection results leave verified Pong-responsive hosts available", async () => {
+  const hub = fixture(true, false, true),
+    peer = fixture(false);
+  peer.setDropSelect(true);
+  await hub.service.register({
+    name: "Mac",
+    url: peer.origin,
+    credential: peer.service.credential,
+  });
+  const connected = () =>
+    hub.service.snapshot().hosts?.find((h) => h.id === peer.service.identity.id)
+      ?.connected;
+  expect(connected()).toBe(true);
+  const agent = await hub.service.createOrc("alpha", peer.service.identity.id);
+  expect(agent.hostId).toBe(peer.service.identity.id);
+  peer.setDrop(true);
+  await until(() => connected() === false);
+  peer.setDrop(false);
+  await until(() => connected() === true);
+  // Wait beyond the fixture's business deadline; native probes continue meanwhile.
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  expect(connected()).toBe(true);
+  expect(await hub.service.lookup(agent.id, "never-submitted")).toMatchObject({
+    state: "missing",
+  });
+  expect(peer.count()).toBe(0);
 });

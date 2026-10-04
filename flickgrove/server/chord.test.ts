@@ -63,6 +63,7 @@ function fixture(hub = true) {
     async client(
       changed: (view: View) => void = () => {},
       offline: () => void = () => {},
+      timeoutMs = 30_000,
     ) {
       const client = await openGrove(
         socketWithHeaders(origin.replace("http:", "ws:") + "/api/socket", {
@@ -70,6 +71,7 @@ function fixture(hub = true) {
         }),
         changed,
         offline,
+        timeoutMs,
       );
       cleanups.push(() => client.close());
       return client;
@@ -508,4 +510,52 @@ test("isolated WebSocket proxy preserves peer authorization and forwarded Chord 
       () => {},
     ),
   ).rejects.toThrow();
+});
+
+test("slow read and late result leave the socket and other calls alive", async () => {
+  const f = fixture();
+  let disconnected = 0;
+  const client = await f.client(
+    () => {},
+    () => disconnected++,
+    80,
+  );
+  const hold =
+    Promise.withResolvers<Awaited<ReturnType<FakeRuntime["weekly"]>>>();
+  f.runtime.weekly = () => hold.promise;
+  await expect(client.call("weekly", {})).rejects.toThrow("Response timed out");
+  expect(disconnected).toBe(0);
+  expect(await client.call<unknown>("projects", {})).toEqual(fixtureProjects);
+  hold.resolve({ remaining: 42, fetchedAt: Date.now() });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(await client.call<unknown>("projects", {})).toEqual(fixtureProjects);
+  expect(disconnected).toBe(0);
+});
+
+test("timed out mutation is reconciled by receipt without replay or disconnect", async () => {
+  const f = fixture();
+  const agent = await f.app.createOrc("alpha");
+  const id = qualify(f.service.identity.id, agent.id);
+  let disconnected = 0;
+  const client = await f.client(
+    () => {},
+    () => disconnected++,
+    80,
+  );
+  const hold = Promise.withResolvers<string>();
+  f.runtime.sendOverride = () => hold.promise;
+  await expect(
+    client.call("send", { id, text: "once", operationId: "slow-once" }),
+  ).rejects.toThrow("Outcome unknown");
+  expect(f.runtime.inputs).toHaveLength(1);
+  expect(disconnected).toBe(0);
+  hold.resolve("fixture-turn");
+  await until(() => f.app.detail(agent.id).deliveries[0]?.status === "sent");
+  const receipt = await client.call<Receipt>("lookup", {
+    id,
+    operationId: "slow-once",
+  });
+  expect(receipt.state).toBe("accepted");
+  expect(f.runtime.inputs).toHaveLength(1);
+  expect(disconnected).toBe(0);
 });

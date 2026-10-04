@@ -16,6 +16,7 @@ import type {
   WeeklyUsage,
 } from "../src/contracts";
 import type { Workspace } from "./workspace";
+import { monitorHost } from "./host-liveness";
 
 import {
   openGrove,
@@ -110,6 +111,8 @@ export class HostService {
       name?: string;
       origin: () => string;
       timeoutMs?: number;
+      probeIntervalMs?: number;
+      probeTimeoutMs?: number;
     },
   ) {
     mkdirSync(options.directory, { recursive: true, mode: 0o700 });
@@ -238,8 +241,22 @@ export class HostService {
       },
     });
     current.socket = socket;
+    socket.addEventListener(
+      "close",
+      (event) => {
+        if (!this.disposed && generation === current.generation)
+          console.warn("[grove] host socket closed", {
+            hostId: peer.id,
+            code: event.code,
+          });
+      },
+      { once: true },
+    );
+    let offlineReported = false;
     const offline = () => {
-      if (this.disposed || generation !== current.generation) return;
+      if (this.disposed || generation !== current.generation || offlineReported)
+        return;
+      offlineReported = true;
       current.client = undefined;
       const cache = this.caches.get(peer.id);
       if (cache) {
@@ -261,7 +278,29 @@ export class HostService {
           if (current.client) this.adoptPeer(peer, value);
         },
         offline,
-        this.options.timeoutMs ?? 4000,
+        this.options.timeoutMs ?? 30_000,
+        (member) =>
+          console.warn("[grove] host request timed out", {
+            hostId: peer.id,
+            member,
+          }),
+      );
+      monitorHost(
+        socket,
+        () => {
+          console.warn("[grove] host pong timed out", { hostId: peer.id });
+          offline();
+        },
+        this.options.probeIntervalMs,
+        this.options.probeTimeoutMs,
+        () => {
+          if (generation !== current.generation || this.disposed) return;
+          const cache = this.caches.get(peer.id);
+          if (cache) {
+            cache.host.lastSeen = Date.now();
+            this.publish();
+          }
+        },
       );
       const identity = await client.call<{ id: string; role: string }>(
         "identity",
@@ -277,7 +316,8 @@ export class HostService {
       }
       current.client = client;
       if (latest) this.adoptPeer(peer, latest);
-      await this.selectPeer(peer);
+      // Selection is a business request; a lost result must not tear down a verified socket.
+      await this.selectPeer(peer).catch(() => {});
       const cache = this.caches.get(peer.id);
       if (cache) void this.sync(peer, cache).then(() => this.publish());
     })()
@@ -501,11 +541,8 @@ export class HostService {
       "/projects",
     );
   }
-  async models(hostId?: string) {
-    const p = this.host(hostId);
-    if (!p) return this.workspace.models();
-    this.available(p);
-    return this.request<Awaited<ReturnType<Workspace["models"]>>>(p, "/models");
+  async models() {
+    return this.workspace.models();
   }
   async history(
     alias: string,
@@ -613,7 +650,7 @@ export class HostService {
       return qualified(c.host, agent);
     } catch (error) {
       if (error instanceof RequestRejected) throw error;
-      throw this.unknown(c);
+      throw this.unknown();
     }
   }
   private configure<T>(work: () => Promise<T>): Promise<T> {
@@ -663,7 +700,7 @@ export class HostService {
       return qualified(c.host, a);
     } catch (error) {
       if (error instanceof RequestRejected) throw error;
-      throw this.unknown(c);
+      throw this.unknown();
     }
   }
   async detail(id: string) {
@@ -689,11 +726,9 @@ export class HostService {
       return qualified(c.host, detail);
     } catch (error) {
       if (error instanceof RequestRejected) throw error;
-      c.host.connected = false;
-      this.publish();
       const detail = c.details.get(r.id);
       if (detail) return qualified(c.host, detail);
-      throw new Error("Host disconnected");
+      throw error;
     }
   }
   async skills(id: string) {
@@ -728,14 +763,12 @@ export class HostService {
       return this.result(c.host, result);
     } catch (error) {
       if (error instanceof RequestRejected) throw error;
-      throw this.unknown(c);
+      throw this.unknown();
     }
   }
-  private unknown(cache: Cache) {
-    cache.host.connected = false;
-    this.publish();
+  private unknown() {
     return new Error(
-      "Outcome unknown. Reconnect and inspect the workspace before another action; this request will not be replayed.",
+      "Outcome unknown. Inspect the workspace or look up the operation receipt before another action; this request will not be replayed.",
     );
   }
   private result(host: Host, result: unknown) {
@@ -788,30 +821,12 @@ export class HostService {
       this.workspace.stop(id, turnId),
     );
   }
-  async weekly(hostId?: string): Promise<WeeklyUsage> {
-    const p = this.host(hostId);
-    if (!p)
-      return {
-        ...(await this.workspace.weekly()),
-        hostId: this.identity.id,
-        source: this.local().name,
-      };
-    const c = this.caches.get(p.id)!;
-    try {
-      this.available(p);
-      return {
-        ...(await this.request<WeeklyUsage>(p, "/weekly")),
-        hostId: p.id,
-        source: c.host.name,
-      };
-    } catch {
-      return {
-        remaining: null,
-        hostId: p.id,
-        source: c.host.name,
-        fetchedAt: Date.now(),
-      };
-    }
+  async weekly(): Promise<WeeklyUsage> {
+    return {
+      ...(await this.workspace.weekly()),
+      hostId: this.identity.id,
+      source: this.local().name,
+    };
   }
   dispose() {
     this.disposed = true;

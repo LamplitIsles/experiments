@@ -23,8 +23,8 @@ export const inputs = {
   select: z.object({ ids: z.array(id).max(100) }),
   identity: z.object({}),
   projects: z.object({ host: id.optional() }),
-  models: z.object({ host: id.optional() }),
-  weekly: z.object({ host: id.optional() }),
+  models: z.object({}).strict(),
+  weekly: z.object({}).strict(),
   history: z.object({
     project: id,
     query: z.string(),
@@ -193,8 +193,8 @@ export function routeCall(
   const simple: Record<string, [Method, unknown]> = {
     "/identity": ["identity", {}],
     "/projects": ["projects", { host }],
-    "/models": ["models", { host }],
-    "/weekly": ["weekly", { host }],
+    "/models": ["models", {}],
+    "/weekly": ["weekly", {}],
     "/settings": ["saveSettings", body],
     "/hosts": ["register", body],
     "/agents": ["createOrc", { ...(body as object), host }],

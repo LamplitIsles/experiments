@@ -21,3 +21,9 @@ Stop interrupts only the observed current Orc turn through official SDK interrup
 ## Consequences
 
 The Hub is an intentional unified-access availability dependency, with no automatic replacement. Remote conversations are not durable replicas on Hub. Operators configure origins/listeners and register authenticated service identities over already established HTTP reachability. Unknown mutation acceptance requires owner-side receipt lookup and may remain unknown, never retry-on-reconnect. Mobile presents a list and full conversation while desktop keeps a compact session tree beside detail. Each execution host shares one Grove-managed native app-server across its threads and catalog; native unsubscribe releases one thread and a shared disconnect affects its handles together. System daemon ownership is outside this decision. Deployment is separate from this implementation and is not performed by the PR.
+
+## Unified account and host liveness (spec #3277)
+
+This round assumes all execution hosts share the Hub’s Codex account. Hub owns UI model and quota queries; each execution owner continues validating its local model/effort/Fast capabilities. Existing sessions retain captured parameters.
+
+Host liveness is independent of business request completion. Hub sends RFC 6455 Ping and matches Pong on each native execution socket. A business deadline expires only its request; delayed results are ignored, and mutation outcomes remain unknown until the existing operation receipt resolves them. Only socket loss, failed liveness or protocol/backpressure failure closes transport. The browser displays Hub-known host state and retains it when access disconnects. Reconnect affects one host and never replays a mutation.

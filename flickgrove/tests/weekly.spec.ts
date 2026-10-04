@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("quota retains per-host cache through failed refresh, offline remount and reload, then successful refresh updates", async ({
+test("quota retains Hub cache through failed refresh, offline remount and reload, then successful refresh updates", async ({
   page,
   request,
 }) => {
@@ -13,8 +13,8 @@ test("quota retains per-host cache through failed refresh, offline remount and r
   let remaining: number | null = 64;
   let resetsAt: number | undefined = 1791158400;
   await page.route("**/api/weekly*", (route) => {
-    const hostId =
-      new URL(route.request().url()).searchParams.get("host") ?? undefined;
+    expect(new URL(route.request().url()).searchParams.has("host")).toBe(false);
+    const hostId = info.hub;
     return route.fulfill({
       status: failure ? 503 : 200,
       contentType: "application/json",
@@ -59,7 +59,7 @@ test("quota retains per-host cache through failed refresh, offline remount and r
   await page
     .getByRole("button", { name: "Open Reader performance Orc" })
     .click();
-  await expect(mobileRing).toHaveText("23%");
+  await expect(mobileRing).toHaveText("64%");
   await request.post("http://127.0.0.1:14319/fixture/change", {
     data: { outage: true },
   });
@@ -69,9 +69,9 @@ test("quota retains per-host cache through failed refresh, offline remount and r
   await expect(
     page.getByRole("textbox", { name: "Message Orc" }),
   ).toBeEnabled();
-  await expect(mobileRing).toHaveText("23%");
+  await expect(mobileRing).toHaveText("64%");
   await page.reload();
-  await expect(mobileRing).toHaveText("23%");
+  await expect(mobileRing).toHaveText("64%");
   await page.getByRole("button", { name: "‹ Sessions", exact: true }).click();
   await expect(ring).toHaveText("64%");
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -88,7 +88,7 @@ test("quota retains per-host cache through failed refresh, offline remount and r
   await expect(page.locator(".weekly-source")).not.toContainText("Resets");
 });
 
-test("same-host requests do not overlap and a delayed host response cannot replace the selected host", async ({
+test("Hub requests do not overlap and the same quota follows every selected host", async ({
   page,
   request,
 }) => {
@@ -101,8 +101,8 @@ test("same-host requests do not overlap and a delayed host response cannot repla
   const gate = new Promise<void>((resolve) => (release = resolve));
   let hubCalls = 0;
   await page.route("**/api/weekly*", async (route) => {
-    const hostId =
-      new URL(route.request().url()).searchParams.get("host") ?? undefined;
+    expect(new URL(route.request().url()).searchParams.has("host")).toBe(false);
+    const hostId = info.hub;
     if (hostId === info.hub) {
       hubCalls++;
       await gate;
@@ -134,16 +134,16 @@ test("same-host requests do not overlap and a delayed host response cannot repla
     .getByRole("button", { name: "Open Reader performance Orc" })
     .click();
   await expect(page.locator(".mobile-back .weekly-button strong")).toHaveText(
-    "26%",
+    "—",
   );
   release();
   await page
     .getByRole("button", { name: "Weekly remaining", exact: true })
     .click();
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(page.locator(".weekly-number strong")).toHaveText("26%");
-  await expect(page.locator(".weekly-source")).toContainText(info.peer);
-  await expect(page.locator(".weekly-source")).not.toContainText(info.hub);
+  await expect(page.locator(".weekly-number strong")).toHaveText("91%");
+  await expect(page.locator(".weekly-source")).toContainText(info.hub);
+  await expect(page.locator(".weekly-source")).not.toContainText(info.peer);
 });
 
 test("60-second polling updates the cached quota without a real-minute wait", async ({
@@ -152,10 +152,13 @@ test("60-second polling updates the cached quota without a real-minute wait", as
 }) => {
   await request.post("http://127.0.0.1:14319/fixture/reset", { data: {} });
   await page.clock.install();
+  const info = await (
+    await request.get("http://127.0.0.1:14319/fixture/info")
+  ).json();
   let remaining = 58;
   await page.route("**/api/weekly*", (route) => {
-    const hostId =
-      new URL(route.request().url()).searchParams.get("host") ?? undefined;
+    expect(new URL(route.request().url()).searchParams.has("host")).toBe(false);
+    const hostId = info.hub;
     return route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({ hostId, remaining, fetchedAt: 1234567890000 }),

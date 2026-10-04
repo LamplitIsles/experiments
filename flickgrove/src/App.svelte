@@ -63,7 +63,7 @@
   $effect(() => { localStorage.setItem(`${storagePrefix}/host-filter`, hostFilter); });
   async function chooseHost(id: string) {
     createHost = id; projectId = ""; projects = []; const seq = ++catalogSequence;
-    try { const [registered, catalog] = await Promise.all([api<Project[]>(`/projects?host=${encodeURIComponent(id)}`), api<Model[]>(`/models?host=${encodeURIComponent(id)}`)]); if (seq === catalogSequence) { projects = registered; models = catalog; projectId = registered[0]?.alias ?? ""; } }
+    try { const [registered, catalog] = await Promise.all([api<Project[]>(`/projects?host=${encodeURIComponent(id)}`), api<Model[]>("/models")]); if (seq === catalogSequence) { projects = registered; models = catalog; projectId = registered[0]?.alias ?? ""; } }
     catch(e) { if (seq === catalogSequence) error = e instanceof Error ? e.message : m.load_failure(); }
   }
   const roots = $derived(snapshot.agents.filter(a => a.role === "orc"));
@@ -335,14 +335,14 @@
 <Toaster theme="dark" position="bottom-center" />
 <header class="app-header" class:has-selection={!!selectedId}><strong>{m.product()}</strong><span class="session-count">{m.session_count({ count: roots.length })}</span>
   <HostFilter {hosts} bind:value={hostFilter} />
-  <div class="header-actions"><Weekly hostId={detail?.hostId ?? snapshot.hubId} connected={connected && (selectedHost?.connected ?? true)} /><Button variant="ghost" size="icon-sm" aria-label={m.settings()} disabled={!connected} onclick={() => show("settings")}><SettingsIcon /></Button></div>
+  <div class="header-actions"><Weekly hostId={snapshot.hubId} {connected} /><Button variant="ghost" size="icon-sm" aria-label={m.settings()} disabled={!connected} onclick={() => show("settings")}><SettingsIcon /></Button></div>
 </header>
 <main class:with-detail={!!selectedId}>
   <SessionList bind:this={sessionList} agents={visibleAgents} {hosts} {selectedId} {loading} {connected} {closingId} closeError={selectedId === closeError?.id ? null : closeError} onclosetree={closeTree} onopen={open} onnew={() => show("new")} />
   {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !detail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
   {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
   {#if error && !modal && !detail}<div class="app-error" role="alert"><span>{error}</span><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => error = ""}><X /></Button></div>{/if}
-  {#if detail && selectedId}{#key detail.id}<AgentDetail detail={shownDetail!} {owner} {skills} {now} connected={hostConnected} onstop={stop} onrename={rename} onrefresh={load} actionError={error} closeError={closeError?.id === detail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} onlookup={operationId => selectedId ? lookup(selectedId,operationId) : Promise.resolve()} />{/key}{/if}
+  {#if detail && selectedId}{#key detail.id}<AgentDetail detail={shownDetail!} {owner} {skills} {now} connected={hostConnected} hubId={snapshot.hubId} hubConnected={connected} onstop={stop} onrename={rename} onrefresh={load} actionError={error} closeError={closeError?.id === detail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} onlookup={operationId => selectedId ? lookup(selectedId,operationId) : Promise.resolve()} />{/key}{/if}
 </main>
 
 <Dialog.Root open={modalOpen} onOpenChange={value => { if (!value && modal) void closeModal(); }}>

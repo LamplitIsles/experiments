@@ -2,7 +2,6 @@
 // See licenses/lamplit-app-Apache-2.0.txt. Grove owns this transport and domain service.
 import {
   createRemoteServiceBinding,
-  createServiceCatalogueCall,
   createServiceSubscribeCall,
   createServiceUnsubscribeCall,
   createServiceStateDecoder,
@@ -42,6 +41,7 @@ export async function openGrove(
   changed: (view: View) => void,
   offline: () => void,
   timeoutMs = 30_000,
+  timedOut: (member: string) => void = () => {},
 ) {
   if (socket.readyState !== 1)
     await new Promise<void>((resolve, reject) => {
@@ -88,8 +88,7 @@ export async function openGrove(
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new Error("Response timed out. Outcome unknown."));
-        socket.close();
-        finish();
+        timedOut(call.serviceId === Grove.id ? call.member : "subscription");
       }, timeoutMs);
       pending.set(id, { resolve, reject, timer });
       try {
@@ -176,11 +175,9 @@ export async function openGrove(
   });
   const service = binding.use(Grove);
   let unsubscribe = () => {};
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
   function finish() {
     if (closed) return;
     closed = true;
-    clearInterval(heartbeat);
     unsubscribe();
     listeners.clear();
     for (const p of pending.values()) {
@@ -241,14 +238,6 @@ export async function openGrove(
         finish();
       }
     });
-    heartbeat = setInterval(() => {
-      void invoke(createServiceCatalogueCall(), BACKGROUND_CONTEXT).catch(
-        () => {
-          socket.close();
-          finish();
-        },
-      );
-    }, 15_000);
     return {
       async call<T>(member: Method, input: unknown): Promise<T> {
         return (await service[member](
