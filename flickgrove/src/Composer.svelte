@@ -5,7 +5,7 @@
   import { Textarea } from '$lib/components/ui/textarea/index.js';
   import { ImagePlus, X, ArrowUp, Square } from '@lucide/svelte';
   import { storagePrefix } from './api';
-  import { loadImages, saveImages, draftKey, operationKey, intakeError, IMAGE_ACCEPT, type ImageDraft } from './image-drafts';
+  import { imagePreview, loadImages, saveImages, draftKey, operationKey, intakeError, IMAGE_ACCEPT, type ImageDraft } from './image-drafts';
   import { onMount, tick, untrack } from 'svelte';
   import type { Skill } from './contracts';
   import SkillSearch from './SkillSearch.svelte';
@@ -14,12 +14,23 @@
   let text = $state(untrack(() => localStorage.getItem(`${storagePrefix}/composer/${agentId}`) ?? ''));
   let input = $state<HTMLTextAreaElement | null>(null);
   let composing = false;
-  let images = $state<ImageDraft[]>([]); let previews = $state<string[]>([]); let imageError=$state(""); let preparing=$state(false); let ready=$state(false); let picker: HTMLInputElement; let active=true;
+  let images = $state<ImageDraft[]>([]); let previews = $state<string[]>([]); let imageError=$state(""); let preparing=$state(false); let ready=$state(false); let imageStorage=$state(true); let picker: HTMLInputElement; let active=true;
   let revision=0;
-  async function refreshDraft() { try { const stored=await loadImages(draftKey(agentId)); if(active) { images=stored?.images ?? []; if(stored?.text)text=stored.text; ready=true; } } catch(e) { imageError=(e as Error).message; } }
+  async function refreshDraft(applyRecovery=false) {
+    if(applyRecovery)text=localStorage.getItem(`${storagePrefix}/composer/${agentId}`) ?? '';
+    try { const stored=await loadImages(draftKey(agentId)); if(active) { images=stored?.images ?? []; imageStorage=true; } }
+    catch(e) { if(active){imageStorage=false;imageError=`Image storage unavailable. Text messages still work. ${(e as Error).message}`;} }
+    finally {if(active)ready=true;}
+  }
   let restoration:Promise<void>;
-  onMount(()=>{restoration=refreshDraft(); const recover=(e:Event)=>{if((e as CustomEvent).detail===agentId)void refreshDraft();};window.addEventListener("grove-image-recovery",recover);return()=>{active=false;window.removeEventListener("grove-image-recovery",recover);};});
-  $effect(()=>{ const urls=images.map(i=>URL.createObjectURL(i.file)); previews=urls;return()=>urls.forEach(url=>URL.revokeObjectURL(url)); });
+  onMount(()=>{restoration=refreshDraft(); const recover=(e:Event)=>{if((e as CustomEvent).detail===agentId)void refreshDraft(true);};window.addEventListener("grove-image-recovery",recover);return()=>{active=false;window.removeEventListener("grove-image-recovery",recover);};});
+  $effect(()=>{
+    const snapshot=images; const urls:string[]=[];let disposed=false;
+    void Promise.all(snapshot.map(i=>imagePreview(i.file))).then(blobs=>{
+      if(disposed)return;for(const blob of blobs)urls.push(URL.createObjectURL(blob));previews=urls;
+    }).catch(e=>{if(!disposed)imageError=(e as Error).message;});
+    return()=>{disposed=true;urls.forEach(url=>URL.revokeObjectURL(url));};
+  });
   let intake=Promise.resolve();
   function addFiles(files:File[]) { const task=intake.catch(()=>{}).then(()=>performAdd(files));intake=task;return task; }
   async function performAdd(files: File[]) {
@@ -51,14 +62,16 @@
   async function send() {
     if(!ready && restoration)await restoration;
     if(composing || (!text.trim() && !images.length) || !connected || stopping || preparing || !ready) return;
-    imageError=intakeError([],images.map(i=>i.file));if(imageError)return;
+    if(images.length){imageError=intakeError([],images.map(i=>i.file));if(imageError)return;}
     const value=text.trim(); const frozen=$state.snapshot(images);const version=revision;const id=crypto.randomUUID();
     preparing=true;
     try {
       if(frozen.length) await saveImages(operationKey(agentId,id),frozen,value);
       addOutgoing(agentId,value,id,undefined,undefined,frozen.map(i=>i.id));
-      const stored=await loadImages(draftKey(agentId));
-      if(JSON.stringify(stored?.images.map(i=>i.id) ?? [])===JSON.stringify(frozen.map(i=>i.id)))await saveImages(draftKey(agentId),[]);
+      if(frozen.length){
+        const stored=await loadImages(draftKey(agentId));
+        if(JSON.stringify(stored?.images.map(i=>i.id) ?? [])===JSON.stringify(frozen.map(i=>i.id)))await saveImages(draftKey(agentId),[]);
+      }
       if(localStorage.getItem(`${storagePrefix}/composer/${agentId}`)?.trim()===value)localStorage.setItem(`${storagePrefix}/composer/${agentId}`,'');
       if(active && version===revision){ images=[];text='';revision++; }
       void onsend(agentId,value,id,frozen);
@@ -88,7 +101,7 @@
     {#if imageError}<p class="inline-error" role="alert">{imageError}</p>{/if}
     {#if preparing}<p role="status">Preparing images…</p>{/if}
     <Textarea onpaste={paste} bind:ref={input} bind:value={text} aria-label={m.message_orc()} placeholder={m.message_placeholder()} disabled={stopping || preparing} rows={2} oncompositionstart={() => { composing = true; }} oncompositionend={() => { composing = false; }} onbeforeinput={beforeinput} onkeydown={keydown} />
-    <div class="composer-bottom"><Button variant="ghost" size="icon-sm" aria-label="Add images" title="Add images" disabled={preparing || !ready || stopping} onclick={()=>picker.click()}><ImagePlus /></Button><span>{m.skills_hint()}</span><div class="composer-actions">
+    <div class="composer-bottom"><Button variant="ghost" size="icon-sm" aria-label="Add images" title="Add images" disabled={preparing || !ready || !imageStorage || stopping} onclick={()=>picker.click()}><ImagePlus /></Button><span>{m.skills_hint()}</span><div class="composer-actions">
       {#if working || stopping}<Button variant="secondary" class="round-action" size="icon-sm" title={m.stop_orc()} aria-label={m.stop_orc()} disabled={!connected || stopping} onclick={onstop}><Square /></Button>{/if}
       <Button class="round-action" size="icon-sm" aria-label={m.send_message()} title={m.send_message()} disabled={(!text.trim() && !images.length) || !connected || stopping || preparing || !ready} type="submit"><ArrowUp /></Button>
     </div></div>

@@ -93,7 +93,7 @@ export async function restoreImages(
   const textKey = `${storagePrefix}/composer/${agent}`;
   const newerText = localStorage.getItem(textKey) ?? "";
   const recovered = newerText.trim() ? `${newerText}\n\n${text}` : text;
-  await saveImages(draftKey(agent), combined, recovered);
+  await saveImages(draftKey(agent), combined);
   localStorage.setItem(textKey, recovered);
   window.dispatchEvent(
     new CustomEvent("grove-image-recovery", { detail: agent }),
@@ -112,4 +112,30 @@ export function intakeError(current: ImageDraft[], files: File[]) {
   )
     return "Images must total at most 20 MiB.";
   return "";
+}
+
+// Preview encoding is intentionally lossy and separate from the retained original.
+export async function imagePreview(file: Blob): Promise<Blob> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Could not prepare image preview.");
+    for (const [side, quality] of [
+      [480, 0.8],
+      [320, 0.5],
+    ]) {
+      const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const preview = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, "image/webp", quality),
+      );
+      if (preview && preview.size <= 160_000) return preview;
+    }
+    throw new Error("Could not prepare a bounded image preview.");
+  } finally {
+    bitmap.close();
+  }
 }

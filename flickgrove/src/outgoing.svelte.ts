@@ -105,7 +105,8 @@ export function observeOutgoing(detail: Detail) {
     if (detail.messages.some((m) => m.id === o.id)) {
       rememberAccepted(o.agentId, o.id);
       localStorage.removeItem(key(o));
-      void saveImages(operationKey(o.agentId, o.id), []).catch(() => {});
+      if (o.localImageIds?.length || o.images?.length)
+        void saveImages(operationKey(o.agentId, o.id), []).catch(() => {});
       return false;
     }
     const d = detail.deliveries.find((d) => d.id === o.id);

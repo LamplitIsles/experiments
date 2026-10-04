@@ -315,15 +315,19 @@ test("slow upload binds original Peer/conversation while new draft remains isola
   });
   await composer(page).fill("Unknown original");
   await composer(page).press("Enter");
-  await expect(page.locator(".delivery-error").last()).toContainText(
-    "Delivery could not be confirmed",
-  );
+  await expect(
+    page
+      .locator(".delivery-error")
+      .filter({ hasText: "Delivery could not be confirmed" }),
+  ).toBeVisible();
   const before = (await (await request.get(origin + "/fixture/info")).json())
     .inputs.length;
   await page.reload();
-  await expect(page.locator(".delivery-error").last()).toContainText(
-    "Delivery could not be confirmed",
-  );
+  await expect(
+    page
+      .locator(".delivery-error")
+      .filter({ hasText: "Delivery could not be confirmed" }),
+  ).toBeVisible();
   await page
     .locator(".delivery-error")
     .filter({ hasText: "Delivery could not be confirmed" })
@@ -332,7 +336,7 @@ test("slow upload binds original Peer/conversation while new draft remains isola
     .click();
   await page
     .locator(".delivery-error")
-    .last()
+    .filter({ hasText: "Delivery could not be confirmed" })
     .getByRole("button", { name: "Check receipt", exact: true })
     .click();
   expect(
@@ -410,5 +414,134 @@ test("storage failure keeps complete editable draft; HTTP rejection merges newer
   await expect(page.locator(".question-panel")).toHaveCount(0);
   await expect(composer(page)).toHaveValue(
     "Newer original-session draft\n\nNever discard this",
+  );
+});
+
+async function boundedPreview(page: Page, selector: string) {
+  await expect
+    .poll(() =>
+      page
+        .locator(selector)
+        .first()
+        .evaluate(async (node: HTMLImageElement) => ({
+          width: node.naturalWidth,
+          height: node.naturalHeight,
+          bytes: node.src.startsWith("blob:")
+            ? (await (await fetch(node.src)).blob()).size
+            : 0,
+        })),
+    )
+    .toMatchObject({ width: 480, height: 270 });
+  const bytes = await page
+    .locator(selector)
+    .first()
+    .evaluate(
+      async (node: HTMLImageElement) =>
+        (await (await fetch(node.src)).blob()).size,
+    );
+  expect(bytes).toBeGreaterThan(0);
+  expect(bytes).toBeLessThanOrEqual(160_000);
+}
+
+test("bounded local draft/pending/rejected previews retain original and edited recovery caption across reload", async ({
+  page,
+  request,
+}) => {
+  await setup(page, request, 1440);
+  await add(page);
+  await boundedPreview(page, ".image-draft img");
+  await composer(page).fill("Original rejected caption");
+  const info = await (await request.get(origin + "/fixture/info")).json();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let arrived!: () => void;
+  const arrival = new Promise<void>((resolve) => (arrived = resolve));
+  await page.route("**/api/images?*", async (route) => {
+    arrived();
+    await gate;
+    await route.fulfill({
+      status: 400,
+      headers: { "X-Grove-Peer": info.hub },
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Preview test rejection" }),
+    });
+  });
+  await composer(page).press("Enter");
+  await arrival;
+  await boundedPreview(page, ".message-image img");
+  await page.locator(".message-image").first().click();
+  await expect(page.locator(".full-image")).toBeVisible();
+  expect(
+    await page
+      .locator(".full-image")
+      .evaluate((node: HTMLImageElement) => node.naturalWidth),
+  ).toBe(1600);
+  await page.keyboard.press("Escape");
+  release();
+  await page.unrouteAll({ behavior: "wait" });
+  await expect(composer(page)).toHaveValue("Original rejected caption");
+  await boundedPreview(page, ".image-draft img");
+  await boundedPreview(page, ".message-image img");
+  await composer(page).fill("Edited recovered caption");
+  await page.reload();
+  await expect(composer(page)).toHaveValue("Edited recovered caption");
+  await boundedPreview(page, ".image-draft img");
+  const operationText = await page.evaluate(async () => {
+    const name = (await indexedDB.databases()).find((d) =>
+      d.name?.endsWith("/images"),
+    )!.name!;
+    const db = await new Promise<IDBDatabase>((resolve) => {
+      const r = indexedDB.open(name);
+      r.onsuccess = () => resolve(r.result);
+    });
+    const rows = await new Promise<any[]>((resolve) => {
+      const r = db.transaction("drafts").objectStore("drafts").getAll();
+      r.onsuccess = () => resolve(r.result);
+    });
+    db.close();
+    return rows.find((r) => r.key.startsWith("operation/")).text;
+  });
+  expect(operationText).toBe("Original rejected caption");
+  await page.screenshot({ path: `${shots}/review-edited-recovery.png` });
+});
+
+test("IndexedDB open SecurityError leaves image error visible and pure text sends once without blob access", async ({
+  page,
+  request,
+}) => {
+  await page.addInitScript(() => {
+    let opens = 0;
+    Object.defineProperty(window, "imageStoreOpens", { get: () => opens });
+    indexedDB.open = () => {
+      opens++;
+      throw new DOMException("Synthetic image storage denied", "SecurityError");
+    };
+  });
+  await request.post(origin + "/fixture/reset", { data: { mode: "long" } });
+  await page.goto(origin);
+  await expect(composer(page)).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText(
+    "Image storage unavailable",
+  );
+  const before = await (await request.get(origin + "/fixture/info")).json();
+  await composer(page).fill("Pure text with unavailable image store");
+  await expect(
+    page.getByRole("button", { name: "Send message", exact: true }),
+  ).toBeEnabled();
+  await composer(page).press("Enter");
+  await expect
+    .poll(
+      async () =>
+        (await (await request.get(origin + "/fixture/info")).json()).inputs
+          .length,
+    )
+    .toBe(before.inputs.length + 1);
+  const sent = await (await request.get(origin + "/fixture/info")).json();
+  expect(sent.inputs.at(-1).text).toBe(
+    "Pure text with unavailable image store",
+  );
+  expect(await page.evaluate(() => (window as any).imageStoreOpens)).toBe(1);
+  await expect(page.getByRole("alert")).toContainText(
+    "Image storage unavailable",
   );
 });

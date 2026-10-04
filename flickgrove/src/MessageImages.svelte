@@ -4,7 +4,7 @@
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import type { MessageImage } from "./contracts";
   import { peers } from "./api";
-  import { loadImages, operationKey } from "./image-drafts";
+  import { imagePreview, loadImages, operationKey } from "./image-drafts";
   let { agentId, operationId, images = [], localImageIds = [] }: { agentId: string; operationId: string; images?: MessageImage[]; localImageIds?: string[] } = $props();
   let urls = $state<Record<string,string>>({}); let failures = $state<Record<string,boolean>>({});
   let original = $state(""); let fullError = $state(""); let open = $state(false); let name = $state(""); let active=true;
@@ -16,7 +16,7 @@
     if ("availability" in image && image.availability === "missing") {failures[image.id]=true;return;}
     try {
       const local=await loadImages(operationKey(agentId,operationId));
-      if(local?.images[index]) { if(active)urls[image.id]=blobUrl(local.images[index].file); return; }
+      if(local?.images[index]) { const preview=await imagePreview(local.images[index].file);if(active)urls[image.id]=blobUrl(preview); return; }
       const response=await peers().media(agentId,`/api/images/${image.id}/preview?agent=${encodeURIComponent(agentId)}`);
       if(active)urls[image.id]=blobUrl(await response.blob());
     } catch { if(active) failures[image.id]=true; }
