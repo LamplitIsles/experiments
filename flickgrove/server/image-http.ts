@@ -1,5 +1,5 @@
 import type { HostService } from "./hosts";
-import { MESSAGE_IMAGE_BYTES } from "./images";
+import { IMAGE_UPLOAD_BYTES } from "./images";
 export async function imageHttp(
   request: Request,
   service: HostService,
@@ -78,8 +78,7 @@ export async function imageHttp(
   try {
     const agent = url.searchParams.get("agent") ?? "";
     if (url.pathname === "/api/images" && request.method === "POST") {
-      const max = MESSAGE_IMAGE_BYTES + 500_000;
-      if (Number(request.headers.get("content-length")) > max)
+      if (Number(request.headers.get("content-length")) > IMAGE_UPLOAD_BYTES)
         return respond({ error: "Image upload exceeds 20 MiB" }, 413);
       if (
         !request.headers.get("content-type")?.startsWith("multipart/form-data;")
@@ -94,7 +93,7 @@ export async function imageHttp(
           const chunk = await reader.read();
           if (chunk.done) break;
           size += chunk.value.length;
-          if (size > max) {
+          if (size > IMAGE_UPLOAD_BYTES) {
             await reader.cancel();
             return respond({ error: "Image upload exceeds 20 MiB" }, 413);
           }

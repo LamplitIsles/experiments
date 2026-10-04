@@ -1,10 +1,11 @@
 import { imageHttp } from "./image-http";
+import { IMAGE_UPLOAD_BYTES } from "./images";
 import { resolve, sep } from "node:path";
 import { z } from "zod";
 import type { Server } from "bun";
 import type { Workspace } from "./workspace";
 import type { HostService } from "./hosts";
-import type { SocketData } from "./chord-socket";
+import { groveWebsocket, type SocketData } from "./chord-socket";
 const json = (value: unknown, status = 200) =>
   Response.json(value, { status, headers: { "Cache-Control": "no-store" } });
 type Options = {
@@ -139,4 +140,24 @@ export function createHandler(workspace: Workspace, options: Options) {
       );
     }
   };
+}
+
+// Keep the actual HTTP listener configuration shared with isolated socket tests.
+export function servePeer(
+  workspace: Workspace,
+  options: Options & { hostname: string; port: number },
+) {
+  const handler = createHandler(workspace, options);
+  const upgrade = createUpgrade(workspace, options);
+  return Bun.serve({
+    hostname: options.hostname,
+    port: options.port,
+    idleTimeout: 0,
+    maxRequestBodySize: IMAGE_UPLOAD_BYTES,
+    websocket: groveWebsocket,
+    fetch(request, server) {
+      const result = upgrade(request, server);
+      return result === true ? undefined : (result ?? handler(request));
+    },
+  });
 }
