@@ -404,6 +404,7 @@ const server = Bun.serve({
         questionAgent?: string;
         questionCount?: number;
         questionOptions?: boolean;
+        questionLong?: boolean;
         restartHub?: boolean;
         append?: { agentId: string; text: string };
       };
@@ -498,15 +499,27 @@ const server = Bun.serve({
             questions: Array.from(
               { length: body.questionCount ?? 1 },
               (_, i) => ({
-                question: body.questionId
-                  ? `${body.questionId} question ${i + 1}`
-                  : "Which design?",
+                question: body.questionLong
+                  ? `A long screenshot review question: ${"Preserve clear small text, original dimensions and the complete answer while navigating. ".repeat(8)}`
+                  : body.questionId
+                    ? `${body.questionId} question ${i + 1}`
+                    : "Which design?",
                 options:
                   body.questionOptions === false
                     ? []
                     : [
                         { label: "Recommended choice" },
-                        { label: "Alternative" },
+                        {
+                          label: "Alternative",
+                          ...(body.questionLong
+                            ? {
+                                description:
+                                  "A detailed explanation with enough context to make an informed choice. ".repeat(
+                                    4,
+                                  ),
+                              }
+                            : {}),
+                        },
                       ],
               }),
             ),

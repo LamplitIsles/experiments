@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   appendFileSync,
@@ -61,6 +62,17 @@ function textOf(input) {
     .join(" ");
 }
 function userItem(input, clientId) {
+  for (const image of input.filter((i) => i.type === "localImage")) {
+    const bytes = readFileSync(image.path);
+    appendFileSync(
+      join(root, ".fake-image-reads.jsonl"),
+      JSON.stringify({
+        threadId: state.threadId,
+        path: image.path,
+        hash: createHash("sha256").update(bytes).digest("hex"),
+      }) + "\n",
+    );
+  }
   return {
     type: "userMessage",
     id: `user-${clientId}`,

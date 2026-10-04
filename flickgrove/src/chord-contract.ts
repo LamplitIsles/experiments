@@ -17,6 +17,15 @@ export type Receipt = {
 };
 const id = z.string().min(1).max(500);
 const text = z.string().trim().min(1).max(100_000);
+export const imageSchema = z.object({
+  id: z.string().regex(/^[a-f0-9]{64}$/),
+  name: z.string().max(200),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  bytes: z.number().int().nonnegative(),
+  mediaType: z.string(),
+  availability: z.literal("missing").optional(),
+});
 export const answerSchema = z.object({ questionId: id, answer: text });
 const defaults = z.object({ model: id, effort: id });
 export const settingsSchema = z.object({
@@ -58,7 +67,18 @@ export const inputs = {
     settings: settingsSchema,
     host: id.optional(),
   }),
-  send: z.object({ id, text, operationId: z.string().min(1).max(120) }),
+  send: z
+    .object({
+      id,
+      text: z.string().trim().max(100_000),
+      images: z.array(imageSchema).max(5).optional(),
+      operationId: z.string().min(1).max(120),
+    })
+    .strict()
+    .refine(
+      (p) => p.text.length || p.images?.length,
+      "Write a message or choose an image",
+    ),
   retryDelivery: z.object({ id, deliveryId: id }),
   lookup: z.object({ id, operationId: z.string().min(1).max(120) }),
   answerBatch: z.object({
@@ -130,6 +150,7 @@ export const detailSchema = agent.extend({
   messages: z.array(
     z.object({
       id,
+      images: z.array(imageSchema).optional(),
       role: z.enum(["user", "assistant"]),
       text: z.string(),
       at: z.number(),
@@ -141,6 +162,7 @@ export const detailSchema = agent.extend({
       id,
       text: z.string(),
       status: z.enum(["queued", "sending", "sent", "failed", "uncertain"]),
+      images: z.array(imageSchema).optional(),
       source: z.enum(["user", "worker", "question"]),
       questionIds: z.array(id),
       answers: z.array(answerSchema).optional(),
@@ -224,7 +246,11 @@ export function routeCall(
     const member = match[2]
       ? members[match[2] as keyof typeof members]
       : "detail";
-    const input = { ...(body as object), id, cursor };
+    const input = {
+      ...(body as object),
+      id,
+      ...(member === "agentHistory" ? { cursor } : {}),
+    };
     route = [member, input];
   }
   if (!route) throw new Error("Action not found");

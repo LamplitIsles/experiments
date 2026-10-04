@@ -23,7 +23,18 @@ export interface Settings {
   orc: Defaults;
   worker: Defaults;
 }
+export interface MessageImage {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  bytes: number;
+  mediaType: string;
+  availability?: "missing";
+}
 export interface Message {
+  localImageIds?: string[];
+  images?: MessageImage[];
   id: string;
   turnId?: string;
   role: "user" | "assistant";
@@ -71,6 +82,7 @@ export interface Question {
 }
 export type Answer = { questionId: string; answer: string };
 export interface Delivery {
+  images?: MessageImage[];
   answers?: Answer[];
   turnId?: string;
   id: string;

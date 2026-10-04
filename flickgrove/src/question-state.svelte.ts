@@ -21,6 +21,8 @@ export function observeQuestions(agents: Agent[], selectedId: string | null) {
     const fresh = agent.questions.filter(
       (q) => q.state === "unanswered" && !seen.includes(q.id),
     );
+    // Arrival is not viewing: background sessions retain unseen IDs until selected.
+    if (agent.id !== selectedId) continue;
     localStorage.setItem(
       `${key}/seen`,
       JSON.stringify([

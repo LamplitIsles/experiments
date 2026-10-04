@@ -1,4 +1,6 @@
 <script lang="ts">
+  import MessageImages from "./MessageImages.svelte";
+  import { restoreImages, type ImageDraft } from "./image-drafts";
   import { Badge } from "$lib/components/ui/badge/index.js";
   import { X, ArrowDown, MessageCircle } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -15,7 +17,7 @@
   import Composer from "./Composer.svelte";
   import Questions from "./Questions.svelte";
   import * as m from "./paraglide/messages";
-  let { detail, owner, skills, now, connected, entryId, entryConnected, workers, lastSeen, actionError, closeError, onrefresh, onstop, onrename, onclose, onopen, onsend, onanswer, onlookup, onretry, ondismiss }: { detail: Detail; owner?: Agent; skills: Skill[]; now: number; connected: boolean; entryId?: string; entryConnected: boolean; workers: Agent[]; lastSeen?: number; actionError: string; closeError?: string; onrefresh: () => Promise<void>; onstop: () => Promise<boolean>; onrename: (title: string) => Promise<string | undefined>; onclose: () => void; onopen: (id: string) => void; onsend: (text: string, requestId: string) => Promise<boolean>; onanswer: (answers: Answer[], operationId: string) => Promise<void>; onlookup: (id: string) => Promise<void>; onretry: (id: string) => Promise<void>; ondismiss:(id:string)=>void } = $props();
+  let { detail, owner, skills, now, connected, entryId, entryConnected, workers, lastSeen, actionError, closeError, onrefresh, onstop, onrename, onclose, onopen, onsend, onanswer, onlookup, onretry, ondismiss }: { detail: Detail; owner?: Agent; skills: Skill[]; now: number; connected: boolean; entryId?: string; entryConnected: boolean; workers: Agent[]; lastSeen?: number; actionError: string; closeError?: string; onrefresh: () => Promise<void>; onstop: () => Promise<boolean>; onrename: (title: string) => Promise<string | undefined>; onclose: () => void; onopen: (id: string) => void; onsend: (agentId: string, text: string, requestId: string, images?: ImageDraft[]) => Promise<boolean>; onanswer: (answers: Answer[], operationId: string) => Promise<void>; onlookup: (id: string) => Promise<void>; onretry: (id: string) => Promise<void>; ondismiss:(id:string)=>void } = $props();
   let composer = $state<Composer>();
   let transcript: HTMLDivElement; let follow = $state(true);
   function jumpToBottom() { follow = true; transcript.scrollTop = transcript.scrollHeight; }
@@ -42,13 +44,12 @@
     // A fresh question waits for the currently visible foreground to dismiss.
     if (requested && !drawerOpen && !navigation.surfaces.length) setSurface("questions", true);
   });
-  const panelVisible = $derived(panelOpen && (!narrow || navigation.surfaces.includes("questions")));
+  const panelVisible = $derived(panelOpen && (!narrow ? !navigation.surfaces.length : navigation.surfaces.includes("questions")));
   function toggleQuestions() {
     if (narrow) { if (navigation.surfaces.includes("questions")) void back(); else { setQuestionPanel(detail.id, true); setSurface("questions", true); } }
     else setQuestionPanel(detail.id, !panelOpen);
   }
   const pending = $derived(detail.questions.filter(q => q.state !== "answered"));
-  const answerMessages = $derived(new Set(detail.deliveries.filter(d => d.source === "question").map(d => d.id)));
   const reports = $derived(new Map(detail.deliveries.filter(d => d.source === "worker" && d.reportingWorkerId).map(d => [d.id, d])));
 </script>
 <aside class="agent-detail" aria-label={detail.title}>
@@ -63,15 +64,17 @@
     {#if !detail.historyCursor && !detail.messages.length && !detail.questions.length}<div class="first-message"><h2>{m.first_heading()}</h2><p>{m.first_help({ project: detail.project.alias })}</p></div>{/if}
     {#snippet renderMessage(message: Message)}
       {@const report = reports.get(message.id)}
-      {#if !answerMessages.has(message.id)}
+      {@const delivery = detail.deliveries.find(d=>d.id===message.id)}
       {#if report}<WorkerReport text={message.text} sender={workers.find(w => w.id === report.reportingWorkerId)?.title} />
-      {:else}<div class:user-message={message.role === "user"} class:assistant-message={message.role === "assistant"}><div class="message-role">{message.role === "assistant" ? detail.role === "orc" ? m.orc() : m.worker() : ""}</div><Markdown text={message.text} /></div>{/if}
-      {/if}
+      {:else}<div class:user-message={message.role === "user"} class:assistant-message={message.role === "assistant"}><div class="message-role">{message.role === "assistant" ? detail.role === "orc" ? m.orc() : m.worker() : ""}</div><Markdown text={message.text} />
+      {#if message.images?.length || message.localImageIds?.length}<MessageImages agentId={detail.id} operationId={message.id} images={message.images} localImageIds={message.localImageIds} />{/if}
+      {#if delivery}<small class:failed={delivery.status==='failed'} role="status">{delivery.status==='sent' ? 'Accepted' : delivery.status==='failed' ? 'Not accepted' : delivery.status==='uncertain' ? m.unknown_delivery() : m.sending()}</small>{/if}
+      </div>{/if}
     {/snippet}
     {#each detail.messages.slice(detail.historyCursor ? detail.historyMessageCount ?? 0 : 0) as message (message.id)}
       {@render renderMessage(message)}
     {/each}
-    {#each detail.deliveries.filter(d => (d.status === "failed" || d.status === "uncertain") && d.source !== "question") as delivery}<details class="delivery-error"><summary>{delivery.status === "uncertain" ? (delivery.receiptState === "missing" ? m.delivery_missing() : delivery.receiptState === "pending" ? m.delivery_pending() : m.unknown_delivery()) : delivery.error}</summary>{#if delivery.source !== 'user'}<p>{delivery.text}</p>{/if}{#if delivery.status === "uncertain"}<p>{m.lookup_help()}</p><Button variant="ghost" size="sm" disabled={!connected} onclick={() => onlookup(delivery.id)}>{m.check_delivery()}</Button><Button variant="ghost" size="sm" onclick={()=>ondismiss(delivery.id)}>{m.dismiss_delivery()}</Button><small>{m.dismiss_delivery_help()}</small>{/if}{#if delivery.status === "failed" && delivery.source === "user" && detail.role === "orc"}<Button variant="ghost" size="sm" onclick={() => composer?.recover(delivery.text)}>{m.restore_message()}</Button>{/if}{#if delivery.status === "failed" && delivery.source === "worker"}<Button variant="ghost" size="sm" disabled={!connected} onclick={() => onretry(delivery.id)}>{m.retry()}</Button>{/if}</details>{/each}
+    {#each detail.deliveries.filter(d => (d.status === "failed" || d.status === "uncertain") && d.source !== "question") as delivery}<details class="delivery-error"><summary>{delivery.status === "uncertain" ? (delivery.receiptState === "missing" ? m.delivery_missing() : delivery.receiptState === "pending" ? m.delivery_pending() : m.unknown_delivery()) : delivery.error}</summary>{#if delivery.source !== 'user'}<p>{delivery.text}</p>{/if}{#if delivery.status === "uncertain"}<p>{m.lookup_help()}</p><Button variant="ghost" size="sm" disabled={!connected} onclick={() => onlookup(delivery.id)}>{m.check_delivery()}</Button><Button variant="ghost" size="sm" onclick={()=>ondismiss(delivery.id)}>{m.dismiss_delivery()}</Button><small>{m.dismiss_delivery_help()}</small>{/if}{#if delivery.status === "failed" && delivery.source === "user" && detail.role === "orc"}<Button variant="ghost" size="sm" onclick={() => delivery.images?.length ? restoreImages(detail.id,delivery.id,delivery.text).catch(e=>composer?.imageRecoveryError(e.message)) : composer?.recover(delivery.text)}>{m.restore_message()}</Button>{/if}{#if delivery.status === "failed" && delivery.source === "worker"}<Button variant="ghost" size="sm" disabled={!connected} onclick={() => onretry(delivery.id)}>{m.retry()}</Button>{/if}</details>{/each}
     {#if actionError}<div class="host-outage" role="alert"><p>{actionError}</p><Button variant="ghost" size="sm" onclick={() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus()}>{m.message_orc()}</Button></div>{/if}
     {#if detail.stop?.status === "confirmed"}<p class="stop-confirmed" role="status">{m.stop_confirmed()}</p>{:else if detail.stop?.status === "unknown"}<p class="host-outage" role="status">{m.stop_unknown()} <Button variant="ghost" size="sm" onclick={onrefresh}>{m.retry_connection()}</Button></p>{:else if detail.stop?.status === "completed"}<p role="status">{m.stop_completed()}</p>{/if}
     {#if detail.role === "worker" && detail.state === "working"}<p class="work-duration">{m.working_for({ time: elapsed(detail.workingSince, now) })}</p>{/if}

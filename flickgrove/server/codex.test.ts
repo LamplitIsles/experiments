@@ -571,3 +571,103 @@ test("official wire interruption confirms the observed turn and weekly reads can
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("native isolated process reads validated localImage on start and steer exactly once; original history membership only", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "grove-native-images-"));
+  const runtime = new CodexRuntime({
+    cwd: directory,
+    origin: () => "http://fixture.invalid",
+    codexPath: fileURLToPath(
+      new URL("../tests/fake-codex.mjs", import.meta.url),
+    ),
+    env: {
+      ...process.env,
+      CODEX_HOME: join(directory, "codex-home"),
+      FAKE_SERVER_ROOT: directory,
+    },
+  });
+  const workspace = new Workspace({
+    directory: join(directory, "workspace"),
+    runtime,
+    projects: async () => [
+      { alias: "fixture", name: "Fixture", path: directory },
+    ],
+  });
+  try {
+    await writeFile(
+      join(directory, ".fake-app-server-control.json"),
+      JSON.stringify({ hold: true }),
+    );
+    const { default: sharp } = await import("sharp");
+    const file = new File(
+      [
+        await sharp({
+          create: { width: 20, height: 10, channels: 4, background: "blue" },
+        })
+          .png()
+          .toBuffer(),
+      ],
+      "fixture.png",
+    );
+    const agent = await workspace.createOrc("fixture", {
+      fast: false,
+      orc: { model: "fixture-model", effort: "medium" },
+      worker: { model: "fixture-model", effort: "medium" },
+    });
+    const images = await workspace.images.upload(agent.id, "start", "", [file]);
+    await workspace.send(agent.id, "", "start", images);
+    const more = await workspace.images.upload(agent.id, "steer", "caption", [
+      file,
+    ]);
+    await workspace.send(agent.id, "caption", "steer", more);
+    workspace.lookup(agent.id, "start");
+    workspace.lookup(agent.id, "steer");
+    await workspace.send(agent.id, "caption", "steer", more);
+    const reads = (
+      await readFile(join(directory, ".fake-image-reads.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(reads).toHaveLength(2);
+    expect(
+      reads.every((r) => r.threadId === workspace.detail(agent.id).threadId),
+    ).toBe(true);
+    const requests = (
+      await readFile(join(directory, ".fake-app-server-requests.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const turns = requests.filter(
+      (r) => r.method === "turn/start" || r.method === "turn/steer",
+    );
+    expect(turns).toHaveLength(2);
+    expect(turns[0].params.input[0].type).toBe("localImage");
+    expect(turns[1].params.input.map((i: { type: string }) => i.type)).toEqual([
+      "text",
+      "localImage",
+    ]);
+    const history = await runtime.historyMessages(
+      workspace.detail(agent.id).threadId!,
+    );
+    const image = history.messages.find((m) => m.images?.length)!.images![0];
+    expect(await runtime.historyImage("other-thread", image.id)).toBeNull();
+    expect(
+      await runtime.historyImage(
+        workspace.detail(agent.id).threadId!,
+        "invalid",
+      ),
+    ).toBeNull();
+    expect(
+      await runtime.historyImage(
+        workspace.detail(agent.id).threadId!,
+        image.id,
+      ),
+    ).not.toBeNull();
+  } finally {
+    workspace.dispose();
+    await runtime.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
