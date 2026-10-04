@@ -385,8 +385,16 @@ test("two-host collision routing, shared defaults, simultaneous answers, outage 
     },
   });
   const answers = await Promise.all([
-    hub.service.answer(remoteId, "q:0", "One"),
-    hub.service.answer(remoteId, "q:0", "Two"),
+    hub.service.answerBatch(
+      remoteId,
+      [{ questionId: "q:0", answer: "One" }],
+      "same-batch",
+    ),
+    hub.service.answerBatch(
+      remoteId,
+      [{ questionId: "q:0", answer: "One" }],
+      "same-batch",
+    ),
   ]);
   expect(peer.runtime.inputs).toHaveLength(2);
   expect((answers[0] as Detail).questions[0].state).toBe("answered");
@@ -689,4 +697,27 @@ test("slow native admission times out then reconnects for receipt lookup without
   expect(peer.count()).toBe(1);
   expect(peer.runtime.interruptions).toHaveLength(0);
   expect(other.count()).toBe(1);
+});
+
+test("a selected remote conversation disappearing is a rejected detail read, not a host outage", async () => {
+  const hub = fixture(true),
+    peer = fixture(false);
+  await hub.service.register({
+    name: "Mac",
+    url: peer.origin,
+    credential: peer.service.credential,
+  });
+  const a = await hub.service.createOrc("alpha", peer.service.identity.id);
+  const unobserve = hub.service.observe([a.id]);
+  await hub.service.detail(a.id);
+  await hub.service.closeTree(a.id);
+  await until(
+    () => !hub.service.snapshot().agents.some((agent) => agent.id === a.id),
+  );
+  await expect(hub.service.detail(a.id)).rejects.toThrow();
+  expect(
+    hub.service.snapshot().hosts?.find((h) => h.id === peer.service.identity.id)
+      ?.connected,
+  ).toBe(true);
+  unobserve();
 });

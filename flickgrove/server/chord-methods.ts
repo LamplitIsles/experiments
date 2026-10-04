@@ -64,9 +64,9 @@ export async function invoke(
       const p = parse(member);
       return await app.lookup(p.id, p.operationId);
     }
-    case "answer": {
+    case "answerBatch": {
       const p = parse(member);
-      return await app.answer(p.id, p.questionId, p.answer);
+      return await app.answerBatch(p.id, p.answers, p.operationId);
     }
     case "stop": {
       const p = parse(member);

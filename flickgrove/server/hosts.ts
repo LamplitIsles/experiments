@@ -687,7 +687,8 @@ export class HostService {
       );
       c.details.set(r.id, detail);
       return qualified(c.host, detail);
-    } catch {
+    } catch (error) {
+      if (error instanceof RequestRejected) throw error;
       c.host.connected = false;
       this.publish();
       const detail = c.details.get(r.id);
@@ -755,9 +756,13 @@ export class HostService {
       this.workspace.rename(id, title),
     );
   }
-  answer(id: string, questionId: string, answer: string) {
-    return this.mutate(id, "answer", { questionId, answer }, (id) =>
-      this.workspace.answer(id, questionId, answer),
+  answerBatch(
+    id: string,
+    answers: import("../src/contracts").Answer[],
+    operationId: string,
+  ) {
+    return this.mutate(id, "answers", { answers, operationId }, (id) =>
+      this.workspace.answerBatch(id, answers, operationId),
     );
   }
   retryDelivery(id: string, deliveryId: string) {

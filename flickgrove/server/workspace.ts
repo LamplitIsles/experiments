@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type {
   Agent,
+  Answer,
   Delivery,
   Detail,
   Project,
@@ -608,6 +609,7 @@ export class Workspace {
     requestId: string,
     source: Delivery["source"],
     questionIds: string[] = [],
+    answers?: Answer[],
   ) {
     if (this.disposed) throw new Error("Workspace is stopped");
     if (a.closeRequest && !questionIds.length)
@@ -636,6 +638,7 @@ export class Workspace {
         source,
         status: "sending",
         questionIds,
+        ...(answers ? { answers: structuredClone(answers) } : {}),
         at: Date.now(),
       };
       a.deliveries.push(d);
@@ -689,7 +692,11 @@ export class Workspace {
       d.status = "sent";
       d.turnId = turnId;
       for (const q of a.questions)
-        if (questionIds.includes(q.id)) q.state = "answered";
+        if (questionIds.includes(q.id)) {
+          q.state = "answered";
+          const answer = d.answers?.find((a) => a.questionId === q.id);
+          if (answer) q.answer = answer.answer;
+        }
       this.save();
       if (
         a.role === "orc" &&
@@ -725,6 +732,12 @@ export class Workspace {
     return this.detail(a.id);
   }
   retryDelivery(id: string, deliveryId: string) {
+    const delivery = this.agent(id).deliveries.find((d) => d.id === deliveryId);
+    if (delivery?.source === "question" && delivery.status === "failed") {
+      if (!delivery.answers)
+        throw new Error("Answer batch has no persisted envelope");
+      return this.answerBatch(id, delivery.answers, deliveryId);
+    }
     return this.serialize(id, async () => {
       const a = this.agent(id);
       const d = a.deliveries.find((d) => d.id === deliveryId);
@@ -798,32 +811,67 @@ export class Workspace {
       return { closed: true as const, id };
     });
   }
-  answer(id: string, questionId: string, answer: string) {
+  answerBatch(id: string, answers: Answer[], operationId: string) {
     return this.serialize(id, async () => {
       const a = this.agent(id);
       if (a.role !== "orc")
         throw new Error("Answer Worker questions through Orc");
+      const frozen = answers.map((answer) => ({
+        questionId: answer.questionId,
+        answer: answer.answer.trim(),
+      }));
+      const prior = a.deliveries.find((d) => d.id === operationId);
+      if (prior) {
+        if (
+          prior.source !== "question" ||
+          JSON.stringify(prior.answers) !== JSON.stringify(frozen)
+        )
+          throw new Error("Operation ID is bound to different content");
+        if (prior.status !== "failed") return this.detail(id);
+      }
       if (a.state === "stopping")
         throw new Error("Wait for the observed turn outcome before answering");
-      const q = a.questions.find((q) => q.id === questionId);
-      if (!q) throw new Error("Question not found");
-      if (q.state === "answered") return this.detail(id);
-      if (!answer.trim())
-        throw new Error("Choose an option or write an answer");
-      const result = await this.deliver(
-        a,
-        `Question: ${q.text}\nAnswer: ${answer.trim()}`,
-        `answer:${q.id}`,
-        "question",
-        [q.id],
-      );
       if (
-        result.questions.find((q) => q.id === questionId)?.state === "answered"
-      ) {
-        q.answer = answer.trim();
-        this.save();
-      }
-      return { ...result, questions: structuredClone(a.questions) };
+        !frozen.length ||
+        new Set(frozen.map((answer) => answer.questionId)).size !==
+          frozen.length
+      )
+        throw new Error("Choose a non-empty batch of distinct questions");
+      const questions = frozen.map((answer) => {
+        const q = a.questions.find((q) => q.id === answer.questionId);
+        if (!q || q.state !== "unanswered")
+          throw new Error(
+            "Every submitted question must belong to this Orc and remain unanswered",
+          );
+        if (!answer.answer || answer.answer.length > 100_000)
+          throw new Error("Write a valid answer for every question");
+        if (
+          a.deliveries.some(
+            (d) =>
+              d.source === "question" &&
+              d.questionIds.includes(q.id) &&
+              ["sending", "queued", "uncertain"].includes(d.status),
+          )
+        )
+          throw new Error(
+            "Check the original answer batch before another submission",
+          );
+        return q;
+      });
+      const text = frozen
+        .map(
+          (answer, i) =>
+            `Question: ${questions[i].text}\nAnswer: ${answer.answer}`,
+        )
+        .join("\n\n");
+      return this.deliver(
+        a,
+        text,
+        operationId,
+        "question",
+        frozen.map((answer) => answer.questionId),
+        frozen,
+      );
     });
   }
   skills(id: string) {

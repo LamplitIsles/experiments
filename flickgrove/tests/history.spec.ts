@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { newSession } from "./browser-actions";
+import { newSession, createSession } from "./browser-actions";
 
 for (const mobile of [false, true]) {
   test(`N panel finds history, preserves Back, handles locks and resumes the original conversation (${mobile ? "mobile" : "desktop"})`, async ({
@@ -119,7 +119,7 @@ test("restored Grove history includes external turns once and retains folded Wor
   await page.goto("/");
   await newSession(page);
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
-  await page.getByRole("button", { name: /Create on/ }).click();
+  await createSession(page);
   const input = page.getByRole("textbox", { name: "Message Orc", exact: true });
   for (const [command, result] of [
     ["Build a reader", "The reader is ready."],
@@ -165,6 +165,10 @@ test("restored Grove history includes external turns once and retains folded Wor
   await expect(
     report.getByText("Full diagnostic details.", { exact: true }),
   ).toBeVisible();
+  const receipts = page
+    .locator(".conversation")
+    .getByText("Received.", { exact: true });
+  const previousReceipts = await receipts.count();
   await input.fill("Continue after restoration");
   await input.press("Enter");
   await expect(
@@ -172,7 +176,8 @@ test("restored Grove history includes external turns once and retains folded Wor
       .locator(".conversation .user-message")
       .filter({ hasText: "Continue after restoration" }),
   ).toHaveCount(1);
-  await expect(page.getByText("Received.", { exact: true })).toBeVisible();
+  await expect(receipts).toHaveCount(previousReceipts + 1);
+  await expect(receipts.last()).toBeVisible();
   await page.reload();
   await expect(
     page.getByText("CLI continuation 30", { exact: true }),

@@ -125,7 +125,9 @@ function unit(
     hub,
     name,
     origin,
-    timeoutMs: 2000,
+    // Browser startup can contend with compilation on the host; keep synthetic
+    // peer admission within the browser test budget without treating it as an outage.
+    timeoutMs: 10000,
   });
   const handler = createHandler(app, {
     service,
@@ -361,6 +363,10 @@ const server = Bun.serve({
         sendMode?: string;
         complete?: string;
         question?: boolean;
+        questionId?: string;
+        questionAgent?: string;
+        questionCount?: number;
+        questionOptions?: boolean;
         restartHub?: boolean;
         append?: { agentId: string; text: string };
       };
@@ -437,23 +443,32 @@ const server = Bun.serve({
         });
       }
       if (body.question) {
-        const turnId = current.app.detail("orc").turnId!;
-        current.runtime.emit("orc", {
+        const questionAgent = body.questionAgent ?? "orc";
+        const target = questionAgent === "peer" ? peer : current;
+        const id = questionAgent === "peer" ? "orc" : questionAgent;
+        const turnId = target.app.detail(id).turnId!;
+        target.runtime.emit(id, {
           type: "item",
           turnId,
           item: {
-            id: "fixture-q",
+            id: body.questionId ?? "fixture-q",
             type: "agentMessage",
             delivery: "async",
-            questions: [
-              {
-                question: "Which design?",
-                options: [
-                  { label: "Recommended choice" },
-                  { label: "Alternative" },
-                ],
-              },
-            ],
+            questions: Array.from(
+              { length: body.questionCount ?? 1 },
+              (_, i) => ({
+                question: body.questionId
+                  ? `${body.questionId} question ${i + 1}`
+                  : "Which design?",
+                options:
+                  body.questionOptions === false
+                    ? []
+                    : [
+                        { label: "Recommended choice" },
+                        { label: "Alternative" },
+                      ],
+              }),
+            ),
           },
         });
       }

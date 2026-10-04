@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { newSession, openSettings } from "./browser-actions";
+import { newSession, openSettings, createSession } from "./browser-actions";
 
 test("Worker reports stay in the timeline as one folded incoming card, including after Worker closure", async ({
   page,
@@ -7,7 +7,7 @@ test("Worker reports stay in the timeline as one folded incoming card, including
   await page.goto("/");
   await newSession(page);
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
-  await page.getByRole("button", { name: /Create on/ }).click();
+  await createSession(page);
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Build a reader");
   await input.press("Enter");
@@ -73,7 +73,7 @@ test("create, delegate, read a Worker, insert a skill and close the tree through
   await expect(page.getByText("FlickGrove", { exact: true })).toBeVisible();
   await newSession(page);
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
-  await page.getByRole("button", { name: /Create on/ }).click();
+  await createSession(page);
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Build a reader");
   await input.press("Enter");
@@ -110,50 +110,37 @@ test("create, delegate, read a Worker, insert a skill and close the tree through
   await expect(page.getByText("A place for your next task.")).toBeVisible();
 });
 
-test("multiple questions preserve drafts, contextual arrow navigation and explicit send", async ({
+test("all pending questions preserve drafts and use one explicit batch submission", async ({
   page,
 }) => {
   await page.goto("/");
   await newSession(page);
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
-  await page.getByRole("button", { name: /Create on/ }).click();
+  await createSession(page);
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Ask me questions");
   await input.press("Enter");
-  const navigation = page.getByRole("group", { name: "Question navigation" });
-  await expect(
-    page.getByText("Question 1 of 8", { exact: true }),
-  ).toBeVisible();
-  const answer = page.getByRole("textbox", { name: "Your answer" });
-  await answer.fill("My custom choice");
-  await page.screenshot({
-    path: "../.scratch/flickgrove/questions.png",
-    animations: "disabled",
+  await expect(page.locator(".question-card")).toHaveCount(8);
+  const answer = page.getByRole("textbox", {
+    name: "Your answer · Question 1",
+    exact: true,
   });
+  await answer.fill("My custom choice");
   await answer.press("ArrowRight");
-  await expect(
-    page.getByText("Question 1 of 8", { exact: true }),
-  ).toBeVisible();
-  await navigation.focus();
-  await navigation.press("i");
-  await expect(input).toBeFocused();
-  await navigation.focus();
-  await navigation.press("ArrowRight");
-  await expect(
-    page.getByText("Question 2 of 8", { exact: true }),
-  ).toBeVisible();
-  await navigation.press("ArrowLeft");
   await expect(answer).toHaveValue("My custom choice");
   await page.reload();
   await expect(answer).toHaveValue("My custom choice");
-  await page.getByRole("button", { name: "Send answer", exact: true }).click();
-  await expect(
-    page.getByText("Question 2 of 8", { exact: true }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "All questions" }).click();
-  await expect(
-    page.getByRole("button", { name: /1.*Question 1.*Sent/ }),
-  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Send all answers", exact: true })
+    .click();
+  await expect(page.locator(".question-card")).toHaveCount(0);
+  await expect(page.locator(".answered-summary")).toContainText(
+    "All 8 answers sent",
+  );
+  await page.locator(".answered-summary summary").click();
+  await expect(page.locator(".sent-answer").first()).toHaveText(
+    "My custom choice",
+  );
 });
 
 test("settings affect new sessions, Markdown stays safe and offline reload restores the reading surface", async ({
@@ -187,7 +174,7 @@ test("settings affect new sessions, Markdown stays safe and offline reload resto
   await page.getByRole("button", { name: "Save changes" }).click();
   await newSession(page);
   await page.getByRole("button", { name: "Beta", exact: true }).click();
-  await page.getByRole("button", { name: /Create on/ }).click();
+  await createSession(page);
   await expect(page.locator(".detail-model")).toHaveText("luna / low");
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Show Markdown");
@@ -270,24 +257,17 @@ test("N focuses creation, I focuses Composer, and list navigation survives detai
   await expect(composer).toHaveValue("draft");
   await composer.press("i");
   await expect(composer).toHaveValue("drafti");
+  const previous = await page
+    .locator(".session-item.active .session-open")
+    .getAttribute("data-agent-id");
   await page.keyboard.press("Escape");
-  await expect(page.locator(".navigation-focus")).toHaveCount(0);
-  await page.locator(".session-open").first().click();
-  await expect(
-    page.getByRole("textbox", { name: "Message Orc" }),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.locator(".navigation-focus")).toHaveCount(0);
+  await expect(page.locator(".agent-detail")).toBeVisible();
+  await page.locator(".role-project").click();
   await page.keyboard.press("ArrowDown");
-  const navigation = page.locator(".navigation-focus .session-open");
-  await expect(navigation).toHaveCount(1);
-  const target = await navigation.getAttribute("data-agent-id");
-  await navigation.click();
   await expect(
-    page.getByRole("textbox", { name: "Message Orc" }),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(navigation).toHaveAttribute("data-agent-id", target!);
+    page.locator(".session-item.active .session-open"),
+  ).not.toHaveAttribute("data-agent-id", previous!);
+  await expect(page.locator(".navigation-focus")).toHaveCount(0);
 });
 
 test("Tab completes without moving focus, skill search preserves drafts, and close toast expires", async ({
@@ -304,7 +284,7 @@ test("Tab completes without moving focus, skill search preserves drafts, and clo
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await newSession(page);
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
-  await page.getByRole("button", { name: /Create on/ }).click();
+  await createSession(page);
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Draft before skill ");
   await input.press("Tab");
@@ -347,7 +327,7 @@ test("Orc closure of a running Worker shows Closing and automatically removes it
   await page.goto("/");
   await newSession(page);
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
-  await page.getByRole("button", { name: /Create on/ }).click();
+  await createSession(page);
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Start a long Worker");
   await input.press("Enter");
@@ -416,7 +396,7 @@ test("Orc titles edit in place, cancel safely, retain failed drafts and persist 
   await page.goto("/");
   await newSession(page);
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
-  await page.getByRole("button", { name: /Create on/ }).click();
+  await createSession(page);
   await page.getByRole("button", { name: "Edit title", exact: true }).click();
   const title = page.getByRole("textbox", {
     name: "Session title",

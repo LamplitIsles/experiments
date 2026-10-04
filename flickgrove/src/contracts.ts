@@ -69,7 +69,9 @@ export interface Question {
   answer?: string;
   at: number;
 }
+export type Answer = { questionId: string; answer: string };
 export interface Delivery {
+  answers?: Answer[];
   turnId?: string;
   id: string;
   text: string;

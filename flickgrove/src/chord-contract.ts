@@ -17,6 +17,7 @@ export type Receipt = {
 };
 const id = z.string().min(1).max(500);
 const text = z.string().trim().min(1).max(100_000);
+export const answerSchema = z.object({ questionId: id, answer: text });
 const defaults = z.object({ model: id, effort: id });
 export const inputs = {
   select: z.object({ ids: z.array(id).max(100) }),
@@ -61,7 +62,11 @@ export const inputs = {
   send: z.object({ id, text, operationId: z.string().min(1).max(120) }),
   retryDelivery: z.object({ id, deliveryId: id }),
   lookup: z.object({ id, operationId: z.string().min(1).max(120) }),
-  answer: z.object({ id, questionId: id, answer: text }),
+  answerBatch: z.object({
+    id,
+    answers: z.array(answerSchema).min(1),
+    operationId: z.string().min(1).max(120),
+  }),
   stop: z.object({ id, turnId: id }),
   rename: z.object({ id, title: z.string().max(1000) }),
   closeTree: z.object({ id }),
@@ -139,6 +144,7 @@ export const detailSchema = agent.extend({
       status: z.enum(["queued", "sending", "sent", "failed", "uncertain"]),
       source: z.enum(["user", "worker", "question"]),
       questionIds: z.array(id),
+      answers: z.array(answerSchema).optional(),
       at: z.number(),
       reportingWorkerId: id.optional(),
       error: z.string().optional(),
@@ -205,7 +211,7 @@ export function routeCall(
   };
   let route = simple[url.pathname];
   const match =
-    /^\/agents\/([^/]+)(?:\/(messages|lookup|answer|skills|stop|title|close|history))?$/.exec(
+    /^\/agents\/([^/]+)(?:\/(messages|lookup|answers|skills|stop|title|close|history))?$/.exec(
       url.pathname,
     );
   if (match) {
@@ -213,7 +219,7 @@ export function routeCall(
     const members = {
       messages: "send",
       lookup: "lookup",
-      answer: "answer",
+      answers: "answerBatch",
       skills: "skills",
       stop: "stop",
       title: "rename",

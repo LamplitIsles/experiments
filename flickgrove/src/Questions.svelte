@@ -1,81 +1,62 @@
 <script lang="ts">
   import { Textarea } from "$lib/components/ui/textarea/index.js";
-  import { ChevronLeft, ChevronRight } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { storagePrefix } from "./api";
-  import { untrack } from "svelte";
-  import type { Delivery, Question } from "./contracts";
-  import { editable } from "./api";
+  import { tick, untrack } from "svelte";
+  import type { Answer, Delivery, Question } from "./contracts";
   import * as m from "./paraglide/messages";
-  let { agentId, questions, deliveries, connected, onanswer }: { agentId: string; questions: Question[]; deliveries: Delivery[]; connected: boolean; onanswer: (id: string, answer: string) => Promise<boolean> } = $props();
+  let { agentId, questions, deliveries, connected, onanswer, onlookup, onretry }: { agentId: string; questions: Question[]; deliveries: Delivery[]; connected: boolean; onanswer: (answers: Answer[], operationId: string) => Promise<void>; onlookup: (id: string) => Promise<void>; onretry: (id: string) => Promise<void> } = $props();
   const storageKey = untrack(() => `${storagePrefix}/questions/${agentId}`);
-  type Draft = { selected: string; text: string };
+  type Draft = { selected: string; text: string; edited?: boolean };
   let drafts = $state<Record<string, Draft>>(JSON.parse(localStorage.getItem(storageKey) ?? "{}"));
-  let currentId = $state(untrack(() => localStorage.getItem(`${storageKey}/current`) ?? questions.find(q => q.state === "unanswered")?.id ?? questions[0]?.id));
-  let overview = $state(false); let submitting = $state(false); let feedback = $state("");
-  const current = $derived(questions.find(q => q.id === currentId) ?? questions[0]);
-  const index = $derived(questions.findIndex(q => q.id === current?.id));
-  const sent = $derived(questions.filter(q => q.state === "answered").length);
-  const allSent = $derived(sent === questions.length);
-  const draft = $derived(drafts[current?.id] ?? { selected: current?.options[0]?.label ?? "", text: "" });
-  const delivery = $derived(deliveries.find(d => d.id === `answer:${current?.id}`));
-  function setDraft(value: Draft) { drafts[current.id] = value; localStorage.setItem(storageKey, JSON.stringify(drafts)); }
-  function select(id: string) { currentId = id; overview = false; feedback = ""; localStorage.setItem(`${storageKey}/current`, id); }
-  function move(offset: number) { const q = questions[index + offset]; if (q) select(q.id); }
-  function keydown(event: KeyboardEvent) {
-    if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey || editable(event.target) || overview) return;
-    if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); event.stopPropagation(); move(event.key === "ArrowLeft" ? -1 : 1); }
-  }
-  async function submit() {
-    const value = draft.text.trim() || draft.selected;
-    if (!value || submitting || !connected) return;
-    submitting = true;
-    try {
-      if (await onanswer(current.id, value)) {
-        feedback = m.answer_sent();
-        const next = questions.slice(index + 1).find(q => q.state === "unanswered") ?? questions.find(q => q.id !== current.id && q.state === "unanswered");
-        if (next) { currentId = next.id; localStorage.setItem(`${storageKey}/current`, next.id); }
-      }
-    } finally { submitting = false; }
+  let currentId = $state(untrack(() => localStorage.getItem(`${storageKey}/current`) ?? questions.find(q => q.state === "unanswered")?.id));
+  let historyOpen = $state(untrack(() => localStorage.getItem(`${storageKey}/history`) === "true"));
+  let panel: HTMLElement;
+  const batches = $derived(deliveries.filter(d => d.source === "question" && d.status !== "sent"));
+  const blocked = $derived(new Set(batches.flatMap(d => d.questionIds)));
+  const pending = $derived(questions.filter(q => q.state === "unanswered" && !blocked.has(q.id)));
+  const sent = $derived(questions.filter(q => q.state === "answered"));
+  function draft(q: Question): Draft { return drafts[q.id] ?? { selected: q.options[0]?.label ?? "", text: "" }; }
+  function value(q: Question) { const d = draft(q); return d.text.trim() || d.selected; }
+  $effect(() => {
+    const saved = localStorage.getItem(`${storageKey}/current`);
+    if (saved && questions.some(q => q.id === saved)) currentId = saved;
+  });
+  $effect(() => {
+    const id = currentId;
+    if (id) void tick().then(() => panel?.querySelector<HTMLElement>(`[data-question-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" }));
+  });
+  function select(id: string) { currentId = id; localStorage.setItem(`${storageKey}/current`, id); }
+  function setDraft(q: Question, d: Draft) { select(q.id); drafts[q.id] = d; localStorage.setItem(storageKey, JSON.stringify(drafts)); }
+  function submit() {
+    if (!connected || !pending.length || pending.some(q => !value(q))) return;
+    const frozen = pending.map(q => ({ questionId: q.id, answer: value(q) }));
+    void onanswer(frozen, crypto.randomUUID());
   }
 </script>
-
-{#if allSent}
-  <details class="answered-summary"><summary>{m.answers_complete({ count: questions.length })}</summary>
-    {#each questions as q}<div class="answered-item"><p>{q.text}</p><span>{q.answer}</span></div>{/each}
-  </details>
-{:else}
-  <section class="question-card">
-    <div class="question-top"><span>{m.question_progress({ sent, total: questions.length, pending: questions.length - sent })}</span><Button variant="ghost" size="sm" onclick={() => overview = !overview}>{overview ? m.back_to_question() : m.all_questions()}</Button></div>
-    {#if overview}
-      <div class="question-overview">
-        {#each questions as q, i}
-          <button class:selected={q.id === current.id} onclick={() => select(q.id)}><span class="question-number">{i + 1}</span><span class="truncate">{q.text}</span><span class:sent={q.state === "answered"} class:draft={!!drafts[q.id] && q.state !== "answered"}>{q.state === "answered" ? m.sent() : drafts[q.id] ? m.draft() : m.unanswered()}</span></button>
-        {/each}
-      </div>
-    {:else}
+<div class="questions-content" bind:this={panel}>
+  {#each batches as batch (batch.id)}
+    <section class="answer-batch" aria-label={m.answer_batch()} data-operation-id={batch.id}>
+      <p class="batch-status" role="status">{batch.status === "sending" || batch.status === "queued" ? m.sending() : batch.status === "uncertain" ? m.unknown_delivery() : batch.error ?? m.load_failure()}</p>
+      {#each batch.answers ?? [] as answer}<div class="answered-item"><p>{questions.find(q => q.id === answer.questionId)?.text}</p><span>{answer.answer}</span></div>{/each}
+      {#if batch.status === "uncertain"}<p class="question-hint">{m.lookup_help()}</p><Button variant="ghost" size="sm" disabled={!connected} onclick={() => onlookup(batch.id)}>{m.check_delivery()}</Button>
+      {:else if batch.status === "failed"}<Button variant="secondary" size="sm" disabled={!connected} onclick={() => onretry(batch.id)}>{m.retry()}</Button>{/if}
+    </section>
+  {/each}
+  {#each pending as q, index (q.id)}
+    {@const d = draft(q)}
+    <section class="question-card" class:current-question={q.id === currentId} data-question-id={q.id}>
       <div class="question-content">
-        <p class="question-position">{m.question_position({ current: index + 1, total: questions.length })}</p>
-        <h3>{current.text}</h3>
-        {#if current.state === "answered"}<p class="sent-answer">{current.answer}</p>
-        {:else}
-          <fieldset class="question-options" aria-label={current.text}>
-            {#each current.options as option}
-              <label class:chosen={draft.selected === option.label && !draft.text.trim()}><input type="radio" class="answer-radio" name={`answer-${current.id}`} checked={draft.selected === option.label && !draft.text.trim()} onchange={() => setDraft({ selected: option.label, text: "" })} disabled={submitting} /><span>{option.label}</span></label>
-            {/each}
-          </fieldset>
-          <Textarea aria-label={m.your_answer()} placeholder={m.custom_answer()} value={draft.text} oninput={e => setDraft({ ...draft, text: e.currentTarget.value })} disabled={submitting} rows={2}></Textarea>
-        {/if}
-        {#if delivery?.error}<p class="inline-error" role="alert">{delivery.status === "uncertain" ? m.unknown_delivery() : delivery.error}</p>{/if}
+        <p class="question-position">{m.question_position({ current: index + 1, total: pending.length })}</p>
+        <h3>{q.text}</h3>
+        <fieldset class="question-options" aria-label={q.text}>
+          {#each q.options as option}<label class:chosen={d.selected === option.label && !d.text.trim()}><input type="radio" class="answer-radio" name={`answer-${q.id}`} checked={d.selected === option.label && !d.text.trim()} onchange={() => setDraft(q, { selected: option.label, text: "", edited: true })} /><span>{option.label}</span></label>{/each}
+        </fieldset>
+        <Textarea aria-label={`${m.your_answer()} · ${q.text}`} placeholder={m.custom_answer()} value={d.text} onfocus={() => select(q.id)} oninput={e => setDraft(q, { ...d, text: e.currentTarget.value })} rows={2} />
       </div>
-      <!-- Focusable navigation group owns contextual arrow handling. -->
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-      <div class="question-footer" role="group" aria-label={m.question_navigation()} tabindex="0" onkeydown={keydown}>
-        <div class="question-arrows"><Button variant="ghost" size="icon-sm" aria-label={m.previous_question()} disabled={index === 0} onclick={() => move(-1)}><ChevronLeft /></Button><Button variant="ghost" size="icon-sm" aria-label={m.next_question()} disabled={index === questions.length - 1} onclick={() => move(1)}><ChevronRight /></Button></div>
-        <Button variant="default" size="sm" onclick={submit} disabled={!connected || submitting || current.state === "answered" || delivery?.status === "uncertain" || !(draft.text.trim() || draft.selected)}>{submitting ? m.sending() : current.state === "answered" ? m.answer_sent() : m.send_answer()}</Button>
-      </div>
-      <div class="question-hint">{m.question_keyboard()}</div>
-    {/if}
-  </section>
-  {#if feedback}<p class="answer-feedback" role="status">{feedback}</p>{/if}
-{/if}
+    </section>
+  {/each}
+  {#if pending.length}<div class="batch-submit"><Button size="sm" disabled={!connected || pending.some(q => !value(q))} onclick={submit}>{m.send_all_answers()}</Button></div>{/if}
+  {#if sent.length}<details class="answered-summary" open={historyOpen} ontoggle={e => { historyOpen = e.currentTarget.open; localStorage.setItem(`${storageKey}/history`, String(historyOpen)); }}><summary>{m.answers_complete({ count: sent.length })}</summary>{#each sent as q}<div class="answered-item"><p>{q.text}</p><span class="sent-answer">{q.answer}</span></div>{/each}</details>{/if}
+  {#if !questions.length}<p class="list-empty">{m.questions_empty()}</p>{/if}
+</div>
