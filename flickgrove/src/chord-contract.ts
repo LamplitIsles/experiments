@@ -87,10 +87,10 @@ export const inputs = {
     operationId: z.string().min(1).max(120),
   }),
   stop: z.object({ id, turnId: id }),
-  updateSettings: z.union([
-    z.object({ id, model: id, effort: id, serviceTier: id }).strict(),
-    z.object({ id, fast: z.boolean() }).strict(),
-  ]),
+  updateSettings: z.object({ id, model: id, effort: id }).strict(),
+  updateTreeFast: z
+    .object({ id, fast: z.boolean(), retry: z.boolean().optional() })
+    .strict(),
   rename: z.object({ id, title: z.string().max(1000) }),
   closeTree: z.object({ id }),
 };
@@ -123,6 +123,9 @@ const question = z.object({
   at: z.number(),
 });
 const agent = z.object({
+  treeFast: z.boolean().optional(),
+  treeFastBusy: z.boolean().optional(),
+  treeFastError: z.string().optional(),
   id,
   role: z.enum(["orc", "worker"]),
   ownerId: id.optional(),
@@ -236,7 +239,7 @@ export function routeCall(
   };
   let route = simple[url.pathname];
   const match =
-    /^\/agents\/([^/]+)(?:\/(messages|lookup|answers|skills|stop|title|close|history|settings))?$/.exec(
+    /^\/agents\/([^/]+)(?:\/(messages|lookup|answers|skills|stop|title|close|history|settings|tree-fast))?$/.exec(
       url.pathname,
     );
   if (match) {
@@ -249,6 +252,7 @@ export function routeCall(
       stop: "stop",
       title: "rename",
       settings: "updateSettings",
+      "tree-fast": "updateTreeFast",
       close: "closeTree",
       history: "agentHistory",
     } as const;

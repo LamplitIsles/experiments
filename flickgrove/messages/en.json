@@ -190,5 +190,10 @@
   "session_unavailable": "unavailable",
   "session_current_unavailable": "This model is unavailable. Choose a supported model.",
   "session_fast_unavailable": "Fast is unavailable for this model.",
-  "session_offline": "Reconnect this host to change settings."
+  "session_offline": "Reconnect this host to change settings.",
+  "tree_fast": "Tree Fast",
+  "tree_fast_on": "On for supported models",
+  "tree_fast_off": "Off",
+  "tree_native": "Confirmed next-turn tier: {tier}.",
+  "loading_conversation": "Loading conversation…"
 }

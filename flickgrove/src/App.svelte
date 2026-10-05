@@ -64,9 +64,11 @@
     lostSelection = null;
   });
   let createHost = $state(preferences.host); let catalogSequence = 0;
-  const shownDetail = $derived(detail ? withOutgoing(detail) : null);
+  const target = $derived(snapshot.agents.find(a => a.id === selectedId));
+  // Snapshot identity is display-only; detail remains the write authority.
+  const shownDetail = $derived(detail ? withOutgoing(detail) : target ? { ...target, messages: [], deliveries: [] } : null);
   const hosts = $derived(snapshot.hosts ?? []);
-  const selectedHost = $derived(hosts.find(h => h.id === detail?.hostId));
+  const selectedHost = $derived(hosts.find(h => h.id === shownDetail?.hostId));
   const hostConnected = $derived(!!selectedHost?.connected);
   const visibleAgents = $derived(snapshot.agents.filter(a => !hostFilter || a.hostId === hostFilter));
   $effect(() => { localStorage.setItem(`${storagePrefix}/host-filter`, hostFilter); });
@@ -77,7 +79,7 @@
   }
   const roots = $derived(snapshot.agents.filter(a => a.role === "orc"));
   const fastAvailable = $derived(!!settings && [settings.orc, settings.worker].every(role => models.find(model => model.id === role.model)?.fastTier));
-  const owner = $derived(snapshot.agents.find(a => a.id === detail?.ownerId));
+  const owner = $derived(snapshot.agents.find(a => a.id === shownDetail?.ownerId));
   const filteredProjects = $derived(projects.filter(p => `${p.alias} ${p.name}`.toLowerCase().includes(search.toLowerCase())));
 
   $effect(() => { if (modal === "new" && !filteredProjects.some(p => p.alias === projectId)) projectId = filteredProjects[0]?.alias ?? ""; });
@@ -211,6 +213,7 @@
     for(const pending of outgoing.entries) if(pending.status === 'uncertain') void lookup(pending.agentId,pending.id);
   }
   async function send(id: string, text: string, operationId: string, images: ImageDraft[] = []) {
+    if (detail?.id !== id) return false;
     if (!client || !hosts.find(h=>h.id===id.split(':')[0])?.connected) {
       acceptReceipt(id,{operationId,state:"rejected",turnId:null,error:"Execution host disconnected before submission"});
       try{await restoreImages(id,operationId,text);}catch(e){if(selectedId===id)error=(e as Error).message;}
@@ -373,10 +376,10 @@
 </header>
 <main class:with-detail={!!selectedId}>
   <SessionList bind:this={sessionList} agents={visibleAgents} {hosts} {selectedId} {loading} {connected} {closingId} closeError={selectedId === closeError?.id ? null : closeError} onclosetree={closeTree} onopen={open} onnew={() => show("new")} />
-  {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !detail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
+  {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !shownDetail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
   {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
-  {#if error && !modal && !detail}<div class="app-error" role="alert"><span>{error}</span><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => error = ""}><X /></Button></div>{/if}
-  {#if detail && selectedId}{#key detail.id + ":" + (detail.historyCursor ?? "")}<AgentDetail detail={shownDetail!} {owner} {skills} {now} connected={hostConnected} entryId={snapshot.entryId} entryConnected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} onstop={stop} onupdate={result => { if (selectedId === result.id) detail = result; snapshot = { ...snapshot, agents: snapshot.agents.map(a => a.id === result.id ? { ...a, model: result.model, effort: result.effort, serviceTier: result.serviceTier } : a) }; }} onrename={rename} onrefresh={load} actionError={error} closeError={closeError?.id === detail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} onlookup={operationId => selectedId ? lookup(selectedId,operationId) : Promise.resolve()} ondismiss={operationId=>{if(selectedId)dismissOutgoing(selectedId,operationId);}} />{/key}{/if}
+  {#if error && !modal && !shownDetail}<div class="app-error" role="alert"><span>{error}</span><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => error = ""}><X /></Button></div>{/if}
+  {#if shownDetail && selectedId}{#key selectedId}<AgentDetail detail={shownDetail!} ready={!!detail} tree={shownDetail!.role === "orc" ? target : owner} {owner} {skills} {now} connected={hostConnected} entryId={snapshot.entryId} entryConnected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} onstop={stop} onupdate={result => { if (selectedId === result.id) detail = result; snapshot = { ...snapshot, agents: snapshot.agents.map(a => a.id === result.id ? { ...a, model: result.model, effort: result.effort, serviceTier: result.serviceTier } : a) }; }} onrename={rename} onrefresh={load} actionError={error} closeError={closeError?.id === shownDetail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} onlookup={operationId => selectedId ? lookup(selectedId,operationId) : Promise.resolve()} ondismiss={operationId=>{if(selectedId)dismissOutgoing(selectedId,operationId);}} />{/key}{/if}
 </main>
 
 <Dialog.Root open={modalOpen} onOpenChange={value => { if (!value && modal) void closeModal(); }}>

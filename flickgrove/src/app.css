@@ -1824,10 +1824,6 @@ pre {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.session-model svg {
-  flex-shrink: 0;
-  color: #b8daf5;
-}
 .session-model:disabled {
   opacity: 0.55;
   cursor: default;
@@ -1843,17 +1839,6 @@ pre {
   display: grid;
   gap: 6px;
   min-width: 0;
-}
-.session-settings-dialog .fast-setting {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: 0;
-  padding: 12px 0;
-}
-.session-settings-dialog small {
-  display: block;
-  color: #a1a1aa;
 }
 .session-settings-error {
   color: #fca5a5;
