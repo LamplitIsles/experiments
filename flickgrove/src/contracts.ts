@@ -96,6 +96,9 @@ export interface Delivery {
   at: number;
 }
 export interface Agent {
+  treeFast?: boolean;
+  treeFastBusy?: boolean;
+  treeFastError?: string;
   directoryBranch?: string;
   historyCursor?: string;
   historyMessageCount?: number;

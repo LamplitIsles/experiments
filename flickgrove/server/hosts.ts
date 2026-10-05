@@ -39,6 +39,9 @@ function qualified<T extends Agent>(host: Host, a: T): T {
     closed: a.closed,
     questions: a.questions,
     serviceTier: a.serviceTier,
+    treeFast: a.treeFast,
+    treeFastBusy: a.treeFastBusy,
+    treeFastError: a.treeFastError,
     stop: a.stop,
     closeRequest: a.closeRequest,
     historyCursor: a.historyCursor,
@@ -207,11 +210,17 @@ export class HostService {
   }
   async updateSettings(
     id: string,
-    settings: import("./runtime").ExecutionSettings | { fast: boolean },
+    settings: { model: string; effort: string },
   ) {
     return qualified(
       this.local(),
       await this.workspace.updateSettings(this.raw(id), settings),
+    );
+  }
+  async updateTreeFast(id: string, fast: boolean, retry = false) {
+    return qualified(
+      this.local(),
+      await this.workspace.updateTreeFast(this.raw(id), fast, retry),
     );
   }
   async rename(id: string, title: string) {

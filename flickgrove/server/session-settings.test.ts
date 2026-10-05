@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -53,28 +54,51 @@ test("native confirmed per-session settings serialize with start/steer, persist 
     await control({ hold: true });
     const a = await app.createOrc("fixture");
     const b = await app.createOrc("fixture");
+    const db = new Database(join(options.directory, "workspace.sqlite"));
+    const state = JSON.parse(
+      (
+        db.query("SELECT value FROM workspace WHERE id=1").get() as {
+          value: string;
+        }
+      ).value,
+    );
+    db.close();
+    const token = state.agents.find((v: any) => v.id === a.id).token;
+    const worker = (await app.tool(token, "worker_start", {
+      project: "fixture",
+      title: "Native Worker",
+      spec: "fixture",
+      message: "Work",
+    })) as import("../src/contracts").Detail;
     const original = a.threadId!;
     await app.send(a.id, "first", "first");
     const turn = app.detail(a.id).turnId!;
     const target = `${host.identity.id}:${a.id}`;
+    await expect(
+      invoke(host, "updateSettings", { id: target, fast: true }),
+    ).rejects.toThrow();
     await control({ hold: true, settingsDelay: 100 });
-    const update = invoke(host, "updateSettings", { id: target, fast: true });
-    const steer = app.send(a.id, "steer", "steer");
+    const update = invoke(host, "updateTreeFast", { id: target, fast: true });
+    await expect(app.send(a.id, "blocked", "blocked")).rejects.toThrow(
+      "Tree settings",
+    );
     expect(app.detail(a.id).serviceTier).toBe("default");
-    await update;
+    expect(((await update) as import("../src/contracts").Detail).treeFast).toBe(
+      true,
+    );
     expect(
       (await requests()).find((r) => r.method === "thread/settings/update")
         .params,
     ).toEqual({ threadId: original, serviceTier: "priority" });
-    await steer;
+    await app.send(a.id, "steer", "steer");
     expect(app.detail(a.id).serviceTier).toBe("priority");
+    expect(app.detail(worker.id).serviceTier).toBe("priority");
     const unchangedCount = (await requests()).filter(
       (r) => r.method === "thread/settings/update",
     ).length;
     await app.updateSettings(a.id, {
       model: "fixture-model",
       effort: "medium",
-      serviceTier: "priority",
     });
     expect(
       (await requests()).filter((r) => r.method === "thread/settings/update"),
@@ -95,52 +119,32 @@ test("native confirmed per-session settings serialize with start/steer, persist 
         id: "other:" + a.id,
         model: "fixture-model",
         effort: "medium",
-        serviceTier: "priority",
       }),
     ).rejects.toThrow("another Peer");
     await expect(
       app.updateSettings(a.id, {
         model: "no-model",
         effort: "medium",
-        serviceTier: "default",
       }),
     ).rejects.toThrow("supported");
     await expect(
       app.updateSettings(a.id, {
         model: "fixture-model",
         effort: "low",
-        serviceTier: "default",
       }),
     ).rejects.toThrow("supported");
-    await expect(
-      app.updateSettings(a.id, {
-        model: "fixture-model",
-        effort: "medium",
-        serviceTier: "bogus",
-      }),
-    ).rejects.toThrow("Fast");
     await control({ hold: true, failSettings: true });
-    await expect(
-      app.updateSettings(a.id, {
-        model: "fixture-model",
-        effort: "medium",
-        serviceTier: "default",
-      }),
-    ).rejects.toThrow("fixture settings rejected");
+    const rejected = await app.updateTreeFast(a.id, false);
+    expect(rejected.treeFastError).toContain("fixture settings rejected");
     expect(app.detail(a.id).serviceTier).toBe("priority");
     await control({ hold: true, dropSettingsNotification: true });
-    await expect(
-      app.updateSettings(a.id, {
-        model: "fixture-model",
-        effort: "medium",
-        serviceTier: "default",
-      }),
-    ).rejects.toThrow("outcome unknown");
+    const unknown = await app.updateTreeFast(a.id, false, true);
+    expect(unknown.treeFastError).toContain("outcome unknown");
     expect(app.detail(a.id).serviceTier).toBe("priority");
     const count = (await requests()).filter(
       (r) => r.method === "thread/settings/update",
     ).length;
-    await app.reconcileSettings(a.id);
+    await app.updateTreeFast(a.id, false, true);
     expect(app.detail(a.id).serviceTier).toBe("default");
     expect(
       (await requests()).filter((r) => r.method === "thread/settings/update"),
@@ -148,11 +152,7 @@ test("native confirmed per-session settings serialize with start/steer, persist 
     await control({});
     await app.stop(a.id, turn);
     await Bun.sleep(50);
-    await app.updateSettings(a.id, {
-      model: "fixture-model",
-      effort: "medium",
-      serviceTier: "priority",
-    });
+    await app.updateTreeFast(a.id, true);
     await app.send(a.id, "next", "next");
     const starts = (await requests()).filter(
       (r) => r.method === "turn/start" && r.params.threadId === original,
@@ -182,7 +182,7 @@ test("native confirmed per-session settings serialize with start/steer, persist 
       (await requests()).filter(
         (r) => r.method === "thread/start" && !r.params.ephemeral,
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(
       app.detail(a.id).messages.filter((m) => m.role === "user"),
     ).toHaveLength(3);
@@ -210,7 +210,6 @@ test("Worker and Orc settings leave captured Worker defaults and other sessions 
     await app.updateSettings(orc.id, {
       model: "luna",
       effort: "low",
-      serviceTier: "default",
     });
     await app.tool(token, "worker_start", {
       project: "alpha",
@@ -224,27 +223,22 @@ test("Worker and Orc settings leave captured Worker defaults and other sessions 
     await app.updateSettings(worker.id, {
       model: "sol",
       effort: "high",
-      serviceTier: "priority",
     });
     expect(app.detail(orc.id).model).toBe("luna");
-    expect(app.detail(other.id)).toEqual({
+    expect(app.detail(other.id)).toMatchObject({
       ...other,
       messages: [],
       deliveries: [],
     });
-    await expect(
-      app.updateSettings(worker.id, {
-        model: "luna",
-        effort: "low",
-        serviceTier: "priority",
-      }),
-    ).rejects.toThrow("Fast");
+    await app.updateTreeFast(worker.id, true);
+    await app.updateSettings(worker.id, { model: "luna", effort: "low" });
+    expect(app.detail(worker.id).serviceTier).toBe("default");
+    expect(app.detail(orc.id).treeFast).toBe(true);
     await app.tool(token, "worker_close", { workerId: worker.id });
     await expect(
       app.updateSettings(worker.id, {
         model: "sol",
         effort: "medium",
-        serviceTier: "default",
       }),
     ).rejects.toThrow();
     const gate = Promise.withResolvers<void>();
@@ -252,12 +246,154 @@ test("Worker and Orc settings leave captured Worker defaults and other sessions 
     const saving = app.updateSettings(orc.id, {
       model: "sol",
       effort: "high",
-      serviceTier: "priority",
     });
     await Bun.sleep(10);
     app.dispose();
     gate.resolve();
     await expect(saving).rejects.toThrow("Session changed");
+  } finally {
+    app.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("tree Fast from Worker preserves models/efforts, isolates roots, covers future Workers and confirms partial retry without replay", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "grove-tree-fast-"));
+  const runtime = new FakeRuntime();
+  const app = new Workspace({
+    directory,
+    runtime,
+    projects: async () => fixtureProjects,
+    branches: { read: async () => null },
+  });
+  try {
+    const orc = await app.createOrc("alpha");
+    const other = await app.createOrc("beta");
+    const token = runtime.agents.get(orc.id)!.token;
+    const start = () =>
+      app.tool(token, "worker_start", {
+        project: "alpha",
+        title: "Worker",
+        spec: "fixture",
+        message: "Work",
+      }) as Promise<import("../src/contracts").Detail>;
+    const w = await start();
+    const unsupported = await start();
+    await app.updateSettings(unsupported.id, { model: "luna", effort: "low" });
+    const calls: string[] = [];
+    let unknown = true;
+    runtime.settingsOverride = async (id, value) => {
+      calls.push(id);
+      if (id === w.id && unknown) {
+        runtime.settings.set(w.threadId!, value); // Native applied but confirmation was lost.
+        throw new Error("outcome unknown");
+      }
+    };
+    const result = await app.updateTreeFast(w.id, true);
+    expect(result.treeFastError).toContain("outcome unknown");
+    expect(app.detail(orc.id).serviceTier).toBe("priority");
+    expect(app.detail(w.id).serviceTier).toBe("default");
+    expect(app.detail(unsupported.id)).toMatchObject({
+      model: "luna",
+      effort: "low",
+      serviceTier: "default",
+      treeFast: true,
+    });
+    expect(app.detail(other.id)).toMatchObject({
+      serviceTier: "default",
+      treeFast: false,
+    });
+    await expect(app.updateTreeFast(w.id, false)).rejects.toThrow("Retry");
+    unknown = false;
+    const before = calls.length;
+    await app.updateTreeFast(w.id, true, true);
+    expect(calls).toHaveLength(before); // Readback discovers native confirmation; no blind replay.
+    expect(app.detail(w.id).serviceTier).toBe("priority");
+    expect(app.detail(orc.id).treeFastError).toBeUndefined();
+    const future = await start();
+    expect(future).toMatchObject({
+      model: "sol",
+      effort: "medium",
+      serviceTier: "priority",
+    });
+    const closing = await start();
+    await app.tool(token, "worker_close", { workerId: closing.id });
+    const readsBefore = runtime.settingsReads.length;
+    const gate = Promise.withResolvers<void>();
+    runtime.settingsOverride = async () => gate.promise;
+    const pending = app.updateTreeFast(future.id, false);
+    await Bun.sleep(10);
+    await expect(app.updateTreeFast(orc.id, false)).rejects.toThrow(
+      "being saved",
+    );
+    await expect(
+      app.updateSettings(w.id, { model: "sol", effort: "high" }),
+    ).rejects.toThrow("being saved");
+    await expect(app.send(orc.id, "blocked", "blocked")).rejects.toThrow(
+      "being saved",
+    );
+    await expect(app.closeTree(orc.id)).rejects.toThrow("being saved");
+    await expect(start()).rejects.toThrow("being saved");
+    await expect(
+      app.tool(token, "worker_close", { workerId: w.id }),
+    ).rejects.toThrow("being saved");
+    gate.resolve();
+    await pending;
+    expect(
+      app
+        .snapshot()
+        .agents.filter(
+          (a) => (a.id === orc.id || a.ownerId === orc.id) && !a.closeRequest,
+        )
+        .every((a) => a.serviceTier === "default"),
+    ).toBe(true);
+    expect(app.detail(other.id).treeFast).toBe(false);
+    expect(runtime.settingsReads.slice(readsBefore)).not.toContain(closing.id);
+    expect(app.detail(closing.id)).toMatchObject({
+      serviceTier: "priority",
+      closeRequest: expect.anything(),
+    });
+  } finally {
+    app.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("changing the initial Fast owner's model to unsupported retains tree policy and future Worker Fast", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "grove-initial-tree-policy-"));
+  const runtime = new FakeRuntime();
+  const app = new Workspace({
+    directory,
+    runtime,
+    projects: async () => fixtureProjects,
+    branches: { read: async () => null },
+  });
+  try {
+    const orc = await app.createOrc("alpha", {
+      fast: true,
+      orc: { model: "sol", effort: "medium" },
+      worker: { model: "sol", effort: "high" },
+    });
+    const token = runtime.agents.get(orc.id)!.token;
+    await app.updateSettings(orc.id, { model: "luna", effort: "low" });
+    expect(app.detail(orc.id)).toMatchObject({
+      model: "luna",
+      effort: "low",
+      serviceTier: "default",
+      treeFast: true,
+    });
+    const future = (await app.tool(token, "worker_start", {
+      project: "alpha",
+      title: "Worker",
+      spec: "fixture",
+      message: "Work",
+    })) as import("../src/contracts").Detail;
+    expect(future).toMatchObject({
+      model: "sol",
+      effort: "high",
+      serviceTier: "priority",
+      treeFast: true,
+    });
   } finally {
     app.dispose();
     await rm(directory, { recursive: true, force: true });

@@ -1809,6 +1809,16 @@ pre {
   }
 }
 
+.session-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.session-controls .tree-fast {
+  flex-shrink: 0;
+}
 .session-model {
   display: inline-flex;
   align-items: center;
@@ -1823,10 +1833,6 @@ pre {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.session-model svg {
-  flex-shrink: 0;
-  color: #b8daf5;
 }
 .session-model:disabled {
   opacity: 0.55;
@@ -1843,17 +1849,6 @@ pre {
   display: grid;
   gap: 6px;
   min-width: 0;
-}
-.session-settings-dialog .fast-setting {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: 0;
-  padding: 12px 0;
-}
-.session-settings-dialog small {
-  display: block;
-  color: #a1a1aa;
 }
 .session-settings-error {
   color: #fca5a5;

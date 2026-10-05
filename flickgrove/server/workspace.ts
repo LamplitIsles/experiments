@@ -20,7 +20,6 @@ import type {
   RuntimeAgent,
   RuntimeEvent,
   RuntimeHandle,
-  ExecutionSettings,
 } from "./runtime";
 import { sameDirectory } from "./directory";
 import { DeliveryRejected, StaleTurn } from "./runtime";
@@ -42,6 +41,7 @@ export class Workspace {
     Map<string, { id: string; text: string }>
   >();
   private readonly subscribers = new Set<() => void>();
+  private readonly treeActions = new Set<string>();
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly opening = new Map<string, Promise<RuntimeHandle>>();
   private readonly completedTurns = new Set<string>();
@@ -322,6 +322,9 @@ export class Workspace {
       owner && this.branches.shares(owner.project.path, a.project.path);
     return structuredClone({
       ...agent,
+      treeFast: (owner ?? a).treeFast ?? (owner ?? a).serviceTier !== "default",
+      treeFastError: (owner ?? a).treeFastError,
+      treeFastBusy: this.treeActions.has(owner?.id ?? a.id),
       directoryBranch: sharedDirectory
         ? undefined
         : this.branches.value(a.project.path),
@@ -372,30 +375,19 @@ export class Workspace {
       this.save();
     });
   }
-  async updateSettings(
-    id: string,
-    value: ExecutionSettings | { fast: boolean },
-  ) {
+  private root(a: RuntimeAgent) {
+    return a.ownerId ? this.agent(a.ownerId) : a;
+  }
+  async updateSettings(id: string, value: { model: string; effort: string }) {
     return this.serialize(id, async () => {
       const a = this.agent(id);
       if (a.closeRequest) throw new Error("Session is closing");
       const handle = await this.handle(a, false);
       const current = await handle.readSettings();
-      const requested = "fast" in value ? current : value;
-      const model = (await this.models()).find((m) => m.id === requested.model);
-      if (!model?.efforts.includes(requested.effort))
+      const model = (await this.models()).find((m) => m.id === value.model);
+      if (!model?.efforts.includes(value.effort))
         throw new Error("Choose a supported model and reasoning effort");
-      const serviceTier =
-        "fast" in value
-          ? value.fast
-            ? model.fastTier
-            : "default"
-          : value.serviceTier;
-      if (
-        !serviceTier ||
-        (serviceTier !== "default" && serviceTier !== model.fastTier)
-      )
-        throw new Error("Fast is not available for this model");
+      const root = this.root(a);
       if (
         this.disposed ||
         a.closed ||
@@ -403,14 +395,22 @@ export class Workspace {
         this.handles.get(id) !== handle
       )
         throw new Error("Session is no longer editable");
+      // An explicit model save retains the initial policy even if the owner's
+      // new model cannot use Fast; startup never initializes this stored field.
+      root.treeFast ??=
+        (root.id === a.id ? current.serviceTier : root.serviceTier) !==
+        "default";
+      this.save();
+      const serviceTier = root.treeFast
+        ? (model.fastTier ?? "default")
+        : "default";
+      const requested = { ...value, serviceTier };
       const settings =
-        current.model === requested.model &&
-        current.effort === requested.effort &&
+        current.model === value.model &&
+        current.effort === value.effort &&
         current.serviceTier === serviceTier
           ? current
-          : await handle.updateSettings(
-              "fast" in value ? { serviceTier } : value,
-            );
+          : await handle.updateSettings(requested);
       if (
         this.disposed ||
         a.closed ||
@@ -422,6 +422,71 @@ export class Workspace {
       this.save();
       return this.detail(id);
     });
+  }
+  async updateTreeFast(id: string, fast: boolean, retry = false) {
+    const root = this.root(this.agent(id));
+    if (this.treeActions.has(root.id))
+      throw new Error("Tree settings are being saved");
+    if (root.treeFastError && !retry)
+      throw new Error("Retry the previous tree settings operation first");
+    if (retry && root.treeFastError && root.treeFast !== fast)
+      throw new Error("Retry the saved tree policy first");
+    this.treeActions.add(root.id);
+    this.save();
+    try {
+      // Drain already admitted operations; later starts/settings/closure are refused.
+      await Promise.allSettled(
+        this.state.agents
+          .filter((a) => a.id === root.id || a.ownerId === root.id)
+          .map((a) => this.queues.get(a.id)),
+      );
+      if (this.disposed || root.closed || root.closeRequest)
+        throw new Error("Tree is no longer editable");
+      const members = this.state.agents.filter(
+        (a) =>
+          !a.closed &&
+          !a.closeRequest &&
+          (a.id === root.id || a.ownerId === root.id),
+      );
+      const models = await this.models();
+      root.treeFast = fast;
+      root.treeFastError = undefined;
+      this.save();
+      const failures: string[] = [];
+      for (const a of members) {
+        try {
+          if (a.closed || a.closeRequest) continue;
+          const handle = await this.handle(a, false);
+          // Explicit retry always reads the original native authority before any update.
+          const current = await handle.readSettings();
+          if (this.disposed || a.closed || a.closeRequest)
+            throw new Error("Session changed");
+          Object.assign(a, current);
+          this.save();
+          const model = models.find((m) => m.id === current.model);
+          if (!model) throw new Error("Model is unavailable");
+          const serviceTier = fast ? (model.fastTier ?? "default") : "default";
+          if (current.serviceTier !== serviceTier) {
+            const confirmed = await handle.updateSettings({ serviceTier });
+            if (this.disposed || a.closed || a.closeRequest)
+              throw new Error("Settings outcome unknown");
+            Object.assign(a, confirmed);
+            this.save();
+          }
+        } catch (e) {
+          failures.push(
+            `${a.title}: ${e instanceof Error ? e.message : "Settings outcome unknown"}`,
+          );
+        }
+      }
+      root.treeFastError = failures.length ? failures.join("; ") : undefined;
+      this.save();
+      return this.detail(id);
+    } finally {
+      this.treeActions.delete(root.id);
+      this.save();
+      this.advanceWorkerCloses();
+    }
   }
   async weekly() {
     try {
@@ -755,6 +820,9 @@ export class Workspace {
     return handle;
   }
   private serialize<T>(id: string, work: () => Promise<T>): Promise<T> {
+    const a = this.state.agents.find((a) => a.id === id);
+    if (a && this.treeActions.has(a.ownerId ?? a.id))
+      return Promise.reject(new Error("Tree settings are being saved"));
     const previous = this.queues.get(id) ?? Promise.resolve();
     const next = previous.catch(() => {}).then(work);
     this.queues.set(id, next);
@@ -1110,6 +1178,14 @@ export class Workspace {
             messages: [],
             deliveries: [],
           };
+          {
+            const model = (await this.models()).find((m) => m.id === w.model);
+            if (!model) throw new Error("Worker model is unavailable");
+            w.serviceTier =
+              (a.treeFast ?? a.serviceTier !== "default")
+                ? (model.fastTier ?? "default")
+                : "default";
+          }
           this.state.agents.push(w);
           this.save();
           try {
@@ -1169,6 +1245,8 @@ export class Workspace {
       case "worker_close": {
         const input = z.object(toolDefinitions.worker_close.shape).parse(args);
         const w = this.ownedWorker(a, input.workerId);
+        if (this.treeActions.has(a.id))
+          throw new Error("Tree settings are being saved");
         if (input.confirmInterrupted && (w.state !== "error" || w.turnId))
           throw new Error(
             "Only an interrupted Worker with no observed active turn can be confirmed",
@@ -1231,7 +1309,11 @@ export class Workspace {
       )
         continue;
       let reason: string | undefined;
-      if (this.queues.has(w.id) || this.opening.has(w.id))
+      if (
+        this.treeActions.has(w.ownerId!) ||
+        this.queues.has(w.id) ||
+        this.opening.has(w.id)
+      )
         reason = "Waiting for in-flight Worker operations";
       else if (
         w.deliveries.some((d) =>

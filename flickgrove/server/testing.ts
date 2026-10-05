@@ -43,6 +43,7 @@ export class FakeRuntime implements Runtime {
       nextCursor: start ? String(start) : null,
     };
   }
+  readonly settingsReads: string[] = [];
   readonly settings = new Map<string, import("./runtime").ExecutionSettings>();
   settingsOverride?: (
     id: string,
@@ -140,7 +141,10 @@ export class FakeRuntime implements Runtime {
         ? String(this.historyItems.get(threadId)!.length)
         : undefined,
       ...saved,
-      readSettings: async () => ({ ...this.settings.get(threadId)! }),
+      readSettings: async () => {
+        this.settingsReads.push(agent.id);
+        return { ...this.settings.get(threadId)! };
+      },
       updateSettings: async (value) => {
         const updated = { ...this.settings.get(threadId)!, ...value };
         await this.settingsOverride?.(agent.id, updated);

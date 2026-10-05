@@ -23,6 +23,9 @@ async function setup(page: Page, width = 1440) {
   });
   await page.goto(origin);
   await choose(page, "Reader performance");
+  await expect(
+    page.getByRole("button", { name: "Tree Fast", exact: true }),
+  ).toBeEnabled();
 }
 for (const width of [1440, 390])
   test(`${width} opened remote settings atomic save/cancel, quick fast, next-turn and draft/caret; mobile click and Worker isolation`, async ({
@@ -55,6 +58,9 @@ for (const width of [1440, 390])
         document.activeElement === el,
       ]),
     ).toEqual([3, 8, true]);
+    await expect(
+      page.getByRole("button", { name: "Session settings", exact: true }),
+    ).toBeEnabled();
     await page.keyboard.press("Alt+m");
     const panel = page.getByRole("dialog", { name: "Session settings" });
     await expect(panel).toBeVisible();
@@ -85,7 +91,7 @@ for (const width of [1440, 390])
     await expect(
       panel.getByRole("combobox", { name: "Reasoning effort" }),
     ).toHaveValue("low");
-    await expect(panel.getByRole("switch", { name: "Fast" })).toBeDisabled(); // remote catalogue differs from page Peer
+    await expect(panel.getByRole("switch", { name: "Fast" })).toHaveCount(0); // remote catalogue differs from page Peer
     await panel.getByRole("button", { name: "Save changes" }).click();
     await expect(panel).toBeHidden();
     await expect(page.locator(".detail-model")).toContainText(
@@ -93,14 +99,16 @@ for (const width of [1440, 390])
     );
     const after = await info(page);
     expect(after.localAgents).toEqual(before.localAgents);
-    expect(after.peerAgents.find((a: any) => a.id === "reader")).toEqual(
-      before.peerAgents.find((a: any) => a.id === "reader"),
-    );
+    expect(after.peerAgents.find((a: any) => a.id === "reader")).toEqual({
+      ...before.peerAgents.find((a: any) => a.id === "reader"),
+      serviceTier: "default",
+      treeFast: false,
+    });
     expect(after.peerInputs).toEqual(before.peerInputs);
     await expect(composer).toBeFocused();
     await page.waitForTimeout(150);
     await page.screenshot({
-      path: `../.scratch/flickgrove-session-settings/${width}-saved.png`,
+      path: `../.scratch/flickgrove-first-detail-tree-fast/${width}-saved.png`,
     });
     await page.reload();
     await expect(page.locator(".detail-model")).toContainText(
@@ -112,16 +120,16 @@ for (const width of [1440, 390])
     await panel
       .getByRole("combobox", { name: "Model", exact: true })
       .selectOption("gpt-6.1-sol");
-    await panel.getByRole("switch", { name: "Fast" }).click();
+    await expect(panel.getByRole("switch", { name: "Fast" })).toHaveCount(0);
     await page.waitForTimeout(150);
     await page.screenshot({
-      path: `../.scratch/flickgrove-session-settings/${width}-panel.png`,
+      path: `../.scratch/flickgrove-first-detail-tree-fast/${width}-panel.png`,
     });
     const box = await panel.boundingBox();
     expect(box!.width).toBeLessThanOrEqual(width - 32);
     await page.keyboard.press("Escape");
     await expect(panel).toBeHidden();
-    // Worker control uses its own identity, including while Working.
+    // Worker Fast targets its owning tree, including while Working.
     if (width === 390) await page.keyboard.press("Escape");
     await page
       .locator(".session-item")
@@ -140,6 +148,9 @@ for (const width of [1440, 390])
       "aria-label",
       "Reader implementation",
     );
+    await expect(
+      page.getByRole("button", { name: "Tree Fast", exact: true }),
+    ).toBeEnabled();
     await page.keyboard.press("Alt+f");
     await expect
       .poll(
@@ -147,11 +158,97 @@ for (const width of [1440, 390])
           (await info(page)).peerAgents.find((a: any) => a.id === "reader")
             .serviceTier,
       )
-      .toBe("default");
+      .toBe("priority");
+    const treeAfter = await info(page);
+    expect(treeAfter.peerAgents.find((a: any) => a.id === "orc").model).toBe(
+      "gpt-6-luna",
+    );
+    expect(treeAfter.peerAgents.find((a: any) => a.id === "orc").treeFast).toBe(
+      true,
+    );
+    expect(treeAfter.localAgents).toEqual(before.localAgents);
+    await choose(page, "Reader performance");
+    const zap = page.getByRole("button", { name: "Tree Fast", exact: true });
+    await expect(zap).toHaveAttribute("aria-pressed", "true");
+    await expect(zap).toHaveAttribute(
+      "title",
+      /Fast is unavailable for this model/,
+    );
     expect(
-      (await info(page)).peerAgents.find((a: any) => a.id === "orc").model,
-    ).toBe("gpt-6-luna");
+      treeAfter.peerAgents.find((a: any) => a.id === "orc").serviceTier,
+    ).toBe("default");
+    await page.screenshot({
+      path: `../.scratch/flickgrove-first-detail-tree-fast/${width}-tree-fast.png`,
+    });
   });
+test("model failure Cancel clears only model error; OptF toggles normally and tree unknown Retry retains its target", async ({
+  page,
+}) => {
+  const calls: any[] = [];
+  page.on("websocket", (ws) =>
+    ws.on("framesent", (frame) => {
+      const value = JSON.parse(String(frame.payload));
+      if (value.call?.member === "updateTreeFast")
+        calls.push(value.call.args[0]);
+    }),
+  );
+  await setup(page);
+  const composer = page.getByRole("textbox", { name: "Message Orc" });
+  await composer.fill("failed model draft");
+  await composer.evaluate((el: HTMLTextAreaElement) => {
+    el.focus();
+    el.setSelectionRange(3, 8);
+  });
+  await change(page, { settingsFailure: true });
+  await page.keyboard.press("Alt+m");
+  const panel = page.getByRole("dialog", { name: "Session settings" });
+  await panel
+    .getByRole("combobox", { name: "Reasoning effort" })
+    .selectOption("high");
+  await panel.getByRole("button", { name: "Save changes" }).click();
+  await expect(panel.getByRole("alert")).toContainText(
+    "settings outcome unknown",
+  );
+  await panel.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(panel).toBeHidden();
+  await expect(page.locator("span.session-settings-error")).toHaveCount(0);
+  expect(calls).toEqual([]);
+  expect(
+    (await info(page)).peerAgents.find((a: any) => a.id === "orc").effort,
+  ).toBe("low");
+  await expect(composer).toBeFocused();
+  expect(
+    await composer.evaluate((el: HTMLTextAreaElement) => [
+      el.selectionStart,
+      el.selectionEnd,
+    ]),
+  ).toEqual([3, 8]);
+  await change(page, { settingsFailure: false });
+  const zap = page.getByRole("button", { name: "Tree Fast", exact: true });
+  const target = (await zap.getAttribute("aria-pressed")) !== "true";
+  await page.keyboard.press("Alt+f");
+  await expect(zap).toBeEnabled();
+  await expect(zap).toHaveAttribute("aria-pressed", String(target));
+  expect(calls.map(({ fast, retry }) => ({ fast, retry }))).toEqual([
+    { fast: target, retry: false },
+  ]);
+  await change(page, { settingsFailure: true });
+  await zap.click();
+  await expect(page.locator("span.session-settings-error")).toContainText(
+    "settings outcome unknown",
+  );
+  await change(page, { settingsFailure: false });
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.locator("span.session-settings-error")).toHaveCount(0);
+  await expect(zap).toHaveAttribute("aria-pressed", String(!target));
+  expect(calls.slice(1).map(({ fast, retry }) => ({ fast, retry }))).toEqual([
+    { fast: !target, retry: false },
+    { fast: !target, retry: true },
+  ]);
+  expect(
+    (await info(page)).peerAgents.find((a: any) => a.id === "orc").effort,
+  ).toBe("low");
+});
 test("foreground/IME/repeat guards, unknown failure, busy late target and offline do not cross sessions or type characters", async ({
   page,
 }) => {
@@ -202,16 +299,23 @@ test("foreground/IME/repeat guards, unknown failure, busy late target and offlin
   ).toBe("priority");
   await page.waitForTimeout(150);
   await page.screenshot({
-    path: "../.scratch/flickgrove-session-settings/1440-failure.png",
+    path: "../.scratch/flickgrove-first-detail-tree-fast/1440-failure.png",
   });
   await change(page, { settingsFailure: false, settingsDelay: 700 });
-  await page.keyboard.press("Alt+f");
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
   await page.keyboard.press("Alt+f");
   await choose(page, "Streaming voice input");
-  await page.waitForTimeout(850);
-  await expect(page.locator(".detail-model [aria-label='Fast']")).toHaveCount(
-    1,
-  );
+  await choose(page, "Reader performance");
+  await expect(
+    page.getByRole("button", { name: "Tree Fast", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Tree Fast", exact: true }),
+  ).toBeEnabled({ timeout: 10000 });
+  await choose(page, "Streaming voice input");
+  await expect(
+    page.getByRole("button", { name: "Tree Fast", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   expect((await info(page)).localAgents).toEqual(original.localAgents);
   await choose(page, "Reader performance");
   await expect(page.locator(".detail-model [aria-label='Fast']")).toHaveCount(
@@ -224,10 +328,12 @@ test("foreground/IME/repeat guards, unknown failure, busy late target and offlin
   ).toBeDisabled();
   await composer.focus();
   await page.keyboard.press("Alt+f");
-  await expect(page.getByRole("alert")).toContainText("Reconnect this host");
+  await expect(
+    page.getByRole("button", { name: "Tree Fast", exact: true }),
+  ).toBeDisabled();
   await page.waitForTimeout(150);
   await page.screenshot({
-    path: "../.scratch/flickgrove-session-settings/1440-offline.png",
+    path: "../.scratch/flickgrove-first-detail-tree-fast/1440-offline.png",
   });
 });
 test("390 long model, unavailable current choice, retained catalogue on failure and busy atomic save", async ({
@@ -247,10 +353,10 @@ test("390 long model, unavailable current choice, retained catalogue on failure 
   await expect(
     panel.getByRole("combobox", { name: "Reasoning effort" }),
   ).toHaveValue("medium");
-  await expect(panel.getByRole("switch", { name: "Fast" })).toBeDisabled();
+  await expect(panel.getByRole("switch", { name: "Fast" })).toHaveCount(0);
   await page.waitForTimeout(150);
   await page.screenshot({
-    path: "../.scratch/flickgrove-session-settings/390-long-panel.png",
+    path: "../.scratch/flickgrove-first-detail-tree-fast/390-long-panel.png",
   });
   await change(page, { settingsDelay: 700 });
   await panel.getByRole("button", { name: "Save changes" }).click();
@@ -259,16 +365,25 @@ test("390 long model, unavailable current choice, retained catalogue on failure 
   ).toBeDisabled();
   await page.waitForTimeout(150);
   await page.screenshot({
-    path: "../.scratch/flickgrove-session-settings/390-busy.png",
+    path: "../.scratch/flickgrove-first-detail-tree-fast/390-busy.png",
   });
   await expect(panel).toBeHidden();
   await expect(page.locator(".detail-model")).toContainText(long);
+  const modelBox = await page.locator(".detail-model").boundingBox();
+  const zapBox = await page
+    .getByRole("button", { name: "Tree Fast", exact: true })
+    .boundingBox();
+  expect(
+    Math.abs(
+      modelBox!.y + modelBox!.height / 2 - zapBox!.y - zapBox!.height / 2,
+    ),
+  ).toBeLessThan(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     390,
   );
   await page.waitForTimeout(150);
   await page.screenshot({
-    path: "../.scratch/flickgrove-session-settings/390-long-saved.png",
+    path: "../.scratch/flickgrove-first-detail-tree-fast/390-long-saved.png",
   });
   await change(page, { modelFailure: true, settingsDelay: 0 });
   await page
@@ -280,7 +395,7 @@ test("390 long model, unavailable current choice, retained catalogue on failure 
   ).toHaveValue(long);
   await page.waitForTimeout(150);
   await page.screenshot({
-    path: "../.scratch/flickgrove-session-settings/390-catalogue-failure.png",
+    path: "../.scratch/flickgrove-first-detail-tree-fast/390-catalogue-failure.png",
   });
   await panel.getByRole("button", { name: "Cancel", exact: true }).click();
   await change(page, { modelFailure: false, settingsLong: false });
@@ -295,7 +410,7 @@ test("390 long model, unavailable current choice, retained catalogue on failure 
   ).toBeDisabled();
   await page.waitForTimeout(150);
   await page.screenshot({
-    path: "../.scratch/flickgrove-session-settings/390-unavailable.png",
+    path: "../.scratch/flickgrove-first-detail-tree-fast/390-unavailable.png",
   });
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");

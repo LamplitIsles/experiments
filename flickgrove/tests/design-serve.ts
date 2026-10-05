@@ -1,3 +1,5 @@
+let detailDelay = 0;
+let detailFailure = false;
 let settingsDelay = 0;
 let settingsFailure = false;
 let settingsLong = false;
@@ -189,10 +191,20 @@ function unit(
     // Browser startup can contend with compilation on the host; keep synthetic
     // peer admission within the browser test budget without treating it as an outage.
   });
+  const originalDetail = service.detail.bind(service);
+  service.detail = async (id) => {
+    if (name === "Neil’s Mac") {
+      if (detailDelay) await Bun.sleep(detailDelay);
+      if (detailFailure) throw new Error("Synthetic detail unavailable");
+    }
+    return originalDetail(id);
+  };
   const handler = createHandler(app, {
     service,
     origin,
-    assets: resolve("../.scratch/flickgrove-browser/assets"),
+    assets: resolve(
+      process.env.GROVE_TEST_ASSETS ?? "../.scratch/flickgrove-browser/assets",
+    ),
   });
   return {
     app,
@@ -231,7 +243,7 @@ function agent(
             text: Array.from(
               { length: 70 },
               (_, i) =>
-                `Paragraph ${i + 1}. Long conversation fixture for reading and following new messages.`,
+                `${title}: Paragraph ${i + 1}. Long conversation fixture for reading and following new messages.`,
             ).join("\n\n"),
             at: Date.now(),
           },
@@ -288,6 +300,8 @@ async function reset(mode = "working") {
         ),
       );
     }
+  detailDelay = 0;
+  detailFailure = false;
   settingsDelay = 0;
   settingsFailure = false;
   settingsLong = false;
@@ -457,6 +471,8 @@ const server = Bun.serve({
       });
     if (url.pathname === "/fixture/change" && request.method === "POST") {
       const body = (await request.json()) as {
+        detailDelay?: number;
+        detailFailure?: boolean;
         settingsLong?: boolean;
         settingsDelay?: number;
         settingsFailure?: boolean;
@@ -486,6 +502,8 @@ const server = Bun.serve({
         restartHub?: boolean;
         append?: { agentId: string; text: string };
       };
+      if (body.detailDelay !== undefined) detailDelay = body.detailDelay;
+      if (body.detailFailure !== undefined) detailFailure = body.detailFailure;
       if (body.settingsLong !== undefined) settingsLong = body.settingsLong;
       if (body.settingsDelay !== undefined) settingsDelay = body.settingsDelay;
       if (body.settingsFailure !== undefined)
@@ -632,7 +650,11 @@ const server = Bun.serve({
     }
     if (url.pathname === "/" && request.method === "GET") {
       const file = await Bun.file(
-        resolve("../.scratch/flickgrove-browser/assets/index.html"),
+        resolve(
+          process.env.GROVE_TEST_ASSETS
+            ? `${process.env.GROVE_TEST_ASSETS}/index.html`
+            : "../.scratch/flickgrove-browser/assets/index.html",
+        ),
       ).text();
       const configs = [
         {
