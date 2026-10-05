@@ -18,7 +18,7 @@
   let choices = $state<Model[]>(untrack(() => catalogues.get(detail.hostId!)) ?? []);
   let model = $state(untrack(() => detail.model)); let effort = $state(untrack(() => detail.effort));
   let requestedFast = $state<boolean | undefined>();
-  let busy = $state(false); let error = $state(""); let catalogueError = $state("");
+  let busy = $state(false); let modelError = $state(""); let treeError = $state(""); let catalogueError = $state("");
   let composing = false; let alive = true;
   let previous: HTMLElement | null = null;
   let selection: [number, number, "forward" | "backward" | "none"] | undefined;
@@ -34,7 +34,8 @@
     } catch (e) { if (alive) catalogueError = e instanceof Error ? e.message : m.load_failure(); }
   }
   $effect(() => {
-    if (open) untrack(() => { model = detail.model; effort = detail.effort; error = ""; void catalogue(); });
+    modelError = "";
+    if (open) untrack(() => { model = detail.model; effort = detail.effort; void catalogue(); });
   });
   function capture() {
     previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -48,25 +49,27 @@
   }
   function show(captured = false) {
     if (!connected || tree?.treeFastBusy || navigation.details.at(-1) !== detail.id || navigation.surfaces.length || pending.has(tree?.id ?? detail.ownerId ?? detail.id)) return;
-    if (!captured) capture(); model = detail.model; effort = detail.effort; error = "";
+    if (!captured) capture(); model = detail.model; effort = detail.effort; modelError = "";
     setSurface("session-settings", true);
   }
-  async function save(quick = false, retry = false) {
+  async function save(action: "model" | "tree", retry = false) {
+    const treeAction = action === "tree";
+    const fail = (message: string) => { if (treeAction) treeError = message; else modelError = message; };
     const id = detail.id; const rootId = tree?.id ?? detail.ownerId ?? id;
     if (pending.has(rootId) || tree?.treeFastBusy) return;
-    if (!connected) { error = m.session_offline(); return; }
-    pending.add(rootId); busy = true; error = "";
+    if (!connected) { fail(m.session_offline()); return; }
+    pending.add(rootId); busy = true; fail("");
     try {
       if (!alive || navigation.details.at(-1) !== id) return;
       if (detail.closed || detail.closeRequest) throw new Error(m.session_offline());
-      if (!quick && !valid) throw new Error(m.session_choose_supported());
+      if (!treeAction && !valid) throw new Error(m.session_choose_supported());
       const fast = retry ? (tree?.treeFastError ? !!tree.treeFast : requestedFast ?? !!tree?.treeFast) : !tree?.treeFast;
-      if (quick) requestedFast = fast;
-      const result = await api<Detail>(`/agents/${id}/${quick ? "tree-fast" : "settings"}`, quick ? { fast, retry } : { model, effort });
+      if (treeAction) requestedFast = fast;
+      const result = await api<Detail>(`/agents/${id}/${treeAction ? "tree-fast" : "settings"}`, treeAction ? { fast, retry } : { model, effort });
       if (!alive || detail.id !== id || navigation.details.at(-1) !== id) return;
       onupdate(result);
-      if (!quick && open) await back();
-    } catch (e) { if (alive && detail.id === id) error = e instanceof Error ? e.message : m.load_failure(); }
+      if (!treeAction && open) await back();
+    } catch (e) { if (alive && detail.id === id) fail(e instanceof Error ? e.message : m.load_failure()); }
     finally { pending.delete(rootId); if (alive) busy = false; }
   }
   $effect(() => { if (connected) untrack(() => { void catalogue(); }); });
@@ -78,13 +81,13 @@
     if (event.target instanceof HTMLElement && event.target.closest(".questions-panel, .questions-content, .question-card")) return;
     event.preventDefault();
     if (event.repeat || treeBusy || pending.has(tree?.id ?? detail.ownerId ?? detail.id)) return;
-    if (event.code === "KeyM") show(); else if (connected) void save(true, !!tree?.treeFastError || !!error);
+    if (event.code === "KeyM") show(); else if (connected) void save("tree", !!tree?.treeFastError || !!treeError);
   }
 </script>
 <svelte:window onkeydown={keydown} oncompositionstart={() => composing = true} oncompositionend={() => composing = false} />
 <div class="session-controls"><button class="detail-model session-model" tabindex="-1" disabled={!connected || treeBusy || !!detail.closeRequest} title={m.session_next_turn()} aria-label={m.session_settings()} onpointerdown={capture} onclick={() => show(true)}><span>{detail.model} / {detail.effort}</span></button>
-<Button variant="ghost" size="icon-sm" class="tree-fast" disabled={!connected || treeBusy || !!detail.closeRequest} aria-label={m.tree_fast()} aria-pressed={!!tree?.treeFast} title={fastTitle} onclick={() => save(true, !!tree?.treeFastError || !!error)}><Zap size={14} class={tree?.treeFast ? "size-3.5 text-primary" : "size-3.5 text-muted-foreground"} /></Button></div>
-{#if (error || tree?.treeFastError) && !open}<span class="session-settings-error" role="alert">{error || tree?.treeFastError} <button disabled={!connected || treeBusy} onclick={() => save(true, !!tree?.treeFastError || !!error)}>{m.retry()}</button></span>{/if}
+<Button variant="ghost" size="icon-sm" class="tree-fast" disabled={!connected || treeBusy || !!detail.closeRequest} aria-label={m.tree_fast()} aria-pressed={!!tree?.treeFast} title={fastTitle} onclick={() => save("tree", !!tree?.treeFastError || !!treeError)}><Zap size={14} class={tree?.treeFast ? "size-3.5 text-primary" : "size-3.5 text-muted-foreground"} /></Button></div>
+{#if (treeError || tree?.treeFastError) && !open}<span class="session-settings-error" role="alert">{treeError || tree?.treeFastError} <button disabled={!connected || treeBusy} onclick={() => save("tree", !!tree?.treeFastError || !!treeError)}>{m.retry()}</button></span>{/if}
 <Dialog.Root {open} onOpenChange={value => { if (!value) void back(); }}>
   <Dialog.Content class="session-settings-dialog" showCloseButton={false} onCloseAutoFocus={event => { event.preventDefault(); void restore(); }}>
     <Dialog.Title>{m.session_settings()}</Dialog.Title>
@@ -96,7 +99,7 @@
     {#if !selected && choices.length}<p role="status">{m.session_current_unavailable()}</p>{:else if selected && !valid}<p role="status">{m.session_choose_supported()}</p>{/if}
     <label>{m.effort()}<NativeSelect class="w-full min-w-0" aria-label={m.effort()} bind:value={effort} disabled={treeBusy || !selected}>{#if !valid}<option value={effort}>{effort}</option>{/if}{#each selected?.efforts ?? [] as value}<option value={value}>{value}</option>{/each}</NativeSelect></label>
     {#if catalogueError}<p role="alert">{catalogueError} <button onclick={catalogue} disabled={treeBusy}>{m.retry()}</button></p>{/if}
-    {#if error}<p class="session-settings-error" role="alert">{error}</p>{/if}
-    <div class="modal-action"><Button variant="ghost" size="sm" onclick={() => back()}>{m.cancel()}</Button><Button size="sm" disabled={treeBusy || !connected || !valid || !!detail.closeRequest} onclick={() => save()}>{m.save_changes()}</Button></div>
+    {#if modelError}<p class="session-settings-error" role="alert">{modelError}</p>{/if}
+    <div class="modal-action"><Button variant="ghost" size="sm" onclick={() => back()}>{m.cancel()}</Button><Button size="sm" disabled={treeBusy || !connected || !valid || !!detail.closeRequest} onclick={() => save("model")}>{m.save_changes()}</Button></div>
   </Dialog.Content>
 </Dialog.Root>

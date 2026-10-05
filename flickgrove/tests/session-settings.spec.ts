@@ -181,6 +181,74 @@ for (const width of [1440, 390])
       path: `../.scratch/flickgrove-first-detail-tree-fast/${width}-tree-fast.png`,
     });
   });
+test("model failure Cancel clears only model error; OptF toggles normally and tree unknown Retry retains its target", async ({
+  page,
+}) => {
+  const calls: any[] = [];
+  page.on("websocket", (ws) =>
+    ws.on("framesent", (frame) => {
+      const value = JSON.parse(String(frame.payload));
+      if (value.call?.member === "updateTreeFast")
+        calls.push(value.call.args[0]);
+    }),
+  );
+  await setup(page);
+  const composer = page.getByRole("textbox", { name: "Message Orc" });
+  await composer.fill("failed model draft");
+  await composer.evaluate((el: HTMLTextAreaElement) => {
+    el.focus();
+    el.setSelectionRange(3, 8);
+  });
+  await change(page, { settingsFailure: true });
+  await page.keyboard.press("Alt+m");
+  const panel = page.getByRole("dialog", { name: "Session settings" });
+  await panel
+    .getByRole("combobox", { name: "Reasoning effort" })
+    .selectOption("high");
+  await panel.getByRole("button", { name: "Save changes" }).click();
+  await expect(panel.getByRole("alert")).toContainText(
+    "settings outcome unknown",
+  );
+  await panel.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(panel).toBeHidden();
+  await expect(page.locator("span.session-settings-error")).toHaveCount(0);
+  expect(calls).toEqual([]);
+  expect(
+    (await info(page)).peerAgents.find((a: any) => a.id === "orc").effort,
+  ).toBe("low");
+  await expect(composer).toBeFocused();
+  expect(
+    await composer.evaluate((el: HTMLTextAreaElement) => [
+      el.selectionStart,
+      el.selectionEnd,
+    ]),
+  ).toEqual([3, 8]);
+  await change(page, { settingsFailure: false });
+  const zap = page.getByRole("button", { name: "Tree Fast", exact: true });
+  const target = (await zap.getAttribute("aria-pressed")) !== "true";
+  await page.keyboard.press("Alt+f");
+  await expect(zap).toBeEnabled();
+  await expect(zap).toHaveAttribute("aria-pressed", String(target));
+  expect(calls.map(({ fast, retry }) => ({ fast, retry }))).toEqual([
+    { fast: target, retry: false },
+  ]);
+  await change(page, { settingsFailure: true });
+  await zap.click();
+  await expect(page.locator("span.session-settings-error")).toContainText(
+    "settings outcome unknown",
+  );
+  await change(page, { settingsFailure: false });
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.locator("span.session-settings-error")).toHaveCount(0);
+  await expect(zap).toHaveAttribute("aria-pressed", String(!target));
+  expect(calls.slice(1).map(({ fast, retry }) => ({ fast, retry }))).toEqual([
+    { fast: !target, retry: false },
+    { fast: !target, retry: true },
+  ]);
+  expect(
+    (await info(page)).peerAgents.find((a: any) => a.id === "orc").effort,
+  ).toBe("low");
+});
 test("foreground/IME/repeat guards, unknown failure, busy late target and offline do not cross sessions or type characters", async ({
   page,
 }) => {
