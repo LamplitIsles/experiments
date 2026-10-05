@@ -1809,6 +1809,16 @@ pre {
   }
 }
 
+.session-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.session-controls .tree-fast {
+  flex-shrink: 0;
+}
 .session-model {
   display: inline-flex;
   align-items: center;

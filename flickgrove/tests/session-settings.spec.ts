@@ -301,6 +301,15 @@ test("390 long model, unavailable current choice, retained catalogue on failure 
   });
   await expect(panel).toBeHidden();
   await expect(page.locator(".detail-model")).toContainText(long);
+  const modelBox = await page.locator(".detail-model").boundingBox();
+  const zapBox = await page
+    .getByRole("button", { name: "Tree Fast", exact: true })
+    .boundingBox();
+  expect(
+    Math.abs(
+      modelBox!.y + modelBox!.height / 2 - zapBox!.y - zapBox!.height / 2,
+    ),
+  ).toBeLessThan(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     390,
   );

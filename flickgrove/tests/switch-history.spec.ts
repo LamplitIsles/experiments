@@ -176,6 +176,22 @@ test("delayed real Chord history is deduplicated across rapid switches and isola
   ).toBeVisible();
   expect((await control(page)).reads.length).toBe(reads + 1);
   await choose(page, "Remote history");
+  await expect(page.locator(".historical-messages")).toContainText(
+    "Remote history item 34",
+  );
+  await expect
+    .poll(() =>
+      page
+        .locator(".conversation")
+        .evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop),
+    )
+    .toBe(0);
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
   await page.locator(".conversation").evaluate((el) => (el.scrollTop = 20));
   await expect(
     page.getByRole("button", { name: "Jump to bottom" }),

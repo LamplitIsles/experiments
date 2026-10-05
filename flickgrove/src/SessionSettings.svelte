@@ -82,8 +82,8 @@
   }
 </script>
 <svelte:window onkeydown={keydown} oncompositionstart={() => composing = true} oncompositionend={() => composing = false} />
-<button class="detail-model session-model" tabindex="-1" disabled={!connected || treeBusy || !!detail.closeRequest} title={m.session_next_turn()} aria-label={m.session_settings()} onpointerdown={capture} onclick={() => show(true)}><span>{detail.model} / {detail.effort}</span></button>
-<Button variant="ghost" size="icon-sm" class="tree-fast" disabled={!connected || treeBusy || !!detail.closeRequest} aria-label={m.tree_fast()} aria-pressed={!!tree?.treeFast} title={fastTitle} onclick={() => save(true, !!tree?.treeFastError || !!error)}><Zap size={14} class={tree?.treeFast ? "text-primary" : "text-muted-foreground"} /></Button>
+<div class="session-controls"><button class="detail-model session-model" tabindex="-1" disabled={!connected || treeBusy || !!detail.closeRequest} title={m.session_next_turn()} aria-label={m.session_settings()} onpointerdown={capture} onclick={() => show(true)}><span>{detail.model} / {detail.effort}</span></button>
+<Button variant="ghost" size="icon-sm" class="tree-fast" disabled={!connected || treeBusy || !!detail.closeRequest} aria-label={m.tree_fast()} aria-pressed={!!tree?.treeFast} title={fastTitle} onclick={() => save(true, !!tree?.treeFastError || !!error)}><Zap size={14} class={tree?.treeFast ? "size-3.5 text-primary" : "size-3.5 text-muted-foreground"} /></Button></div>
 {#if (error || tree?.treeFastError) && !open}<span class="session-settings-error" role="alert">{error || tree?.treeFastError} <button disabled={!connected || treeBusy} onclick={() => save(true, !!tree?.treeFastError || !!error)}>{m.retry()}</button></span>{/if}
 <Dialog.Root {open} onOpenChange={value => { if (!value) void back(); }}>
   <Dialog.Content class="session-settings-dialog" showCloseButton={false} onCloseAutoFocus={event => { event.preventDefault(); void restore(); }}>
