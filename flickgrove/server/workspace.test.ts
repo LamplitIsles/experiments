@@ -1153,7 +1153,7 @@ test("restart reads canonical Orc names without resuming turns and preserves cac
   expect(restored.detail(owner.id).title).toBe("Renamed in Codex");
   expect(restored.detail(worker.id).title).toBe("Reader");
   expect(runtime.inputs).toHaveLength(inputCount);
-  expect(resumes).toBe(0);
+  expect(resumes).toBe(2); // Original Orc and Worker settings reconcile without sending a turn.
   restored.dispose();
   runtime.readTitle = async () => {
     throw new Error("offline");
@@ -1182,6 +1182,14 @@ test("resuming an Orc refreshes its cached name but Worker task titles stay loca
   await Bun.sleep(0);
   runtime.names.set(restored.detail(owner.id).threadId!, "External name");
   runtime.names.set(restored.detail(worker.id).threadId!, "Codex Worker name");
+  runtime.emit(owner.id, {
+    type: "disconnected",
+    error: "fixture disconnect before resume",
+  });
+  runtime.emit(worker.id, {
+    type: "disconnected",
+    error: "fixture disconnect before resume",
+  });
   await restored.send(owner.id, "Resume explicitly", "resume-name");
   expect(restored.detail(owner.id).title).toBe("External name");
   await restored.tool(runtime.agents.get(owner.id)!.token, "worker_send", {

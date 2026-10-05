@@ -136,9 +136,15 @@ test("one managed process isolates concurrent threads, native requests, Stop/Clo
       expect(
         r.params.config["mcp_servers.flickgrove"].env.FLICKGROVE_AGENT_TOKEN,
       ).toBe(owned.token);
-      expect(r.params.config.model_reasoning_effort).toBe(owned.effort);
-      expect(r.params.serviceTier).toBe(owned.serviceTier);
-      expect(r.params.model).toBe(owned.model);
+      expect(r.params.config.model_reasoning_effort).toBe(
+        r.method === "thread/start" ? owned.effort : undefined,
+      );
+      expect(r.params.serviceTier).toBe(
+        r.method === "thread/start" ? owned.serviceTier : undefined,
+      );
+      expect(r.params.model).toBe(
+        r.method === "thread/start" ? owned.model : undefined,
+      );
       expect(r.params.developerInstructions).toContain(
         owned.role === "orc" ? "Orchestrator (Orc)" : "You are a Worker",
       );

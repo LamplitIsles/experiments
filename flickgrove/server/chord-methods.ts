@@ -68,6 +68,15 @@ export async function invoke(app: HostService, member: Method, input: unknown) {
       const p = parse(member);
       return await app.stop(p.id, p.turnId);
     }
+    case "updateSettings": {
+      const p = parse(member);
+      return await app.updateSettings(
+        p.id,
+        "fast" in p
+          ? { fast: p.fast }
+          : { model: p.model, effort: p.effort, serviceTier: p.serviceTier },
+      );
+    }
     case "rename": {
       const p = parse(member);
       return await app.rename(p.id, p.title);

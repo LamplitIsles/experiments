@@ -354,7 +354,7 @@ test("the SDK adapter initializes isolated role configuration, discovers enabled
         (r) =>
           r.method === "turn/start" && r.params.threadId === handle.threadId,
       ).params.serviceTier,
-    ).toBe("priority");
+    ).toBeUndefined();
     expect(
       requests.some(
         (r) =>

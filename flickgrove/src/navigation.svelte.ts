@@ -3,6 +3,7 @@ export type Surface =
   | "history"
   | "history-preview"
   | "settings"
+  | "session-settings"
   | "keys"
   | "skill"
   | "weekly"

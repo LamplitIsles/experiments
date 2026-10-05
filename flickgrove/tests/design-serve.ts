@@ -1,3 +1,6 @@
+let settingsDelay = 0;
+let settingsFailure = false;
+let settingsLong = false;
 // Isolated synthetic preview: production components and real Hub/HTTP/Workspace,
 // with only test-owned state and FakeRuntime. No installed project/provider access.
 import { temporaryGit, fixtureGit } from "../server/branch-testing";
@@ -95,6 +98,18 @@ function unit(
   runtime.models = async () => {
     if (modelFailure) throw new Error("Synthetic model outage");
     return [
+      ...(settingsLong
+        ? [
+            {
+              id: "fixture-model-with-an-extremely-long-name-for-mobile-overflow-verification",
+              name: "Fixture model with an extremely long name for mobile overflow verification",
+              efforts: ["medium"],
+              defaultEffort: "medium",
+              isDefault: false,
+              fastTier: null,
+            },
+          ]
+        : []),
       {
         id: "gpt-6.1-sol",
         name: "GPT-6.1-Sol",
@@ -109,9 +124,14 @@ function unit(
         efforts: ["low", "medium"],
         defaultEffort: "low",
         isDefault: false,
-        fastTier: "priority",
+        fastTier: name === "Neil’s Mac" ? null : "priority",
       },
     ];
+  };
+  runtime.settingsOverride = async () => {
+    if (settingsDelay) await Bun.sleep(settingsDelay);
+    if (settingsFailure)
+      throw new Error("Synthetic settings outcome unknown; reopen to check.");
   };
   runtime.skills = async () => [
     { name: "to-orc-impl", description: "Implement one spec with one Worker" },
@@ -268,6 +288,9 @@ async function reset(mode = "working") {
         ),
       );
     }
+  settingsDelay = 0;
+  settingsFailure = false;
+  settingsLong = false;
   freshNoWorkers = mode === "no-workers";
   longConversations = mode === "long";
   peerDrop = false;
@@ -434,6 +457,9 @@ const server = Bun.serve({
       });
     if (url.pathname === "/fixture/change" && request.method === "POST") {
       const body = (await request.json()) as {
+        settingsLong?: boolean;
+        settingsDelay?: number;
+        settingsFailure?: boolean;
         execution?: {
           agentId?: string;
           threadId?: string;
@@ -460,6 +486,10 @@ const server = Bun.serve({
         restartHub?: boolean;
         append?: { agentId: string; text: string };
       };
+      if (body.settingsLong !== undefined) settingsLong = body.settingsLong;
+      if (body.settingsDelay !== undefined) settingsDelay = body.settingsDelay;
+      if (body.settingsFailure !== undefined)
+        settingsFailure = body.settingsFailure;
       if (body.branchFailure !== undefined) branchFailure = body.branchFailure;
       if (body.branch && branchFixture)
         fixtureGit(

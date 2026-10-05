@@ -202,6 +202,18 @@ export class HostService {
       await this.workspace.send(this.raw(id), text, operationId, images),
     );
   }
+  reconcileSettings(id: string) {
+    return this.workspace.reconcileSettings(this.raw(id));
+  }
+  async updateSettings(
+    id: string,
+    settings: import("./runtime").ExecutionSettings | { fast: boolean },
+  ) {
+    return qualified(
+      this.local(),
+      await this.workspace.updateSettings(this.raw(id), settings),
+    );
+  }
   async rename(id: string, title: string) {
     return qualified(
       this.local(),

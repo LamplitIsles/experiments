@@ -20,6 +20,7 @@ import type {
   RuntimeAgent,
   RuntimeEvent,
   RuntimeHandle,
+  ExecutionSettings,
 } from "./runtime";
 import { sameDirectory } from "./directory";
 import { DeliveryRejected, StaleTurn } from "./runtime";
@@ -97,13 +98,11 @@ export class Workspace {
     this.save();
     this.advanceWorkerCloses();
     for (const a of this.state.agents) {
-      if (a.role !== "orc" || a.closed || !a.threadId) continue;
+      if (a.closed || !a.threadId) continue;
+      // Resume the original native thread without settings overrides; reconcile
+      // before any queued subsequent turn, retaining the cache if unavailable.
       void this.serialize(a.id, async () => {
-        const title = await this.options.runtime.readTitle(a.threadId!);
-        if (!this.disposed && !a.closed) {
-          a.title = title ?? "New session";
-          this.save();
-        }
+        await this.handle(a);
       }).catch(() => {});
     }
   }
@@ -353,6 +352,73 @@ export class Workspace {
       const handle = await this.handle(a, false);
       await handle.rename(name);
       a.title = name;
+      this.save();
+      return this.detail(id);
+    });
+  }
+  async reconcileSettings(id: string) {
+    return this.serialize(id, async () => {
+      const a = this.agent(id);
+      const handle = await this.handle(a, false);
+      const value = await handle.readSettings();
+      if (this.disposed || a.closed || this.handles.get(id) !== handle) return;
+      if (
+        a.model === value.model &&
+        a.effort === value.effort &&
+        a.serviceTier === value.serviceTier
+      )
+        return;
+      Object.assign(a, value);
+      this.save();
+    });
+  }
+  async updateSettings(
+    id: string,
+    value: ExecutionSettings | { fast: boolean },
+  ) {
+    return this.serialize(id, async () => {
+      const a = this.agent(id);
+      if (a.closeRequest) throw new Error("Session is closing");
+      const handle = await this.handle(a, false);
+      const current = await handle.readSettings();
+      const requested = "fast" in value ? current : value;
+      const model = (await this.models()).find((m) => m.id === requested.model);
+      if (!model?.efforts.includes(requested.effort))
+        throw new Error("Choose a supported model and reasoning effort");
+      const serviceTier =
+        "fast" in value
+          ? value.fast
+            ? model.fastTier
+            : "default"
+          : value.serviceTier;
+      if (
+        !serviceTier ||
+        (serviceTier !== "default" && serviceTier !== model.fastTier)
+      )
+        throw new Error("Fast is not available for this model");
+      if (
+        this.disposed ||
+        a.closed ||
+        a.closeRequest ||
+        this.handles.get(id) !== handle
+      )
+        throw new Error("Session is no longer editable");
+      const settings =
+        current.model === requested.model &&
+        current.effort === requested.effort &&
+        current.serviceTier === serviceTier
+          ? current
+          : await handle.updateSettings(
+              "fast" in value ? { serviceTier } : value,
+            );
+      if (
+        this.disposed ||
+        a.closed ||
+        a.closeRequest ||
+        this.handles.get(id) !== handle
+      )
+        throw new Error("Session changed. Settings outcome unknown.");
+      Object.assign(a, settings);
       this.save();
       return this.detail(id);
     });
@@ -675,6 +741,9 @@ export class Workspace {
       try {
         handle = await opening;
         a.threadId = handle.threadId;
+        a.model = handle.model ?? a.model;
+        a.effort = handle.effort ?? a.effort;
+        a.serviceTier = handle.serviceTier ?? a.serviceTier;
         if (refreshTitle && a.role === "orc")
           a.title = handle.threadName ?? "New session";
         this.handles.set(a.id, handle);

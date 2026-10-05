@@ -88,7 +88,10 @@ function connect(socket: ServerWebSocket<SocketData>) {
             throw new Error("Select one visible conversation");
           // Validate identities before changing subscriptions; caches cannot grant writes.
           const gen = ++generation;
-          for (const id of p.ids) await app.detail(id);
+          for (const id of p.ids) {
+            await app.detail(id);
+            await app.reconcileSettings(id).catch(() => {});
+          }
           if (gen !== generation || disposed) return null;
           selection = p.ids;
           unobserve();

@@ -37,7 +37,7 @@ export const inputs = {
   select: z.object({ ids: z.array(id).max(100) }),
   identity: z.object({}),
   projects: z.object({ host: id.optional() }),
-  models: z.object({}).strict(),
+  models: z.object({ host: id.optional() }).strict(),
   weekly: z.object({}).strict(),
   history: z.object({
     project: id,
@@ -87,6 +87,10 @@ export const inputs = {
     operationId: z.string().min(1).max(120),
   }),
   stop: z.object({ id, turnId: id }),
+  updateSettings: z.union([
+    z.object({ id, model: id, effort: id, serviceTier: id }).strict(),
+    z.object({ id, fast: z.boolean() }).strict(),
+  ]),
   rename: z.object({ id, title: z.string().max(1000) }),
   closeTree: z.object({ id }),
 };
@@ -216,7 +220,7 @@ export function routeCall(
   const simple: Record<string, [Method, unknown]> = {
     "/identity": ["identity", {}],
     "/projects": ["projects", { host }],
-    "/models": ["models", {}],
+    "/models": ["models", { host }],
     "/weekly": ["weekly", {}],
     "/agents": ["createOrc", { ...(body as object), host }],
     "/history": [
@@ -232,7 +236,7 @@ export function routeCall(
   };
   let route = simple[url.pathname];
   const match =
-    /^\/agents\/([^/]+)(?:\/(messages|lookup|answers|skills|stop|title|close|history))?$/.exec(
+    /^\/agents\/([^/]+)(?:\/(messages|lookup|answers|skills|stop|title|close|history|settings))?$/.exec(
       url.pathname,
     );
   if (match) {
@@ -244,6 +248,7 @@ export function routeCall(
       skills: "skills",
       stop: "stop",
       title: "rename",
+      settings: "updateSettings",
       close: "closeTree",
       history: "agentHistory",
     } as const;

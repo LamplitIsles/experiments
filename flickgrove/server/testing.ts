@@ -43,6 +43,11 @@ export class FakeRuntime implements Runtime {
       nextCursor: start ? String(start) : null,
     };
   }
+  readonly settings = new Map<string, import("./runtime").ExecutionSettings>();
+  settingsOverride?: (
+    id: string,
+    value: import("./runtime").ExecutionSettings,
+  ) => Promise<void>;
   readonly names = new Map<string, string>();
   closeOverride?: (id: string) => Promise<void>;
   renameOverride?: (threadId: string, title: string) => Promise<void>;
@@ -122,15 +127,26 @@ export class FakeRuntime implements Runtime {
       });
     this.agents.set(agent.id, structuredClone(agent));
     this.listeners.set(agent.id, notify);
+    const saved = this.settings.get(threadId) ?? {
+      model: agent.model || "sol",
+      effort: agent.effort || "medium",
+      serviceTier: agent.serviceTier,
+    };
+    this.settings.set(threadId, saved);
     return {
       threadId: agent.threadId ?? `thread-${agent.id}`,
       threadName: await this.readTitle(agent.threadId ?? `thread-${agent.id}`),
       historyCursor: this.historyItems.get(threadId)?.length
         ? String(this.historyItems.get(threadId)!.length)
         : undefined,
-      model: agent.model || "sol",
-      effort: agent.effort || "medium",
-      serviceTier: agent.serviceTier,
+      ...saved,
+      readSettings: async () => ({ ...this.settings.get(threadId)! }),
+      updateSettings: async (value) => {
+        const updated = { ...this.settings.get(threadId)!, ...value };
+        await this.settingsOverride?.(agent.id, updated);
+        this.settings.set(threadId, updated);
+        return updated;
+      },
       rename: async (title) => {
         const id = agent.threadId ?? `thread-${agent.id}`;
         await this.renameOverride?.(id, title);

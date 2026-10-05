@@ -31,6 +31,7 @@ import {
   type RuntimeAgent,
   type RuntimeEvent,
   type RuntimeHandle,
+  type ExecutionSettings,
 } from "./runtime";
 
 const historySourceKinds: v2.ThreadSourceKind[] = [
@@ -473,15 +474,16 @@ export class CodexRuntime implements Runtime {
         : "You are a Worker in FlickGrove, assigned to one repository and one spec. Use worker_report to send progress, questions and completion to your owning Orc. Do not create or close FlickGrove agents or use Herdr. Use native spawn_agent only for independent review. Reviewer selection belongs to the applicable skills and agent configuration. Manage these reviewers with native messaging, waiting, follow-up and close tools. Send implementation delegation requests to your owning Orc for assignment through FlickGrove. Do not choose models/reasoning settings in skills. The Orc manages your lifecycle. Implementation assignments deliver one PR according to the assigned spec. Async questions are forwarded to Orc by the host.";
     const params = {
       cwd: agent.project.path,
-      model: agent.inheritSettings ? undefined : agent.model,
-      serviceTier: agent.inheritSettings
-        ? undefined
-        : (agent.serviceTier ?? "default"),
+      model: agent.threadId || agent.inheritSettings ? undefined : agent.model,
+      serviceTier:
+        agent.threadId || agent.inheritSettings
+          ? undefined
+          : (agent.serviceTier ?? "default"),
       approvalPolicy: "never" as const,
       sandbox: "danger-full-access" as const,
       developerInstructions: roleInstructions,
       config: {
-        ...(agent.inheritSettings
+        ...(agent.threadId || agent.inheritSettings
           ? {}
           : { model_reasoning_effort: agent.effort }),
         "features.multi_agent": true,
@@ -533,7 +535,12 @@ export class CodexRuntime implements Runtime {
       }
       resumedSettings = {
         model: response.model,
-        effort: response.reasoningEffort ?? undefined,
+        effort:
+          response.reasoningEffort ??
+          (this.catalogModels ?? (await this.models())).find(
+            (m) => m.id === response.model,
+          )?.defaultEffort ??
+          "",
         serviceTier: response.serviceTier ?? "default",
       };
     } catch (error) {
@@ -559,6 +566,89 @@ export class CodexRuntime implements Runtime {
       threadName,
       historyCursor,
       ...resumedSettings,
+      readSettings: async () => {
+        if (closed || this.threads.get(id) !== client)
+          throw new Error("Session connection unavailable");
+        // Loaded-thread resume returns its live config snapshot without rebuilding
+        // or starting a turn. No setting overrides are sent.
+        const value = await client.threadResume({
+          threadId: id,
+          excludeTurns: true,
+        });
+        if (closed || this.threads.get(id) !== client)
+          throw new Error("Session connection changed");
+        return {
+          model: value.model,
+          effort:
+            value.reasoningEffort ??
+            (this.catalogModels ?? (await this.models())).find(
+              (m) => m.id === value.model,
+            )?.defaultEffort ??
+            "",
+          serviceTier: value.serviceTier ?? "default",
+        };
+      },
+      updateSettings: async (settings) => {
+        if (closed || this.threads.get(id) !== client)
+          throw new Error("Session connection unavailable");
+        const confirmation = Promise.withResolvers<ExecutionSettings>();
+        // RPC {} admits the core operation; the native notification confirms it.
+        const unsubscribe = client.onNotification(
+          "thread/settings/updated",
+          (p) => {
+            if (p.threadId !== id) return;
+            const value = p.threadSettings;
+            if (
+              (!("model" in settings) || value.model === settings.model) &&
+              (!("effort" in settings) || value.effort === settings.effort) &&
+              (value.serviceTier ?? "default") === settings.serviceTier
+            )
+              confirmation.resolve({
+                model: value.model,
+                effort:
+                  value.effort ??
+                  this.catalogModels?.find((m) => m.id === value.model)
+                    ?.defaultEffort ??
+                  "",
+                serviceTier: value.serviceTier ?? "default",
+              });
+          },
+        );
+        const timer = setTimeout(
+          () =>
+            confirmation.reject(
+              new Error(
+                "Settings outcome unknown. Reopen the session to check before saving again.",
+              ),
+            ),
+          5000,
+        );
+        // Attach rejection before awaiting the RPC, including connection failures.
+        const confirmed = confirmation.promise;
+        void confirmed.catch(() => {});
+        try {
+          await client.call(
+            "thread/settings/update",
+            {
+              threadId: id,
+              ...settings,
+              ...("effort" in settings
+                ? { effort: settings.effort as ReasoningEffort }
+                : {}),
+            },
+            { timeoutMs: 5000 },
+          );
+          const value = await confirmed;
+          if (closed || this.threads.get(id) !== client)
+            throw new Error(
+              "Session connection changed. Settings outcome unknown.",
+            );
+          return value;
+        } finally {
+          clearTimeout(timer);
+          unsubscribe();
+        }
+      },
       rename: async (name) => {
         titleGeneration?.abort();
         await client.call("thread/name/set", { threadId: id, name });
@@ -581,9 +671,6 @@ export class CodexRuntime implements Runtime {
             await client.turnStart({
               threadId: id,
               input,
-              model: agent.model,
-              effort: agent.effort as ReasoningEffort,
-              serviceTier: agent.serviceTier ?? "default",
             })
           ).turn.id;
         } catch (error) {

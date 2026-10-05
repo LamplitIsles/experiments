@@ -49,6 +49,11 @@ export interface RuntimeAgent extends Detail {
   restoreArchived?: boolean;
   turnEnded?: boolean;
 }
+export type ExecutionSettings = {
+  model: string;
+  effort: string;
+  serviceTier: string;
+};
 export interface RuntimeHandle {
   threadId: string;
   threadName: string | null;
@@ -56,6 +61,10 @@ export interface RuntimeHandle {
   model?: string;
   effort?: string;
   serviceTier?: string;
+  readSettings(): Promise<ExecutionSettings>;
+  updateSettings(
+    settings: ExecutionSettings | { serviceTier: string },
+  ): Promise<ExecutionSettings>;
   rename(title: string): Promise<void>;
   send(text: string, turnId?: string, images?: string[]): Promise<string>;
   interrupt(turnId: string): Promise<void>;

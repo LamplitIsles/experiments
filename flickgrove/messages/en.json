@@ -183,5 +183,12 @@
   "dismiss_delivery_help": "Removes this local pending item only. It does not resend or delete conversation history.",
   "execution_retrying": "Retrying",
   "execution_capacity": "Model at capacity",
-  "execution_failed": "Execution error"
+  "execution_failed": "Execution error",
+  "session_settings": "Session settings",
+  "session_next_turn": "Changes apply to the next new turn. Current work keeps its settings.",
+  "session_choose_supported": "Choose a supported model and reasoning effort.",
+  "session_unavailable": "unavailable",
+  "session_current_unavailable": "This model is unavailable. Choose a supported model.",
+  "session_fast_unavailable": "Fast is unavailable for this model.",
+  "session_offline": "Reconnect this host to change settings."
 }

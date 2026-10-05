@@ -875,9 +875,10 @@ async function handle(request) {
         overriddenMetadata: null,
       };
     case "thread/start": {
-      state.cwd = p.cwd;
-      state.config = p.config;
-      state.developerInstructions = p.developerInstructions;
+      state.cwd = p.cwd ?? state.cwd;
+      state.config = p.config ?? state.config;
+      state.developerInstructions =
+        p.developerInstructions ?? state.developerInstructions;
       state.loaded = true;
       if (p.ephemeral) {
         state.titleThreadId = state.threadId;
@@ -903,6 +904,9 @@ async function handle(request) {
           multiAgentMode: "explicitRequestOnly",
         };
       }
+      state.model = p.model ?? "fixture-model";
+      state.effort = p.config?.model_reasoning_effort ?? "medium";
+      state.serviceTier = p.serviceTier ?? "default";
       state.threadName = null;
       save();
       return {
@@ -912,17 +916,18 @@ async function handle(request) {
             ? null
             : (p.model ?? "fixture-model"),
         ),
-        model: p.model ?? "fixture-model",
+        model: state.model ?? p.model ?? "fixture-model",
         modelProvider: "fixture",
-        serviceTier: null,
-        cwd: p.cwd,
+        serviceTier: state.serviceTier ?? null,
+        cwd: p.cwd ?? state.cwd,
         runtimeWorkspaceRoots: [],
         instructionSources: [],
         approvalPolicy: "never",
         approvalsReviewer: "user",
         sandbox: { type: "dangerFullAccess" },
         activePermissionProfile: null,
-        reasoningEffort: control().resumeReasoningEffort ?? null,
+        reasoningEffort:
+          control().resumeReasoningEffort ?? state.effort ?? null,
         multiAgentMode: "explicitRequestOnly",
       };
     }
@@ -957,29 +962,34 @@ async function handle(request) {
         runImportedStartupHook();
         save();
       }
-      state.cwd = p.cwd;
-      state.config = p.config;
-      state.developerInstructions = p.developerInstructions;
+      state.cwd = p.cwd ?? state.cwd;
+      state.config = p.config ?? state.config;
+      state.developerInstructions =
+        p.developerInstructions ?? state.developerInstructions;
       state.loaded = true;
       save();
       return {
         thread: {
-          ...threadRecord(p.cwd, p.model ?? "fixture-model"),
+          ...threadRecord(
+            p.cwd ?? state.cwd,
+            state.model ?? p.model ?? "fixture-model",
+          ),
           ...control().historyThreads?.find((s) => s.thread.id === p.threadId)
             ?.thread,
         },
         itemsBackwardsCursor: control().itemsBackwardsCursor ?? null,
-        model: p.model ?? "fixture-model",
+        model: state.model ?? p.model ?? "fixture-model",
         modelProvider: "fixture",
-        serviceTier: null,
-        cwd: p.cwd,
+        serviceTier: state.serviceTier ?? null,
+        cwd: p.cwd ?? state.cwd,
         runtimeWorkspaceRoots: [],
         instructionSources: [],
         approvalPolicy: "never",
         approvalsReviewer: "user",
         sandbox: { type: "dangerFullAccess" },
         activePermissionProfile: null,
-        reasoningEffort: control().resumeReasoningEffort ?? null,
+        reasoningEffort:
+          control().resumeReasoningEffort ?? state.effort ?? null,
         multiAgentMode: "explicitRequestOnly",
       };
     }
@@ -1016,6 +1026,47 @@ async function handle(request) {
           ...session?.thread,
         },
       };
+    }
+    case "thread/settings/update": {
+      if (control().failSettings) rpcError(-32602, "fixture settings rejected");
+      if (control().settingsDelay)
+        await new Promise((resolve) =>
+          setTimeout(resolve, control().settingsDelay),
+        );
+      state.model = p.model ?? state.model;
+      state.effort = p.effort ?? state.effort;
+      state.serviceTier = p.serviceTier;
+      save();
+      if (!control().dropSettingsNotification)
+        send({
+          method: "thread/settings/updated",
+          params: {
+            threadId: p.threadId,
+            threadSettings: {
+              cwd: state.cwd,
+              model: state.model,
+              effort: state.effort,
+              serviceTier: state.serviceTier,
+              modelProvider: "fixture",
+              approvalPolicy: "never",
+              approvalsReviewer: "user",
+              sandboxPolicy: { type: "dangerFullAccess" },
+              activePermissionProfile: null,
+              summary: null,
+              collaborationMode: {
+                mode: "default",
+                settings: {
+                  model: state.model,
+                  reasoning_effort: state.effort,
+                  developer_instructions: null,
+                },
+              },
+              multiAgentMode: "explicitRequestOnly",
+              personality: null,
+            },
+          },
+        });
+      return {};
     }
     case "thread/name/set":
       if (control().failRename) rpcError(-32603, "fixture rename rejected");
