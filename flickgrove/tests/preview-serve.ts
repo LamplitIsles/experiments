@@ -43,6 +43,18 @@ async function unit(name: string, color: string, origin: () => string) {
     path: workerCwd,
   };
   const runtime = new FakeRuntime();
+  const history = {
+    delay: 0,
+    fail: false,
+    reads: [] as (string | undefined)[],
+  };
+  const readHistory = runtime.historyMessages.bind(runtime);
+  runtime.historyMessages = async (threadId, cursor) => {
+    history.reads.push(cursor);
+    if (history.delay) await Bun.sleep(history.delay);
+    if (history.fail) throw new Error("Fixture history unavailable");
+    return readHistory(threadId, cursor);
+  };
   const app = new Workspace({
     directory: join(cwd, "state"),
     runtime,
@@ -145,7 +157,7 @@ async function unit(name: string, color: string, origin: () => string) {
     origin,
   });
   const handler = createHandler(app, { service, assets, origin });
-  return { app, runtime, agent, worker, service, handler, emit, turn };
+  return { app, runtime, agent, worker, service, handler, emit, turn, history };
 }
 let peerOrigin = "http://127.0.0.1:14321";
 let remote = await unit("Remote", "#367153", () => peerOrigin);
@@ -202,11 +214,14 @@ const server = Bun.serve({
       return Response.json({ ok: true });
     }
     if (url.pathname === "/fixture/history" && request.method === "POST") {
-      const project = local.app.detail(local.agent.id).project;
+      const body = await request.json().catch(() => ({}));
+      const target = body.peer === "remote" ? remote : local;
+      const title = body.title ?? "Historical reports";
+      const project = target.app.detail(target.agent.id).project;
       const threadId = crypto.randomUUID();
-      local.runtime.historySessions.set(threadId, {
+      target.runtime.historySessions.set(threadId, {
         threadId,
-        title: "Historical reports",
+        title,
         preview: "History chart",
         cwd: project.path,
         role: "session",
@@ -214,26 +229,74 @@ const server = Bun.serve({
         source: "cli",
         updatedAt: Date.now(),
       });
-      local.runtime.names.set(threadId, "Historical reports");
-      local.runtime.historyItems.set(threadId, [
-        {
-          id: "historical-link",
-          role: "assistant",
-          text:
-            "[History chart](reports/plot.png)\n\n" +
-            "Historical paragraph\n\n".repeat(150),
-          at: Date.now(),
-        },
-      ]);
-      const restored = await local.app.resumeHistory(
+      target.runtime.names.set(threadId, title);
+      target.runtime.historyItems.set(
+        threadId,
+        body.count
+          ? Array.from({ length: body.count }, (_, index) => ({
+              id: `history-${index}`,
+              role: "assistant" as const,
+              text: `${title} item ${index}`,
+              at: Date.now(),
+            }))
+          : [
+              {
+                id: "historical-link",
+                role: "assistant",
+                text:
+                  "[History chart](reports/plot.png)\n\n" +
+                  "Historical paragraph\n\n".repeat(150),
+                at: Date.now(),
+              },
+            ],
+      );
+      const restored = await target.app.resumeHistory(
         "fixture",
         threadId,
         false,
         defaults,
       );
       return Response.json({
-        id: local.service.identity.id + ":" + restored.id,
+        id: target.service.identity.id + ":" + restored.id,
       });
+    }
+    if (
+      url.pathname === "/fixture/history-control" &&
+      request.method === "POST"
+    ) {
+      const body = await request.json();
+      const target = body.peer === "remote" ? remote : local;
+      if (body.delay !== undefined) target.history.delay = body.delay;
+      if (body.fail !== undefined) target.history.fail = body.fail;
+      return Response.json(target.history);
+    }
+    if (url.pathname === "/fixture/history-live" && request.method === "POST") {
+      const { id } = await request.json();
+      const target = id.startsWith(remote.service.identity.id + ":")
+        ? remote
+        : local;
+      const agentId = id.split(":")[1];
+      await target.app.send(agentId, "Live input", crypto.randomUUID());
+      target.runtime.emit(agentId, {
+        type: "item",
+        turnId: target.app.detail(agentId).turnId!,
+        item: {
+          id: "live-item",
+          type: "agentMessage",
+          phase: "final_answer",
+          text: "Current live response",
+        },
+      });
+      target.runtime.emit(agentId, {
+        type: "completed",
+        turnId: target.app.detail(agentId).turnId!,
+        status: "completed",
+      });
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/fixture/offline" && request.method === "POST") {
+      peerServer.stop(true);
+      return Response.json({ ok: true });
     }
     if (url.pathname === "/fixture/info")
       return Response.json({

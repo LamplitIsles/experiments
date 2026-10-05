@@ -27,18 +27,22 @@
   onMount(() => {
     const id = detail.id;
     if (savedReading && !historyPending) void tick().then(() => { transcript.scrollTop = savedReading.follow ? transcript.scrollHeight : savedReading.scroll; });
-    return () => { transcriptPositions.set(id, { scroll: lastScroll, follow }); };
+    return () => { transcriptPositions.set(id, { scroll: lastScroll, follow, historyHeight: lastHistoryHeight }); };
   });
   let lastScroll = untrack(() => transcriptPositions.get(detail.id)?.scroll ?? 0);
+  let lastHistoryHeight = savedReading?.historyHeight;
+  function historyHeight() { return transcript.querySelector(".historical-messages")?.scrollHeight ?? 0; }
   function historyLoaded() {
-    transcript.scrollTop = savedReading && !savedReading.follow ? savedReading.scroll : transcript.scrollHeight;
+    transcript.scrollTop = savedReading && !savedReading.follow ? savedReading.scroll + (savedReading.historyHeight === undefined ? 0 : historyHeight() - savedReading.historyHeight) : transcript.scrollHeight;
     lastScroll = transcript.scrollTop;
+    lastHistoryHeight = historyHeight();
     historyPending = false;
   }
   function saveReadingPosition() {
     if (!transcript.isConnected || historyPending) return;
     follow = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 80;
     lastScroll = transcript.scrollTop;
+    lastHistoryHeight = historyHeight();
   }
   function jumpToBottom() { follow = true; transcript.scrollTop = transcript.scrollHeight; }
   $effect(() => { const _count = detail.messages.length; if (follow && !historyPending) void tick().then(() => { if (transcript) transcript.scrollTop = transcript.scrollHeight; }); });
@@ -89,7 +93,7 @@
     {#if !connected}<p class="host-outage" role="status">{m.host_offline()}{#if lastSeen}<br/>{m.last_seen({ time: new Date(lastSeen).toLocaleString() })}{/if}</p>{/if}
     {#if detail.closeRequest}<p class="model-note">{detail.closeRequest.reason}</p>{/if}
     {#if owner}<button class="owner-link" onclick={() => onopen(owner.id)}>{m.assigned_by({ title: owner.title })}</button>{/if}
-    {#if detail.historyCursor}<HistoricalMessages agentId={detail.id} {connected} {renderMessage} oninitialloaded={historyLoaded} />{/if}
+    {#if detail.historyCursor}<HistoricalMessages agentId={detail.id} boundary={detail.historyCursor} {connected} {renderMessage} oninitialloaded={historyLoaded} onreadingchange={saveReadingPosition} />{/if}
     {#if !detail.historyCursor && !detail.messages.length && !detail.questions.length}<div class="first-message"><h2>{m.first_heading()}</h2><p>{m.first_help({ project: detail.project.alias })}</p></div>{/if}
     {#snippet renderMessage(message: Message)}
       {@const report = reports.get(message.id)}
