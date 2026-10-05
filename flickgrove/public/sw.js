@@ -37,6 +37,7 @@ self.addEventListener("fetch", (event) => {
   if (
     url.origin !== self.location.origin ||
     url.pathname.startsWith("/api/") ||
+    url.pathname.startsWith("/preview/") ||
     event.request.method !== "GET"
   )
     return;

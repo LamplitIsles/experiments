@@ -4,7 +4,7 @@
   import type { HistoryMessages, Message } from "./contracts";
   import { api } from "./api";
   import * as m from "./paraglide/messages";
-  let { agentId, connected, renderMessage }: { agentId: string; connected: boolean; renderMessage: Snippet<[Message]> } = $props();
+  let { agentId, connected, renderMessage, oninitialloaded }: { agentId: string; connected: boolean; renderMessage: Snippet<[Message]>; oninitialloaded: () => void } = $props();
   let messages = $state<Message[]>([]); let cursor = $state<string | null>(null);
   let attempted = $state(false);
   let loading = $state(false); let error = $state(""); let root: HTMLDivElement; let active = true;
@@ -20,7 +20,8 @@
       if (!active) return;
       messages = [...new Map((more ? [...page.messages, ...messages] : page.messages).map(message => [message.id, message])).values()]; cursor = page.nextCursor;
       await tick();
-      if (container) container.scrollTop = more ? scroll + container.scrollHeight - height : container.scrollHeight;
+      if (more && container) container.scrollTop = scroll + container.scrollHeight - height;
+      else if (!more) { loading = false; await tick(); if (active) oninitialloaded(); }
     } catch(e) { if (active) error = e instanceof Error ? e.message : m.load_failure(); }
     finally { if (active) loading = false; }
   }

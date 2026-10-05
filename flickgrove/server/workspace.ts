@@ -297,6 +297,11 @@ export class Workspace {
     this.save();
     this.advanceWorkerCloses();
   }
+  previewDirectory(id: string) {
+    const agent = this.state.agents.find((a) => a.id === id);
+    if (!agent) throw new Error("Session not found");
+    return agent.project.path;
+  }
   private agent(id: string) {
     const a = this.state.agents.find((a) => a.id === id);
     if (!a || a.closed) throw new Error("Session not found");

@@ -1,3 +1,4 @@
+import { navigation } from "./navigation.svelte";
 import { storagePrefix } from "./api";
 import type { Agent } from "./contracts";
 
@@ -13,6 +14,7 @@ export function setQuestionPanel(id: string, open: boolean) {
   );
 }
 export function observeQuestions(agents: Agent[], selectedId: string | null) {
+  if (navigation.surfaces.includes("file-preview")) return;
   for (const agent of agents) {
     const key = `${storagePrefix}/questions/${agent.id}`;
     const seen: string[] = JSON.parse(

@@ -21,5 +21,10 @@ export default defineConfig({
       url: "http://127.0.0.1:14319",
       reuseExistingServer: false,
     },
+    {
+      command: "bun tests/preview-serve.ts",
+      url: "http://127.0.0.1:14320",
+      reuseExistingServer: false,
+    },
   ],
 });

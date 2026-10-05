@@ -103,6 +103,9 @@ export class HostService {
       throw new Error("Conversation belongs to another Peer");
     return id.slice(prefix.length);
   }
+  previewDirectory(id: string) {
+    return this.workspace.previewDirectory(this.raw(id));
+  }
   subscribe(f: () => void) {
     return this.workspace.subscribe(f);
   }

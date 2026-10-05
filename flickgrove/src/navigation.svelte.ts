@@ -9,8 +9,13 @@ export type Surface =
   | "weekly-detail"
   | "title"
   | "host-filter"
-  | "questions";
-type Route = { details: string[]; surfaces: Surface[] };
+  | "questions"
+  | "file-preview";
+type Route = {
+  details: string[];
+  surfaces: Surface[];
+  preview?: { agent: string; href: string };
+};
 export const navigation = $state<Route>({ details: [], surfaces: [] });
 let initialized = false;
 let pending: { promise: Promise<void>; resolve: () => void } | null = null;
@@ -20,6 +25,7 @@ function route(): Route {
   return {
     details: [...navigation.details],
     surfaces: [...navigation.surfaces],
+    preview: navigation.preview ? { ...navigation.preview } : undefined,
   };
 }
 function apply(next: Route) {
@@ -27,6 +33,11 @@ function apply(next: Route) {
     ? next.details.filter((id) => validIds!.has(id))
     : next.details;
   navigation.details = details;
+  navigation.preview =
+    details.length === next.details.length &&
+    next.surfaces.includes("file-preview")
+      ? next.preview
+      : undefined;
   navigation.surfaces =
     details.length === next.details.length ? next.surfaces : [];
 }
@@ -152,4 +163,39 @@ export function validateNavigation(valid: Set<string>) {
     next.surfaces = [];
     write(next, true);
   }
+}
+
+const deferredPreview = $state<{
+  target?: { agent: string; href: string; conversation?: string };
+}>({});
+export function resumeFilePreview() {
+  const target = deferredPreview.target;
+  if (!target) return;
+  if (target.conversation !== navigation.details.at(-1)) {
+    deferredPreview.target = undefined;
+    return;
+  }
+  if (
+    navigation.surfaces.some((s) => s !== "questions" && s !== "file-preview")
+  )
+    return;
+  deferredPreview.target = undefined;
+  openFilePreview(target.agent, target.href);
+}
+export function openFilePreview(agent: string, href: string) {
+  if (
+    navigation.surfaces.some((s) => s !== "questions" && s !== "file-preview")
+  ) {
+    deferredPreview.target = {
+      agent,
+      href,
+      conversation: navigation.details.at(-1),
+    };
+    return;
+  }
+  const next = route();
+  const replace = next.surfaces.includes("file-preview");
+  if (!replace) next.surfaces.push("file-preview");
+  next.preview = { agent, href };
+  write(next, replace);
 }

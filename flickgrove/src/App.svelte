@@ -8,10 +8,10 @@
   import { Kbd } from "$lib/components/ui/kbd/index.js";
   import { X, Plus, History, Settings as SettingsIcon } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { navigation, initializeNavigation, openConversation, setSurface, back, validateNavigation } from "./navigation.svelte";
+  import { navigation, initializeNavigation, resumeFilePreview, openConversation, setSurface, back, validateNavigation } from "./navigation.svelte";
   import { storagePrefix } from "./api";
   import { Peers, preferences } from "./peers";
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import type { Answer, Agent, Detail, HistorySession, Model, Project, Settings, Skill, Snapshot } from "./contracts";
   import { api, editable, setClient } from "./api";
   import { RequestRejected } from "./chord-client";
@@ -29,6 +29,10 @@
   import SessionHistory from "./SessionHistory.svelte";
   import * as m from "./paraglide/messages";
 
+  $effect(() => resumeFilePreview());
+  $effect(() => {
+    if (!navigation.surfaces.includes("file-preview")) untrack(() => observeQuestions(snapshot.agents, selectedId));
+  });
   let client: Peers | undefined;
   let composing = false;
   let snapshot = $state<Snapshot>({ agents: [], settings: null, revision: 0 });
@@ -156,7 +160,7 @@
     if (kind === "settings" && settings) { settings.fast = !!settings.fast; }
     await tick(); if (modal === kind && kind === "new") projectSearch?.focus();
   }
-  async function closeModal() { const kind = modal; do { await back(); } while (kind && navigation.surfaces.includes(kind)); }
+  async function closeModal() { const kind = modal; while (kind && navigation.surfaces.includes(kind)) await back(); }
   async function resumeHistory(session: HistorySession, project: string) {
     const agent = await api<Agent>(`/history/resume?host=${encodeURIComponent(createHost)}`, { project, threadId: session.threadId, archived: session.archived, settings: await creationSettings() });
     adopt(await api<Snapshot>("/snapshot"));

@@ -1,3 +1,4 @@
+import { filePreview } from "./file-preview";
 import { imageHttp } from "./image-http";
 import { IMAGE_UPLOAD_BYTES } from "./images";
 import { resolve, sep } from "node:path";
@@ -63,6 +64,7 @@ export function createUpgrade(workspace: Workspace, options: Options) {
   };
 }
 export function createHandler(workspace: Workspace, options: Options) {
+  const preview = filePreview(options.service);
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const mcp = url.pathname.startsWith("/api/mcp/");
@@ -74,6 +76,8 @@ export function createHandler(workspace: Workspace, options: Options) {
       : [origin, options.localOrigin?.()].filter(
           (value): value is string => !!value,
         );
+    const file = await preview(request, origins);
+    if (file) return file;
     const media = await imageHttp(request, options.service, origins);
     if (media) return media;
     if (
