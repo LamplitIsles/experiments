@@ -132,6 +132,10 @@ test("one managed process isolates concurrent threads, native requests, Stop/Clo
         !r.params.ephemeral,
     );
     for (const r of configCalls) {
+      if (r.method === "thread/resume" && !r.params.cwd) {
+        expect(r.params).toEqual({ threadId: ah.threadId, excludeTurns: true });
+        continue;
+      }
       const owned = r.params.cwd === a.project.path ? a : b;
       expect(
         r.params.config["mcp_servers.flickgrove"].env.FLICKGROVE_AGENT_TOKEN,
@@ -193,8 +197,10 @@ test("one managed process isolates concurrent threads, native requests, Stop/Clo
     ).toHaveLength(before);
     expect(ar.threadId).toBe(ah.threadId);
     expect(br.threadId).toBe(bh.threadId);
-    await restored.close(); // Stale handle cannot unsubscribe the replacement.
-    await bh.close();
+    // Disconnection is not an authoritative per-thread release confirmation.
+    // Stale handles refuse Close and cannot unsubscribe replacements.
+    await expect(restored.close()).rejects.toThrow("outcome unknown");
+    await expect(bh.close()).rejects.toThrow("outcome unknown");
     await br.rename("Still independently open");
     await ar.close();
     await br.close();

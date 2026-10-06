@@ -97,6 +97,7 @@ export class CodexRuntime implements Runtime {
       clientInfo: { name: "flickgrove", title: "FlickGrove", version: "0.1.0" },
       capabilities: { experimentalApi: true, requestAttestation: false },
       protocolValidation: "strict",
+      configOverrides: ["thread_unload_delay_secs=0"],
       env: this.options.env,
     });
     const connecting = client
@@ -391,6 +392,11 @@ export class CodexRuntime implements Runtime {
       throw new Error("This session already has an active Grove handle.");
     if (agent.threadId) this.openingThreads.add(agent.threadId);
     let closed = false;
+    let nativeReleased = false;
+    let releaseAttempted = false;
+    let releaseWaiter:
+      | ReturnType<typeof Promise.withResolvers<void>>
+      | undefined;
     let threadId = agent.threadId;
     let threadName: string | null = null;
     let titleGeneration: AbortController | undefined;
@@ -398,9 +404,20 @@ export class CodexRuntime implements Runtime {
       if (!closed) notify({ ...event, threadId });
     };
     const off = [
+      client.onNotification("thread/closed", (p) => {
+        if (p.threadId === threadId) {
+          nativeReleased = true;
+          releaseWaiter?.resolve();
+        }
+      }),
       client.onError((error) => {
         if (error instanceof AppServerConnectionClosedError) {
           titleGeneration?.abort();
+          releaseWaiter?.reject(
+            new Error(
+              "Native release outcome unknown: app-server disconnected. Retry Close.",
+            ),
+          );
           dispatch({
             type: "disconnected",
             error:
@@ -719,12 +736,83 @@ export class CodexRuntime implements Runtime {
       close: async () => {
         if (closed) return;
         titleGeneration?.abort();
-        // Native unsubscribe releases this thread's subscription and lets Codex
-        // unload it. Other threads keep their client, turns and notifications.
-        if (this.threads.get(id) === client) {
-          await client.call("thread/unsubscribe", { threadId: id });
-          this.threads.delete(id);
+        if (!nativeReleased) {
+          if (this.threads.get(id) !== client)
+            throw new Error(
+              "Native release outcome unknown: session connection changed. Retry Close.",
+            );
+          // Register before unsubscribe: thread/closed can precede the RPC ack.
+          // Native shutdown has a 10s budget; stay inside Chord's existing 30s.
+          const retry = releaseAttempted;
+          releaseAttempted = true;
+          let resuming = false;
+          const deadline = Date.now() + 15_000;
+          const options = () => ({
+            timeoutMs: Math.max(1, deadline - Date.now()),
+          });
+          releaseWaiter = Promise.withResolvers<void>();
+          let released = releaseWaiter.promise;
+          void released.catch(() => {});
+          const timer = setTimeout(
+            () =>
+              releaseWaiter?.reject(
+                new Error("Native thread release unconfirmed. Retry Close."),
+              ),
+            15_000,
+          );
+          try {
+            try {
+              if (retry) {
+                const loaded = await client.call(
+                  "thread/loaded/list",
+                  {},
+                  options(),
+                );
+                if (!nativeReleased && loaded.data.includes(id)) {
+                  // Failed unload removes the listener. Resume the original live
+                  // thread without overrides/turns to rebuild it and re-subscribe.
+                  resuming = true;
+                  const resumed = await client.threadResume(
+                    { threadId: id, excludeTurns: true },
+                    options(),
+                  );
+                  // Resume may race a late close and reacquire this same thread.
+                  // Its newly established ownership needs a subsequent close.
+                  if (nativeReleased) {
+                    nativeReleased = false;
+                    releaseWaiter = Promise.withResolvers<void>();
+                    released = releaseWaiter.promise;
+                    void released.catch(() => {});
+                  }
+                  resuming = false;
+                  if (
+                    resumed.thread.id !== id ||
+                    this.threads.get(id) !== client
+                  )
+                    throw new Error(
+                      "Native release outcome unknown: resumed session changed. Retry Close.",
+                    );
+                } else if (!nativeReleased) await released;
+              }
+              if (!nativeReleased)
+                await client.call(
+                  "thread/unsubscribe",
+                  { threadId: id },
+                  options(),
+                );
+            } catch (error) {
+              // An ambiguous resume can reacquire ownership; an earlier close
+              // cannot confirm release of that new ownership.
+              if (resuming) nativeReleased = false;
+              if (!nativeReleased) throw error;
+            }
+            await released;
+          } finally {
+            clearTimeout(timer);
+            releaseWaiter = undefined;
+          }
         }
+        if (this.threads.get(id) === client) this.threads.delete(id);
         closed = true;
         off.forEach((f) => f());
       },

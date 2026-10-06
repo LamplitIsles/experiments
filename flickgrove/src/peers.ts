@@ -61,6 +61,21 @@ const selectionSchema = z.object({
   sessions: z.record(z.string(), z.string()),
 });
 export const preferences = {
+  get treeOrder(): Record<string, string[]> {
+    const result = z
+      .record(z.string(), z.array(z.string()))
+      .safeParse(read<unknown>("tree-order", {}));
+    if (!result.success) return {};
+    return Object.fromEntries(
+      Object.entries(result.data).map(([host, ids]) => [
+        host,
+        [...new Set(ids.filter((id) => id.startsWith(host + ":")))],
+      ]),
+    );
+  },
+  set treeOrder(value: Record<string, string[]>) {
+    localStorage.setItem(`${prefix}/tree-order`, JSON.stringify(value));
+  },
   get selection() {
     const result = selectionSchema.safeParse(read<unknown>("selection", null));
     if (!result.success)

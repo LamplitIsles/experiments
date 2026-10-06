@@ -5,8 +5,39 @@
   import { storagePrefix } from "./api";
   import type { Agent, Host } from "./contracts";
   import * as m from "./paraglide/messages";
-  let { agents, hosts, selectedId, loading, connected, onopen, onnew, onclosetree, closingId, closeError }: { agents: Agent[]; hosts: Host[]; selectedId: string | null; loading: boolean; connected: boolean; onopen: (id: string) => void; onnew: () => void; onclosetree: (id: string) => Promise<void>; closingId: string | null; closeError: { id: string; reason: string } | null } = $props();
+  let { agents, rootOrder, onreorder, hosts, selectedId, loading, connected, onopen, onnew, onclosetree, closingId, closeError }: { agents: Agent[]; rootOrder: string[]; onreorder: (ids: string[]) => void; hosts: Host[]; selectedId: string | null; loading: boolean; connected: boolean; onopen: (id: string) => void; onnew: () => void; onclosetree: (id: string) => Promise<void>; closingId: string | null; closeError: { id: string; reason: string } | null } = $props();
   let expanded = $state<string[]>(JSON.parse(localStorage.getItem(`${storagePrefix}/expanded`) ?? "[]"));
+  let desktop = $state(matchMedia("(min-width: 701px)").matches);
+  let draggingId = $state<string | null>(null);
+  let dropAt = $state<{ id: string; after: boolean } | null>(null);
+  function dragStart(event: DragEvent, agent: Agent) {
+    if (!desktop || agent.role !== "orc" || !event.dataTransfer) { event.preventDefault(); return; }
+    draggingId = agent.id;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", agent.id);
+  }
+  function dragOver(event: DragEvent, agent: Agent) {
+    const id = agent.ownerId ?? agent.id;
+    if (!desktop || !draggingId || id === draggingId) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    dropAt = { id, after: event.clientY >= rect.top + rect.height / 2 };
+  }
+  function drop(event: DragEvent) {
+    if (!draggingId || !dropAt || !desktop) return;
+    event.preventDefault(); event.stopPropagation();
+    const ids = roots.map(a => a.id);
+    if (!ids.includes(draggingId)) { endDrag(); return; }
+    const next = ids.filter(id => id !== draggingId);
+    const index = next.indexOf(dropAt.id);
+    if (index >= 0) {
+      next.splice(index + Number(dropAt.after), 0, draggingId);
+      if (next.some((id, i) => id !== ids[i])) onreorder(next);
+    }
+    endDrag();
+  }
+  function endDrag() { if (draggingId) suppressClickUntil = Date.now() + 500; draggingId = null; dropAt = null; }
   let focusedId = $state<string | null>(null);
   let revealedId = $state<string | null>(null);
   let gesture: { id: string; x: number; y: number; horizontal: boolean } | null = null;
@@ -33,7 +64,11 @@
   export function visibleIds() { return visible.map(a => a.id); }
   export function closeTarget() { return agents.find(a => a.id === focusedId && a.role === "orc")?.id ?? null; }
   let list: HTMLElement;
-  const roots = $derived(agents.filter(a => a.role === "orc"));
+  const roots = $derived.by(() => {
+    const backend = agents.filter(a => a.role === "orc");
+    const saved = rootOrder.flatMap(id => backend.find(a => a.id === id) ?? []);
+    return [...saved, ...backend.filter(a => !rootOrder.includes(a.id))];
+  });
   const visible = $derived(roots.flatMap(a => [a, ...(expanded.includes(a.id) ? agents.filter(w => w.ownerId === a.id) : [])]));
   $effect(() => { localStorage.setItem(`${storagePrefix}/expanded`, JSON.stringify(expanded)); });
   $effect(() => { const selected = agents.find(a => a.id === selectedId); if (selected?.ownerId) untrack(() => { if (!expanded.includes(selected.ownerId!)) expanded = [...expanded, selected.ownerId!]; }); });
@@ -59,7 +94,13 @@
     if (selectedId && focusedId && focusedId !== selectedId) onopen(focusedId);
     if (focusedId) { await reveal(focusedId); list.querySelector<HTMLButtonElement>(`[data-agent-id="${focusedId}"]`)?.focus({ preventScroll: true }); }
   }
-  onMount(() => { void tick().then(() => { list.scrollTop = Number(localStorage.getItem(`${storagePrefix}/list-scroll`) ?? 0); }); });
+  onMount(() => {
+    const media = matchMedia("(min-width: 701px)");
+    const resize = () => { desktop = media.matches; if (!desktop) endDrag(); };
+    media.addEventListener("change", resize);
+    void tick().then(() => { list.scrollTop = Number(localStorage.getItem(`${storagePrefix}/list-scroll`) ?? 0); });
+    return () => media.removeEventListener("change", resize);
+  });
 </script>
 <svelte:window onpointerdown={e => { if (revealedId && e.target instanceof Element && !e.target.closest(`[data-swipe-id="${revealedId}"]`)) revealedId = null; }} />
 <section class="session-list" aria-label={m.sessions()} bind:this={list} onscroll={() => localStorage.setItem(`${storagePrefix}/list-scroll`, String(list.scrollTop))}>
@@ -68,10 +109,10 @@
   {#each visible as agent (agent.id)}
     {@const children = agents.filter(w => w.ownerId === agent.id)}{@const host = hosts.find(h => h.id === agent.hostId)}
     {@const status = agent.closeRequest ? m.closing_worker() : agent.stop?.status === "unknown" ? m.stop_unconfirmed() : agent.state === "stopping" ? m.stopping() : agent.state === "working" ? m.working() : agent.state === "error" ? m.failed() : m.idle()}
-    <div role="group" class="session-row" data-swipe-id={agent.id} class:revealed={revealedId === agent.id} ontouchstart={e => touchStart(e, agent)} ontouchmove={touchMove} ontouchend={() => gesture = null} ontouchcancel={() => { gesture = null; revealedId = null; }}>
+    <div role="group" class="session-row" data-swipe-id={agent.id} class:drop-before={dropAt?.id === agent.id && !dropAt.after} class:drop-after={dropAt?.id === agent.id && dropAt.after} ondragover={e => dragOver(e, agent)} ondragleave={e => { if (!(e.relatedTarget instanceof Node) || !(e.currentTarget as HTMLElement).contains(e.relatedTarget)) dropAt = null; }} ondrop={drop} class:revealed={revealedId === agent.id} ontouchstart={e => touchStart(e, agent)} ontouchmove={touchMove} ontouchend={() => gesture = null} ontouchcancel={() => { gesture = null; revealedId = null; }}>
     {#if agent.role === "orc" && revealedId === agent.id}<Button class="tree-close-action" variant="destructive" size="sm" disabled={!connected || host?.connected === false || closingId === agent.id} onclick={() => onclosetree(agent.id)}>{m.close_tree()}</Button>{/if}
     <div class="session-item" class:worker-item={agent.role === "worker"} class:active={selectedId === agent.id} class:navigation-focus={!selectedId && focusedId === agent.id}>
-      <button class="session-open" tabindex="-1" data-agent-id={agent.id} aria-current={selectedId === agent.id ? "true" : undefined} aria-label={m.open_agent({ title: agent.title, role: agent.role === "orc" ? m.orc() : m.worker() })} onclick={e => { if(Date.now() < suppressClickUntil) { e.preventDefault(); return; } if(revealedId) { revealedId = null; return; } onopen(agent.id); }}>
+      <button class="session-open" draggable={desktop && agent.role === "orc"} ondragstart={e => dragStart(e, agent)} ondragend={endDrag} tabindex="-1" data-agent-id={agent.id} aria-current={selectedId === agent.id ? "true" : undefined} aria-label={m.open_agent({ title: agent.title, role: agent.role === "orc" ? m.orc() : m.worker() })} onclick={e => { if(Date.now() < suppressClickUntil) { e.preventDefault(); return; } if(revealedId) { revealedId = null; return; } onopen(agent.id); }}>
         <span class="session-title-row"><strong>{agent.title}</strong><span class="session-indicators">{#if agent.role === "orc" && agent.treeFast}<Zap size={12} role="img" aria-label={m.tree_fast()}><title>{m.tree_fast()} — {m.session_next_turn()}</title></Zap>{/if}<span class="session-state-dot" class:working={agent.state === "working"} class:attention={agent.state === "error" || !!agent.closeRequest || agent.stop?.status === "unknown" || agent.state === "stopping"} title={status} role="img" aria-label={status}></span>{#if agent.questions.some(q => q.state !== "answered")}<MessageCircle class="needs-input-icon" aria-label={m.needs_input()} role="img" />{/if}</span></span>
         <span class="session-meta">{#if agent.role === "orc"}<span class:host-warning={host?.connected === false} title={host?.connected === false ? m.disconnected_host() : agent.hostName}>{agent.hostName}</span>{:else}<span>{m.worker()}</span>{/if}<span>{agent.project.alias}</span>{#if agent.directoryBranch}<span class="session-branch" title={agent.directoryBranch}><GitBranch aria-hidden="true" /><span>{agent.directoryBranch}</span></span>{/if}</span>
       </button>
