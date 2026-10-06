@@ -38,6 +38,7 @@
   $effect(() => {
     const requested = panelOpen;
     const drawerOpen = navigation.surfaces.includes("questions");
+    if (!requested && drawerOpen) { removeQuestionDrawer(); return; }
     if (navigation.surfaces.includes("file-preview")) return;
     if (!narrow) { drawerWasOpen = false; removeQuestionDrawer(); return; }
     if (drawerWasOpen && !drawerOpen) {
@@ -64,6 +65,18 @@
   });
   const executionLabel = $derived(detail.execution?.retrying ? m.execution_retrying() : detail.execution?.kind === "capacity" ? m.execution_capacity() : m.execution_failed());
   const pending = $derived(detail.questions.filter(q => q.state !== "answered"));
+  let observedSent: Set<string> | undefined;
+  $effect(() => {
+    if (!ready) return;
+    const sent = detail.deliveries.filter(d => d.source === "question" && d.status === "sent");
+    // The initial snapshot is history, not a completion of this selected session.
+    const completed = observedSent && sent.some(d => !observedSent!.has(d.id));
+    observedSent ??= new Set();
+    for (const delivery of sent) observedSent.add(delivery.id);
+    if (!completed || !panelOpen || pending.length) return;
+    setQuestionPanel(detail.id, false);
+    removeQuestionDrawer();
+  });
   const reports = $derived(new Map(detail.deliveries.filter(d => d.source === "worker" && d.reportingWorkerId).map(d => [d.id, d])));
 </script>
 <aside class="agent-detail" aria-label={detail.title}>
