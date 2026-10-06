@@ -880,6 +880,8 @@ async function handle(request) {
       state.developerInstructions =
         p.developerInstructions ?? state.developerInstructions;
       state.loaded = true;
+      state.subscribed = true;
+      state.listener = true;
       if (p.ephemeral) {
         state.titleThreadId = state.threadId;
         save();
@@ -932,6 +934,8 @@ async function handle(request) {
       };
     }
     case "thread/resume": {
+      if (state.unloadPending)
+        rpcError(-32600, `thread ${p.threadId} is closing; retry after closed`);
       if (control().lockedThreads?.includes(p.threadId))
         rpcError(-32600, `thread ${p.threadId} already has an active writer`);
       if (typeof p.path === "string" && p.path) loadRollout(p.path);
@@ -967,6 +971,8 @@ async function handle(request) {
       state.developerInstructions =
         p.developerInstructions ?? state.developerInstructions;
       state.loaded = true;
+      state.subscribed = true;
+      state.listener = true;
       save();
       return {
         thread: {
@@ -1077,28 +1083,62 @@ async function handle(request) {
         params: { threadId: p.threadId, threadName: p.name },
       });
       return {};
-    case "thread/unsubscribe":
+    case "thread/unsubscribe": {
       if (control().failUnsubscribeThreads?.includes(p.threadId))
         rpcError(-32603, "fixture unsubscribe failed");
-      if (!state.loaded) return { status: "notLoaded" };
+      const status = !state.loaded
+        ? "notLoaded"
+        : !state.subscribed
+          ? "notSubscribed"
+          : "unsubscribed";
+      state.unsubscribeStatuses = [
+        ...(state.unsubscribeStatuses ?? []),
+        status,
+      ];
+      if (status !== "unsubscribed") {
+        save();
+        return { status };
+      }
+      state.subscribed = false;
+      state.listener = false;
+      state.unloadPending = true;
+      save();
       // Native 0.160.0 acknowledges unsubscribe before idle shutdown releases
       // writer ownership and broadcasts thread/closed (thread_lifecycle.rs).
       const release = () => {
         state.loaded = false;
+        state.unloadPending = false;
+        state.pendingClosed = !!control().holdClosedNotification;
         save();
-        send({ method: "thread/closed", params: { threadId: state.threadId } });
+        if (!state.pendingClosed)
+          send({
+            method: "thread/closed",
+            params: { threadId: state.threadId },
+          });
       };
-      if (control().closeBeforeAck) release();
-      else if (!control().holdThreadRelease)
-        setTimeout(release, control().releaseDelayMs ?? 25);
+      // Both native failure outcomes retain loaded ownership, clear pending and
+      // leave no lifecycle listener. NotSubscribed cannot schedule another unload.
+      if (control().shutdownFailure) {
+        state.unloadPending = false;
+        save();
+      } else if (control().closeBeforeAck) release();
+      else setTimeout(release, control().releaseDelayMs ?? 25);
       return { status: "unsubscribed" };
-    case "thread/loaded/list":
+    }
+    case "thread/loaded/list": {
+      const id = control().releaseClosedOnLoadedList;
+      if (database.threads[id]?.pendingClosed) {
+        database.threads[id].pendingClosed = false;
+        save();
+        send({ method: "thread/closed", params: { threadId: id } });
+      }
       return {
         data: Object.values(database.threads)
           .filter((s) => s.loaded)
           .map((s) => s.threadId),
         nextCursor: null,
       };
+    }
     case "thread/turns/list": {
       if (process.env.FAKE_HISTORY_ERROR) {
         const error = new Error(process.env.FAKE_HISTORY_ERROR);

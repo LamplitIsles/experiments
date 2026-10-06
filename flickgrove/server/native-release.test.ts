@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { CodexRuntime } from "./codex";
 import type { RuntimeAgent } from "./runtime";
 
-test("Close waits for native writer release, isolates another thread and catches notification-before-ack", async () => {
+async function closeRetry(shutdownFailure: string) {
   const directory = await mkdtemp(join(tmpdir(), "grove-native-release-"));
   const control = join(directory, ".fake-app-server-control.json");
   const runtime = new CodexRuntime({
@@ -59,16 +59,89 @@ test("Close waits for native writer release, isolates another thread and catches
     expect(await loaded(ah.threadId)).toBe(false);
     expect(await loaded(bh.threadId)).toBe(true);
     await bh.rename("Other thread stays usable");
-    await writeFile(control, JSON.stringify({ holdThreadRelease: true }));
+    const other = await runtime.open({ ...a, threadId: ah.threadId }, () => {});
+    await writeFile(
+      control,
+      JSON.stringify(
+        shutdownFailure === "LateClosed"
+          ? { holdClosedNotification: true }
+          : { shutdownFailure },
+      ),
+    );
     await expect(bh.close()).rejects.toThrow("release unconfirmed");
-    expect(await loaded(bh.threadId)).toBe(true);
-    await bh.rename("Visible after timeout and retryable");
-    await writeFile(control, JSON.stringify({ closeBeforeAck: true }));
-    await bh.close();
+    expect(await loaded(bh.threadId)).toBe(shutdownFailure !== "LateClosed");
+    if (shutdownFailure !== "LateClosed")
+      await bh.rename("Visible after timeout and retryable");
+    await other.rename("Other thread usable after shutdown failure");
+    const state = JSON.parse(
+      await readFile(join(directory, ".fake-app-server-state.json"), "utf8"),
+    );
+    expect(state.threads[bh.threadId].subscribed).toBe(false);
+    expect(state.threads[bh.threadId].listener).toBe(false);
+    if (shutdownFailure !== "LateClosed") {
+      await writeFile(control, JSON.stringify({ failResume: true }));
+      await expect(bh.close()).rejects.toThrow("fixture resume rejected");
+      expect(await loaded(bh.threadId)).toBe(true);
+      await other.rename("Other thread usable after rejected re-subscription");
+    }
+    await writeFile(
+      control,
+      JSON.stringify({
+        closeBeforeAck: true,
+        releaseClosedOnLoadedList: bh.threadId,
+      }),
+    );
+    try {
+      await bh.close();
+    } catch (error) {
+      const state = JSON.parse(
+        await readFile(join(directory, ".fake-app-server-state.json"), "utf8"),
+      );
+      throw new Error(
+        `${(error as Error).message}; native unsubscribe outcomes: ${state.threads[bh.threadId].unsubscribeStatuses}`,
+      );
+    }
     expect(await loaded(bh.threadId)).toBe(false);
+    expect(await loaded(other.threadId)).toBe(true);
+    await other.rename("Other thread usable after Retry Close");
+    const requests = (
+      await readFile(join(directory, ".fake-app-server-requests.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(
+      requests
+        .filter(
+          (r) =>
+            r.method === "thread/resume" && r.params.threadId === bh.threadId,
+        )
+        .map((r) => r.params),
+    ).toEqual(
+      shutdownFailure === "LateClosed"
+        ? []
+        : Array.from({ length: 2 }, () => ({
+            threadId: bh.threadId,
+            excludeTurns: true,
+          })),
+    );
+    expect(
+      requests.filter(
+        (r) => r.method === "thread/start" && !r.params.ephemeral,
+      ),
+    ).toHaveLength(2);
+    await other.close();
     await bh.close(); // Idempotent close after authoritative release.
   } finally {
     await runtime.close();
     await rm(directory, { recursive: true, force: true });
   }
-}, 20_000);
+}
+
+for (const shutdownFailure of ["TimedOut", "SubmitFailed", "LateClosed"]) {
+  test(
+    `Close recovers ${shutdownFailure} through original-thread ownership and isolates another thread`,
+    () => closeRetry(shutdownFailure),
+    35_000,
+  );
+}

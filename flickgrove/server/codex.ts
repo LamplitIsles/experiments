@@ -393,6 +393,7 @@ export class CodexRuntime implements Runtime {
     if (agent.threadId) this.openingThreads.add(agent.threadId);
     let closed = false;
     let nativeReleased = false;
+    let releaseAttempted = false;
     let releaseWaiter:
       | ReturnType<typeof Promise.withResolvers<void>>
       | undefined;
@@ -742,8 +743,15 @@ export class CodexRuntime implements Runtime {
             );
           // Register before unsubscribe: thread/closed can precede the RPC ack.
           // Native shutdown has a 10s budget; stay inside Chord's existing 30s.
+          const retry = releaseAttempted;
+          releaseAttempted = true;
+          let resuming = false;
+          const deadline = Date.now() + 15_000;
+          const options = () => ({
+            timeoutMs: Math.max(1, deadline - Date.now()),
+          });
           releaseWaiter = Promise.withResolvers<void>();
-          const released = releaseWaiter.promise;
+          let released = releaseWaiter.promise;
           void released.catch(() => {});
           const timer = setTimeout(
             () =>
@@ -754,12 +762,48 @@ export class CodexRuntime implements Runtime {
           );
           try {
             try {
-              await client.call(
-                "thread/unsubscribe",
-                { threadId: id },
-                { timeoutMs: 15_000 },
-              );
+              if (retry) {
+                const loaded = await client.call(
+                  "thread/loaded/list",
+                  {},
+                  options(),
+                );
+                if (!nativeReleased && loaded.data.includes(id)) {
+                  // Failed unload removes the listener. Resume the original live
+                  // thread without overrides/turns to rebuild it and re-subscribe.
+                  resuming = true;
+                  const resumed = await client.threadResume(
+                    { threadId: id, excludeTurns: true },
+                    options(),
+                  );
+                  // Resume may race a late close and reacquire this same thread.
+                  // Its newly established ownership needs a subsequent close.
+                  if (nativeReleased) {
+                    nativeReleased = false;
+                    releaseWaiter = Promise.withResolvers<void>();
+                    released = releaseWaiter.promise;
+                    void released.catch(() => {});
+                  }
+                  resuming = false;
+                  if (
+                    resumed.thread.id !== id ||
+                    this.threads.get(id) !== client
+                  )
+                    throw new Error(
+                      "Native release outcome unknown: resumed session changed. Retry Close.",
+                    );
+                } else if (!nativeReleased) await released;
+              }
+              if (!nativeReleased)
+                await client.call(
+                  "thread/unsubscribe",
+                  { threadId: id },
+                  options(),
+                );
             } catch (error) {
+              // An ambiguous resume can reacquire ownership; an earlier close
+              // cannot confirm release of that new ownership.
+              if (resuming) nativeReleased = false;
               if (!nativeReleased) throw error;
             }
             await released;

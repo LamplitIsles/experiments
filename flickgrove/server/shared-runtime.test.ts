@@ -132,6 +132,10 @@ test("one managed process isolates concurrent threads, native requests, Stop/Clo
         !r.params.ephemeral,
     );
     for (const r of configCalls) {
+      if (r.method === "thread/resume" && !r.params.cwd) {
+        expect(r.params).toEqual({ threadId: ah.threadId, excludeTurns: true });
+        continue;
+      }
       const owned = r.params.cwd === a.project.path ? a : b;
       expect(
         r.params.config["mcp_servers.flickgrove"].env.FLICKGROVE_AGENT_TOKEN,
