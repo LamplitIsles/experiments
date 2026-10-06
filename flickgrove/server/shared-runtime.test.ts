@@ -193,8 +193,10 @@ test("one managed process isolates concurrent threads, native requests, Stop/Clo
     ).toHaveLength(before);
     expect(ar.threadId).toBe(ah.threadId);
     expect(br.threadId).toBe(bh.threadId);
-    await restored.close(); // Stale handle cannot unsubscribe the replacement.
-    await bh.close();
+    // Disconnection is not an authoritative per-thread release confirmation.
+    // Stale handles refuse Close and cannot unsubscribe replacements.
+    await expect(restored.close()).rejects.toThrow("outcome unknown");
+    await expect(bh.close()).rejects.toThrow("outcome unknown");
     await br.rename("Still independently open");
     await ar.close();
     await br.close();

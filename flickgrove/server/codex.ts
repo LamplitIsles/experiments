@@ -97,6 +97,7 @@ export class CodexRuntime implements Runtime {
       clientInfo: { name: "flickgrove", title: "FlickGrove", version: "0.1.0" },
       capabilities: { experimentalApi: true, requestAttestation: false },
       protocolValidation: "strict",
+      configOverrides: ["thread_unload_delay_secs=0"],
       env: this.options.env,
     });
     const connecting = client
@@ -391,6 +392,10 @@ export class CodexRuntime implements Runtime {
       throw new Error("This session already has an active Grove handle.");
     if (agent.threadId) this.openingThreads.add(agent.threadId);
     let closed = false;
+    let nativeReleased = false;
+    let releaseWaiter:
+      | ReturnType<typeof Promise.withResolvers<void>>
+      | undefined;
     let threadId = agent.threadId;
     let threadName: string | null = null;
     let titleGeneration: AbortController | undefined;
@@ -398,9 +403,20 @@ export class CodexRuntime implements Runtime {
       if (!closed) notify({ ...event, threadId });
     };
     const off = [
+      client.onNotification("thread/closed", (p) => {
+        if (p.threadId === threadId) {
+          nativeReleased = true;
+          releaseWaiter?.resolve();
+        }
+      }),
       client.onError((error) => {
         if (error instanceof AppServerConnectionClosedError) {
           titleGeneration?.abort();
+          releaseWaiter?.reject(
+            new Error(
+              "Native release outcome unknown: app-server disconnected. Retry Close.",
+            ),
+          );
           dispatch({
             type: "disconnected",
             error:
@@ -719,12 +735,40 @@ export class CodexRuntime implements Runtime {
       close: async () => {
         if (closed) return;
         titleGeneration?.abort();
-        // Native unsubscribe releases this thread's subscription and lets Codex
-        // unload it. Other threads keep their client, turns and notifications.
-        if (this.threads.get(id) === client) {
-          await client.call("thread/unsubscribe", { threadId: id });
-          this.threads.delete(id);
+        if (!nativeReleased) {
+          if (this.threads.get(id) !== client)
+            throw new Error(
+              "Native release outcome unknown: session connection changed. Retry Close.",
+            );
+          // Register before unsubscribe: thread/closed can precede the RPC ack.
+          // Native shutdown has a 10s budget; stay inside Chord's existing 30s.
+          releaseWaiter = Promise.withResolvers<void>();
+          const released = releaseWaiter.promise;
+          void released.catch(() => {});
+          const timer = setTimeout(
+            () =>
+              releaseWaiter?.reject(
+                new Error("Native thread release unconfirmed. Retry Close."),
+              ),
+            15_000,
+          );
+          try {
+            try {
+              await client.call(
+                "thread/unsubscribe",
+                { threadId: id },
+                { timeoutMs: 15_000 },
+              );
+            } catch (error) {
+              if (!nativeReleased) throw error;
+            }
+            await released;
+          } finally {
+            clearTimeout(timer);
+            releaseWaiter = undefined;
+          }
         }
+        if (this.threads.get(id) === client) this.threads.delete(id);
         closed = true;
         off.forEach((f) => f());
       },

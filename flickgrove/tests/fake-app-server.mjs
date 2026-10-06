@@ -1080,9 +1080,17 @@ async function handle(request) {
     case "thread/unsubscribe":
       if (control().failUnsubscribeThreads?.includes(p.threadId))
         rpcError(-32603, "fixture unsubscribe failed");
-      state.loaded = false;
-      save();
-      send({ method: "thread/closed", params: { threadId: state.threadId } });
+      if (!state.loaded) return { status: "notLoaded" };
+      // Native 0.160.0 acknowledges unsubscribe before idle shutdown releases
+      // writer ownership and broadcasts thread/closed (thread_lifecycle.rs).
+      const release = () => {
+        state.loaded = false;
+        save();
+        send({ method: "thread/closed", params: { threadId: state.threadId } });
+      };
+      if (control().closeBeforeAck) release();
+      else if (!control().holdThreadRelease)
+        setTimeout(release, control().releaseDelayMs ?? 25);
       return { status: "unsubscribed" };
     case "thread/loaded/list":
       return {
