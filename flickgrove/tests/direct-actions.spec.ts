@@ -109,7 +109,7 @@ test("Close shortcut uses detail before navigation, blocks surfaces/IME and neve
   });
   await page.goto(origin);
   await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowDown"); // remote navigation target
+  await page.keyboard.press("ArrowDown"); // navigation stays within this device
   await page.getByRole("button", { name: orcName }).click();
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Draft kept");
@@ -147,6 +147,8 @@ test("Close shortcut uses detail before navigation, blocks surfaces/IME and neve
       closingId,
     ),
   ).toBe("Close preserves draft");
+  // Closing the last local root retains its device; switch explicitly.
+  await page.keyboard.press("Alt+l");
   await expect(
     page.getByRole("button", { name: "Open Reader performance Orc" }),
   ).toBeVisible();
@@ -154,10 +156,14 @@ test("Close shortcut uses detail before navigation, blocks surfaces/IME and neve
     "Reader performance",
   );
   await expect(page.locator(".host-outage")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Edit title", exact: true }),
+  ).toBeVisible();
   await page.keyboard.press("Alt+x");
   await expect(page.locator(".session-open")).toHaveCount(0);
   await request.post(`${origin}/fixture/reset`, { data: {} });
   await page.reload();
+  await page.keyboard.press("Alt+h");
   await page.getByRole("button", { name: orcName }).click();
   await page.getByRole("button", { name: "Expand Workers" }).first().click();
   await page.getByRole("button", { name: "Open Voice input Worker" }).click();

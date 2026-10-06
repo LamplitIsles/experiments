@@ -36,16 +36,29 @@ for (const width of [1440, 390]) {
     if (width === 390) await page.locator(".session-open").first().click();
     await expect(title(page)).toHaveText("Streaming voice input");
     const conversation = page.locator(".conversation");
-    await expect
-      .poll(() => conversation.locator('[data-message-id="row-39"]').count())
-      .toBe(1);
-    await expect
-      .poll(() =>
-        conversation.evaluate(
-          (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
-        ),
-      )
-      .toBeLessThanOrEqual(1);
+    const measuredEnd = () =>
+      conversation.evaluate((el) => {
+        const timeline = el.querySelector<HTMLElement>(".message-timeline")!;
+        const last = el.querySelector<HTMLElement>(
+          '[data-message-id="row-39"]',
+        );
+        const footer = el.querySelector<HTMLElement>(".timeline-footer")!;
+        return (
+          !!last &&
+          Math.abs(
+            last.getBoundingClientRect().bottom -
+              timeline.getBoundingClientRect().top -
+              footer.offsetTop,
+          ) <= 1 &&
+          Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) <= 1
+        );
+      });
+    await expect.poll(measuredEnd).toBe(true);
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
+    await expect.poll(measuredEnd).toBe(true);
     await conversation.evaluate((el) => {
       el.scrollTop = 800;
     });
@@ -56,6 +69,12 @@ for (const width of [1440, 390]) {
         ),
       )
       .toBeGreaterThan(1000);
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
     const anchor = await conversation.evaluate((el) => {
       const top = el.getBoundingClientRect().top;
       const row = [

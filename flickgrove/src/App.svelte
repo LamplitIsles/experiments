@@ -38,6 +38,8 @@
   let composing = false;
   let snapshot = $state<Snapshot>({ agents: [], settings: null, revision: 0 });
   const savedSelection = preferences.selection;
+  let treeOrder = $state(preferences.treeOrder);
+  $effect(() => { preferences.treeOrder = $state.snapshot(treeOrder); });
   let remembered = $state<Record<string, string>>(savedSelection.sessions);
   let selectedId = $state<string | null>(savedSelection.sessions[savedSelection.host] ?? null);
   let navigationReady = $state(false); let peersReady = $state(false); let switchingHost = $state(false);
@@ -147,6 +149,16 @@
     value = { ...value, agents: [...value.agents, ...retained], hosts: value.hosts?.map(h => !h.connected && !h.lastSeen ? { ...h, lastSeen: snapshot.hosts?.find(old => old.id === h.id)?.lastSeen } : h) };
     observeQuestions(value.agents, selectedId);
     if (selectedId && !value.agents.some(a => a.id === selectedId)) lostSelection = selectedId;
+    if (authoritative) {
+      const order = { ...treeOrder };
+      for (const host of value.hosts ?? []) {
+        if (!host.connected) continue;
+        const ids = value.agents.filter(a => a.hostId === host.id && a.role === "orc").map(a => a.id);
+        const saved = (order[host.id] ?? []).filter(id => ids.includes(id));
+        order[host.id] = [...saved, ...ids.filter(id => !saved.includes(id))];
+      }
+      treeOrder = order;
+    }
     snapshot = value; localStorage.setItem(`${storagePrefix}/snapshot`, JSON.stringify(value));
     historyCache.retain(new Set(value.agents.map(a => a.id)));
     const valid = new Set(value.agents.map(a => a.id));
@@ -422,7 +434,7 @@
   <div class="header-actions"><Weekly hostId={snapshot.entryId} connected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} /><Button variant="ghost" size="icon-sm" aria-label={m.settings()} onclick={() => show("settings")}><SettingsIcon /></Button></div>
 </header>
 <main class:with-detail={!!selectedId}>
-  <SessionList bind:this={sessionList} agents={visibleAgents} {hosts} {selectedId} {loading} {connected} {closingId} closeError={selectedId === closeError?.id ? null : closeError} onclosetree={closeTree} onopen={open} onnew={() => show("new")} />
+  <SessionList bind:this={sessionList} agents={visibleAgents} rootOrder={treeOrder[hostFilter] ?? []} onreorder={ids => treeOrder = { ...treeOrder, [hostFilter]: ids }} {hosts} {selectedId} {loading} {connected} {closingId} closeError={selectedId === closeError?.id ? null : closeError} onclosetree={closeTree} onopen={open} onnew={() => show("new")} />
   {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !shownDetail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
   {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
   {#if error && !modal && !shownDetail}<div class="app-error" role="alert"><span>{error}</span><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => error = ""}><X /></Button></div>{/if}
