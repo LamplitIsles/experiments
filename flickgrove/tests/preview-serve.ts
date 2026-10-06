@@ -105,7 +105,23 @@ async function unit(name: string, color: string, origin: () => string) {
   );
   await writeFile(
     join(reports, "page.html"),
-    `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="style.css"><style>@font-face{font-family:Report;src:url('report.woff2')}h1{font-family:Report,system-ui}</style><h1>${name} interactive report</h1><button id="increment">Count 0</button><p id="module">Loading local data</p><img src="plot.png"><pre id="isolation"></pre><script src="${cdn.url.origin}/chart.js"></script><script type="module">
+    `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="style.css"><style>@font-face{font-family:Report;src:url('report.woff2')}h1{font-family:Report,system-ui}</style><h1>${name} interactive report</h1><button id="increment">Count 0</button>
+<nav><a href="#overview">Overview</a><a href="#method">Method</a><a href="#meter-a">Meter A</a></nav>
+<label><input type="radio" name="meter" data-meter-tab="a">Meter A tab</label>
+<label><input type="radio" name="meter" data-meter-tab="b">Meter B tab</label>
+<section id="overview">Overview section</section><section id="method">Method section</section>
+<section id="meter-a">Meter A section</section><section id="meter-b">Meter B section</section>
+<p id="active-meter"></p>
+<script>
+  function followHash(){
+    document.querySelector('#active-meter').textContent=location.hash;
+    document.querySelector(location.hash||'#overview')?.scrollIntoView();
+  }
+  document.querySelectorAll('[data-meter-tab]').forEach(tab=>tab.addEventListener('change',()=>{
+    if(tab.checked)location.hash='meter-'+tab.dataset.meterTab;
+  }));
+  addEventListener('hashchange',followHash);
+</script><p id="module">Loading local data</p><img src="plot.png"><pre id="isolation"></pre><script src="${cdn.url.origin}/chart.js"></script><script type="module">
   import {label} from './sub/module.js'; let count=0;increment.onclick=()=>increment.textContent='Count '+(++count);
   const data=await fetch('./sub/data.json').then(r=>r.json()); document.querySelector('#module').textContent=label+' / '+data.host;
   const results={cdn:window.cdnLoaded, parent:false, storage:false, api:false, ws:false, font:false};

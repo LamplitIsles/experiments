@@ -97,9 +97,24 @@ export function back(): Promise<void> {
 }
 function move(delta: number): Promise<void> {
   if (pending) return pending.promise;
+  // Preview hash/document navigations add child history steps without a parent
+  // popstate. Traverse parent entries directly so Close never waits on a child.
+  const target = navigation.preview
+    ? window.navigation.entries()[
+        (window.navigation.currentEntry?.index ?? -1) + delta
+      ]
+    : undefined;
+  if (navigation.preview && !target) return Promise.resolve();
   const deferred = Promise.withResolvers<void>();
   pending = { promise: deferred.promise, resolve: deferred.resolve };
-  history.go(delta);
+  if (target) {
+    void window.navigation.traverseTo(target.key).finished!.catch((error) => {
+      if (pending?.promise === deferred.promise) {
+        pending = null;
+        deferred.reject(error);
+      }
+    });
+  } else history.go(delta);
   return deferred.promise;
 }
 export function setSurface(name: Surface, open: boolean) {

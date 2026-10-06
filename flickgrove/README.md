@@ -100,6 +100,8 @@ The upper-right weekly ring shows **remaining account quota** from the page Peer
 
 ## Browser and development
 
+HTML preview links and tabs can navigate inside the sandbox. Close and parent navigation skip those internal history steps, keeping the outer controls responsive; native browser Back still traverses the iframe history. This preview navigation uses the Navigation API supported by Safari 26.2+ and current Chrome.
+
 On desktop, drag an Orc row to reorder its whole tree within the selected device. Workers stay with their owner. The browser remembers a separate qualified root order per device across refresh; new roots append and successful authoritative removals prune the order. Offline data never clears it. Option+J/K, Cmd+1–9 and arrow navigation follow this visible order. Mobile uses the saved order without drag and retains swipe Close.
 
 Close waits for native `thread/closed`, after Codex has shut down that thread and released its writer ownership, before removing the Orc or Worker from Grove. An unsubscribe acknowledgement alone is insufficient. Timeout/disconnection remains visible and retryable with an unconfirmed outcome; other threads in the shared Grove-owned app-server keep running. Grove starts its own process with zero idle unload delay and never changes user configuration or the system daemon.

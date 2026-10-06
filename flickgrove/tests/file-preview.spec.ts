@@ -309,7 +309,8 @@ test("Forward/refresh reauthorize, remote documents keep identity and local draf
     ),
   ).toBe(false);
   await page
-    .getByRole("button", { name: "Open Remote reports Orc", exact: true })
+    .getByRole("group", { name: "Host filter" })
+    .getByRole("button", { name: "Remote", exact: true })
     .click();
   await expect(page.locator(".file-preview")).toHaveCount(0);
   await page.getByRole("link", { name: "HTML", exact: true }).click();
@@ -325,7 +326,8 @@ test("Forward/refresh reauthorize, remote documents keep identity and local draf
   ).toBeVisible();
   await page.getByRole("button", { name: "Close preview" }).click();
   await page
-    .getByRole("button", { name: "Open Local reports Orc", exact: true })
+    .getByRole("group", { name: "Host filter" })
+    .getByRole("button", { name: "Local", exact: true })
     .click();
   const draft = page.getByRole("textbox", { name: "Message Orc" });
   await draft.fill("Local draft stays");
@@ -336,11 +338,13 @@ test("Forward/refresh reauthorize, remote documents keep identity and local draf
   await page.getByRole("link", { name: "HTML", exact: true }).click();
   const before = await transcript.evaluate((el) => el.scrollTop);
   await page
-    .getByRole("button", { name: "Open Remote reports Orc", exact: true })
+    .getByRole("group", { name: "Host filter" })
+    .getByRole("button", { name: "Remote", exact: true })
     .click();
   await expect(page.locator(".file-preview")).toHaveCount(0);
   await page
-    .getByRole("button", { name: "Open Local reports Orc", exact: true })
+    .getByRole("group", { name: "Host filter" })
+    .getByRole("button", { name: "Local", exact: true })
     .click();
   await expect(draft).toHaveValue("Local draft stays");
   await expect
@@ -403,7 +407,8 @@ test("foreground Settings retains the preview and a remote outage gives explicit
   );
   await page.getByRole("button", { name: "Close preview" }).click();
   await page
-    .getByRole("button", { name: "Open Remote reports Orc", exact: true })
+    .getByRole("group", { name: "Host filter" })
+    .getByRole("button", { name: "Remote", exact: true })
     .click();
   let block = true;
   await page.route("http://127.0.0.1:14321/api/file-preview", (route) =>
