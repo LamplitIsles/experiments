@@ -128,7 +128,12 @@ test("restored Grove history includes external turns once and retains folded Wor
   ]) {
     await input.fill(command);
     await input.press("Enter");
-    await expect(page.getByText(result, { exact: true })).toBeVisible();
+    if (command === "Request Worker report")
+      await expect(page.locator(".worker-report")).toHaveCount(1);
+    else await expect(page.getByText(result, { exact: true })).toBeVisible();
+    await expect(
+      page.locator('.session-open[aria-current="true"] [aria-label="Idle"]'),
+    ).toBeVisible();
   }
   const snapshot = await (await page.request.get("/fixture/snapshot")).json();
   const agent = snapshot.agents.find((a: { role: string }) => a.role === "orc");
@@ -153,6 +158,13 @@ test("restored Grove history includes external turns once and retains folded Wor
   await page
     .getByRole("button", { name: "Load earlier messages", exact: true })
     .click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Loading history" }),
+  ).toBeHidden();
+  const transcript = page.locator(".conversation");
+  await transcript.hover();
+  await page.mouse.wheel(0, -10000);
+  await expect.poll(() => transcript.evaluate((el) => el.scrollTop)).toBe(0);
   const report = page.locator(".historical-messages .worker-report");
   await expect(report).toHaveCount(1);
   await expect(report).not.toHaveAttribute("open");
@@ -165,18 +177,26 @@ test("restored Grove history includes external turns once and retains folded Wor
   await expect(
     report.getByText("Full diagnostic details.", { exact: true }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Jump to bottom" }).click();
+  await expect(report).toHaveCount(0);
+  await transcript.evaluate((el) => (el.scrollTop = 0));
+  await expect(report).toHaveAttribute("open", "");
+  await expect(
+    report.getByText("Full diagnostic details.", { exact: true }),
+  ).toBeVisible();
   const receipts = page
     .locator(".conversation")
     .getByText("Received.", { exact: true });
-  const previousReceipts = await receipts.count();
   await input.fill("Continue after restoration");
   await input.press("Enter");
+  await expect(report).toHaveAttribute("open", "");
+  await page.getByRole("button", { name: "Jump to bottom" }).click();
   await expect(
     page
       .locator(".conversation .user-message")
       .filter({ hasText: "Continue after restoration" }),
   ).toHaveCount(1);
-  await expect(receipts).toHaveCount(previousReceipts + 1);
+  await expect(receipts).toHaveCount(1);
   await expect(receipts.last()).toBeVisible();
   await page.reload();
   await expect(

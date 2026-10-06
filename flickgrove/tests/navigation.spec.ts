@@ -3,12 +3,12 @@ const origin = "http://127.0.0.1:14319";
 for (const surface of [
   "detail",
   "settings",
+  "hosts",
   "new",
   "skill",
   "worker",
   "weekly",
   "title",
-  "host-filter",
   "questions",
 ] as const) {
   test(`mobile browser Back stays in Grove from ${surface}`, async ({
@@ -20,8 +20,8 @@ for (const surface of [
     await page.goto("http://127.0.0.1:14318/");
     await page.goto(origin);
     await expect(page.locator(".session-open").first()).toBeVisible();
-    if (surface === "host-filter")
-      await page.getByRole("combobox", { name: "Host filter" }).click();
+    if (surface === "hosts")
+      await page.getByRole("button", { name: "Hosts", exact: true }).click();
     else if (surface === "settings")
       await page.getByRole("button", { name: "Settings", exact: true }).click();
     else if (surface === "new")
@@ -56,11 +56,11 @@ for (const surface of [
       detail: ".agent-detail",
       worker: ".agent-detail",
       settings: "[role=dialog]",
+      hosts: "[role=dialog]",
       new: "[role=dialog]",
       skill: ".skill-search",
       weekly: ".weekly-popover",
       title: ".title-edit",
-      "host-filter": ".host-filter-menu",
       questions: ".question-panel",
     };
     await expect(page.locator(dismissed[surface])).toBeVisible();
@@ -189,6 +189,9 @@ test("a closed mobile historical target stays closed on Forward", async ({
   });
   await target.click();
   await expect(page.locator(".agent-detail")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Add images", exact: true }),
+  ).toBeEnabled();
   await page.keyboard.press("Alt+x");
   await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
   await expect(page.locator(".agent-detail")).toHaveCount(0);

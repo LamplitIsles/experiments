@@ -156,25 +156,69 @@ async function unit(name: string, color: string, origin: () => string) {
     name,
     origin,
   });
+  // Test-only Chord provider patches exercise growing text on the same message
+  // ID. Native final answers remain buffered until completion in Workspace.
+  const patches = new Map<string, string>();
+  const readers = new Set<() => void>();
+  const detail = service.detail.bind(service),
+    subscribe = service.subscribe.bind(service);
+  service.detail = async (id) => {
+    const value = await detail(id),
+      text = patches.get(id);
+    return text === undefined
+      ? value
+      : {
+          ...value,
+          messages: value.messages.map((message) =>
+            message.id === "live-item" ? { ...message, text } : message,
+          ),
+        };
+  };
+  service.subscribe = (listener) => {
+    readers.add(listener);
+    const unsubscribe = subscribe(listener);
+    return () => {
+      readers.delete(listener);
+      return unsubscribe();
+    };
+  };
+  const patch = (id: string, text: string) => {
+    patches.set(id, text);
+    for (const reader of readers) reader();
+  };
   const handler = createHandler(app, { service, assets, origin });
-  return { app, runtime, agent, worker, service, handler, emit, turn, history };
+  return {
+    app,
+    runtime,
+    agent,
+    worker,
+    service,
+    handler,
+    emit,
+    turn,
+    history,
+    patch,
+  };
 }
 let peerOrigin = "http://127.0.0.1:14321";
 let remote = await unit("Remote", "#367153", () => peerOrigin);
-let peerServer = Bun.serve({
-  hostname: "127.0.0.1",
-  port: 14321,
-  websocket: groveWebsocket,
-  fetch(request, server) {
-    const upgraded = createUpgrade(remote.app, {
-      service: remote.service,
-      origin: () => peerOrigin,
-    })(request, server);
-    return upgraded === true
-      ? undefined
-      : (upgraded ?? remote.handler(request));
-  },
-});
+function servePeer() {
+  return Bun.serve({
+    hostname: "127.0.0.1",
+    port: 14321,
+    websocket: groveWebsocket,
+    fetch(request, server) {
+      const upgraded = createUpgrade(remote.app, {
+        service: remote.service,
+        origin: () => peerOrigin,
+      })(request, server);
+      return upgraded === true
+        ? undefined
+        : (upgraded ?? remote.handler(request));
+    },
+  });
+}
+let peerServer = servePeer();
 peerOrigin = peerServer.url.origin;
 const origin = "http://127.0.0.1:14320";
 let local = await unit("Local", "#355d98", () => origin);
@@ -197,20 +241,7 @@ const server = Bun.serve({
       }
       remote = await unit("Remote", "#367153", () => peerOrigin);
       local = await unit("Local", "#355d98", () => origin);
-      peerServer = Bun.serve({
-        hostname: "127.0.0.1",
-        port: 14321,
-        websocket: groveWebsocket,
-        fetch(request, server) {
-          const upgraded = createUpgrade(remote.app, {
-            service: remote.service,
-            origin: () => peerOrigin,
-          })(request, server);
-          return upgraded === true
-            ? undefined
-            : (upgraded ?? remote.handler(request));
-        },
-      });
+      peerServer = servePeer();
       return Response.json({ ok: true });
     }
     if (url.pathname === "/fixture/history" && request.method === "POST") {
@@ -236,7 +267,21 @@ const server = Bun.serve({
           ? Array.from({ length: body.count }, (_, index) => ({
               id: `history-${index}`,
               role: "assistant" as const,
-              text: `${title} item ${index}`,
+              text: body.rich
+                ? `${title} item ${index}\n\n` +
+                  Array.from(
+                    { length: 16 },
+                    (_, n) =>
+                      `- Group ${n}\n  - Nested alpha\n  - Nested beta\n  - Nested gamma`,
+                  ).join("\n") +
+                  "\n\n```typescript\nconst result = records.map(record => ({ id: record.id, value: record.value }));\n```\n\n" +
+                  "| Column A | Column B | Column C | Column D | Column E | Column F |\n|---|---|---|---|---|---|\n" +
+                  Array.from(
+                    { length: 24 },
+                    (_, n) =>
+                      `| ${n} | alpha | beta | gamma | delta | epsilon |`,
+                  ).join("\n")
+                : `${title} item ${index}`,
               at: Date.now(),
             }))
           : [
@@ -271,11 +316,19 @@ const server = Bun.serve({
       return Response.json(target.history);
     }
     if (url.pathname === "/fixture/history-live" && request.method === "POST") {
-      const { id } = await request.json();
+      const {
+        id,
+        text = "Current live response",
+        stream = false,
+      } = await request.json();
       const target = id.startsWith(remote.service.identity.id + ":")
         ? remote
         : local;
       const agentId = id.split(":")[1];
+      if (stream) {
+        target.patch(id, text);
+        return Response.json({ ok: true });
+      }
       await target.app.send(agentId, "Live input", crypto.randomUUID());
       target.runtime.emit(agentId, {
         type: "item",
@@ -284,7 +337,7 @@ const server = Bun.serve({
           id: "live-item",
           type: "agentMessage",
           phase: "final_answer",
-          text: "Current live response",
+          text,
         },
       });
       target.runtime.emit(agentId, {
@@ -296,6 +349,10 @@ const server = Bun.serve({
     }
     if (url.pathname === "/fixture/offline" && request.method === "POST") {
       peerServer.stop(true);
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/fixture/online" && request.method === "POST") {
+      peerServer = servePeer();
       return Response.json({ ok: true });
     }
     if (url.pathname === "/fixture/info")

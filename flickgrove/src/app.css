@@ -767,35 +767,25 @@ pre {
   color: var(--muted-foreground);
 }
 .host-filter-control {
-  position: relative;
-}
-.host-filter-menu {
-  position: absolute;
-  left: 0;
-  top: 40px;
-  min-width: 210px;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--popover);
-  box-shadow: 0 10px 30px #0004;
-  z-index: 40;
-}
-.host-filter-menu button {
   display: flex;
-  width: 100%;
-  gap: 16px;
-  justify-content: space-between;
-  padding: 9px 10px;
-  border-radius: 4px;
-  font-size: 12px;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
 }
-.host-filter-menu button.selected {
+.host-filter-buttons {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+.host-filter-buttons > button {
+  max-width: min(16rem, 80%);
+}
+.host-filter-buttons > button[aria-pressed="true"] {
+  border-color: var(--ring);
   background: var(--accent);
-}
-.host-filter-menu small {
-  color: var(--muted-foreground);
-  font-size: 10px;
+  color: var(--primary);
 }
 .weekly-control {
   position: relative;
@@ -1000,6 +990,7 @@ pre {
   }
   .host-filter-control {
     order: 3;
+    flex-basis: 100%;
   }
   main {
     height: calc(100dvh - 100px);
@@ -1091,20 +1082,6 @@ pre {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
-}
-
-.settings-hosts {
-  margin-top: 24px;
-  border-top: 1px solid var(--border);
-  padding-top: 18px;
-}
-.settings-hosts > summary {
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-}
-.settings-hosts .modal-help {
-  margin-top: 12px;
 }
 
 .session-list {

@@ -30,3 +30,9 @@ export async function createSession(page: Page) {
     page.getByRole("textbox", { name: "Message Orc", exact: true }),
   ).toBeFocused();
 }
+
+export async function openHosts(page: Page) {
+  if (await page.locator(".mobile-back > button").isVisible())
+    await page.getByRole("button", { name: "‹ Sessions" }).click();
+  await page.getByRole("button", { name: "Hosts", exact: true }).click();
+}

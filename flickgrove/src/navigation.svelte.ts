@@ -2,6 +2,7 @@ export type Surface =
   | "new"
   | "history"
   | "history-preview"
+  | "hosts"
   | "settings"
   | "session-settings"
   | "keys"
@@ -9,7 +10,6 @@ export type Surface =
   | "weekly"
   | "weekly-detail"
   | "title"
-  | "host-filter"
   | "questions"
   | "file-preview";
 type Route = {
@@ -125,13 +125,17 @@ export function removeQuestionDrawer() {
   void move(-(next.surfaces.length - index));
 }
 export async function openConversation(
-  id: string,
+  id: string | null,
   fromDetail = false,
   ownerId?: string | null,
 ) {
   if (pending) await pending.promise;
   if (navigation.surfaces.length) await move(-navigation.surfaces.length);
   const next = route();
+  if (id === null) {
+    if (next.details.length) write({ details: [], surfaces: [] }, true);
+    return;
+  }
   if (!fromDetail && next.details.length > 1) {
     await move(-(next.details.length - 1));
     write({ details: [id], surfaces: [] }, true);

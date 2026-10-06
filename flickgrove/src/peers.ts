@@ -56,7 +56,27 @@ const modelsSchema = z.array(
     fastTier: z.string().nullable(),
   }),
 );
+const selectionSchema = z.object({
+  host: z.string(),
+  sessions: z.record(z.string(), z.string()),
+});
 export const preferences = {
+  get selection() {
+    const result = selectionSchema.safeParse(read<unknown>("selection", null));
+    if (!result.success)
+      return { host: "", sessions: {} as Record<string, string> };
+    return {
+      host: result.data.host,
+      sessions: Object.fromEntries(
+        Object.entries(result.data.sessions).filter(([host, id]) =>
+          id.startsWith(host + ":"),
+        ),
+      ),
+    };
+  },
+  set selection(value: { host: string; sessions: Record<string, string> }) {
+    localStorage.setItem(`${prefix}/selection`, JSON.stringify(value));
+  },
   get models() {
     const result = modelsSchema.safeParse(read<unknown>("models", []));
     return result.success ? result.data : [];

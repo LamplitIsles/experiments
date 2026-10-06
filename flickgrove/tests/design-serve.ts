@@ -48,6 +48,7 @@ let sendGate = Promise.withResolvers<void>();
 let peerDrop = false;
 let freshNoWorkers = false;
 let longConversations = false;
+let rowConversations = false;
 const browserSockets = new Set<ServerWebSocket<SocketData>>();
 let branchFixture = false;
 let branchFailure = false;
@@ -235,44 +236,53 @@ function agent(
     closed: false,
     questions: [],
     deliveries: [],
-    messages: longConversations
-      ? [
-          {
-            id: "long",
-            role: "assistant",
-            text: Array.from(
-              { length: 70 },
-              (_, i) =>
-                `${title}: Paragraph ${i + 1}. Long conversation fixture for reading and following new messages.`,
-            ).join("\n\n"),
-            at: Date.now(),
-          },
-        ]
-      : freshNoWorkers
+    messages: rowConversations
+      ? Array.from({ length: 40 }, (_, index) => ({
+          id: `row-${index}`,
+          role: "assistant" as const,
+          text:
+            `${title}: Row ${index}.\n\n` +
+            "Anonymous reading paragraph.\n\n".repeat(8),
+          at: Date.now(),
+        }))
+      : longConversations
         ? [
             {
-              id: "user",
-              role: "user",
-              text: "Review the voice input requirements.",
+              id: "long",
+              role: "assistant",
+              text: Array.from(
+                { length: 70 },
+                (_, i) =>
+                  `${title}: Paragraph ${i + 1}. Long conversation fixture for reading and following new messages.`,
+              ).join("\n\n"),
               at: Date.now(),
             },
           ]
-        : role === "orc"
+        : freshNoWorkers
           ? [
               {
                 id: "user",
                 role: "user",
-                text: "Add streaming voice input and coordinate both projects.",
-                at: Date.now(),
-              },
-              {
-                id: "assistant",
-                role: "assistant",
-                text: "I’ve started two Workers.\n\nVoice input is implementing the change.  \nDocumentation is updating the guide.\n\nI’ll review both results before asking you to merge.",
+                text: "Review the voice input requirements.",
                 at: Date.now(),
               },
             ]
-          : [],
+          : role === "orc"
+            ? [
+                {
+                  id: "user",
+                  role: "user",
+                  text: "Add streaming voice input and coordinate both projects.",
+                  at: Date.now(),
+                },
+                {
+                  id: "assistant",
+                  role: "assistant",
+                  text: "I’ve started two Workers.\n\nVoice input is implementing the change.  \nDocumentation is updating the guide.\n\nI’ll review both results before asking you to merge.",
+                  at: Date.now(),
+                },
+              ]
+            : [],
   };
 }
 async function reset(mode = "working") {
@@ -307,6 +317,7 @@ async function reset(mode = "working") {
   settingsLong = false;
   freshNoWorkers = mode === "no-workers";
   longConversations = mode === "long";
+  rowConversations = ["virtual-images", "host-selection"].includes(mode);
   peerDrop = false;
   quotaFailure = false;
   modelFailure = false;
@@ -317,12 +328,15 @@ async function reset(mode = "working") {
   sendMode = "accepted";
   sendGate.resolve();
   sendGate = Promise.withResolvers<void>();
-  const workers = !["no-workers", "idle"].includes(mode);
+  const workers = !["no-workers", "idle", "host-selection"].includes(mode);
   current = unit(
     "NUC",
     true,
     [
       agent("orc", "orc", "Streaming voice input", 0),
+      ...(mode === "host-selection"
+        ? [agent("second", "orc", "NUC second session", 0)]
+        : []),
       ...(mode === "dense"
         ? Array.from({ length: 18 }, (_, i) =>
             agent(`extra-${i}`, "orc", `Additional task ${i + 1}`, 0),
@@ -352,6 +366,9 @@ async function reset(mode = "working") {
     false,
     [
       agent("orc", "orc", "Reader performance", 1),
+      ...(mode === "host-selection"
+        ? [agent("second", "orc", "Mac second session", 1)]
+        : []),
       ...(workers
         ? [agent("reader", "worker", "Reader implementation", 1, "orc")]
         : []),
@@ -389,7 +406,7 @@ async function reset(mode = "working") {
     },
   });
   emptyOrigin = `http://127.0.0.1:${empty.server.port}`;
-  if (mode !== "idle" && mode !== "no-workers") {
+  if (!["idle", "no-workers", "host-selection"].includes(mode)) {
     await current.app.send(
       "orc",
       "Add streaming voice input and coordinate both projects.",

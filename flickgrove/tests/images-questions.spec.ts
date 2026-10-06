@@ -616,3 +616,111 @@ for (const failure of [
     ).toBe(before);
   });
 }
+
+test("virtual image recycling retains only an open viewer row, releases URLs and explicitly retries a failed cached preview", async ({
+  page,
+  request,
+}) => {
+  await request.post(origin + "/fixture/reset", {
+    data: { mode: "virtual-images" },
+  });
+  await page.addInitScript(() => {
+    const urls = new Set<string>();
+    const create = URL.createObjectURL,
+      revoke = URL.revokeObjectURL;
+    URL.createObjectURL = (blob) => {
+      const url = create(blob);
+      urls.add(url);
+      return url;
+    };
+    URL.revokeObjectURL = (url) => {
+      urls.delete(url);
+      revoke(url);
+    };
+    (window as any).__imageUrls = () => urls.size;
+  });
+  await page.goto(origin);
+  await expect(composer(page)).toBeVisible();
+  await add(page);
+  await composer(page).fill("Virtual image fixture");
+  await composer(page).press("Enter");
+  await expect(page.locator(".message-image")).toHaveCount(1);
+  // An optimistic local preview is not upload/send confirmation. Wait for the
+  // test-owned provider input before clearing its local recovery files.
+  await expect
+    .poll(async () => {
+      const info = await (await request.get(origin + "/fixture/info")).json();
+      return info.inputs.some(
+        (input: any) =>
+          input.text === "Virtual image fixture" && input.images.length === 1,
+      );
+    })
+    .toBe(true);
+  // Only this isolated browser's draft DB: force the real media preview path.
+  await page.evaluate(async () => {
+    for (const info of await indexedDB.databases())
+      if (info.name?.endsWith("/images")) {
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const open = indexedDB.open(info.name!);
+          open.onsuccess = () => resolve(open.result);
+          open.onerror = () => reject(open.error);
+        });
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction("drafts", "readwrite");
+          tx.objectStore("drafts").clear();
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+        db.close();
+      }
+  });
+  let reads = 0;
+  await page.route("**/api/images/*/preview?*", async (route) => {
+    reads++;
+    if (reads === 1)
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: '{"error":"Synthetic unavailable preview"}',
+      });
+    else await route.continue();
+  });
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Retry image", exact: true }),
+  ).toBeVisible();
+  expect(reads).toBe(1);
+  await page.getByRole("button", { name: "Retry image", exact: true }).click();
+  await expect(page.locator(".message-image img")).toBeVisible();
+  expect(reads).toBe(2);
+  const transcript = page.locator(".conversation");
+  await page.locator(".message-image").click();
+  await expect(page.locator(".full-image")).toBeVisible();
+  await transcript.evaluate((el) => (el.scrollTop = 0));
+  await expect(transcript).toContainText("Row 0.");
+  await expect(page.locator(".message-image")).toHaveCount(1);
+  expect(
+    await transcript.locator(".timeline-message").count(),
+  ).toBeLessThanOrEqual(15);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".image-viewer")).toHaveCount(0);
+  await transcript.evaluate(async (el) => {
+    el.scrollTop = 0;
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve)),
+    );
+  });
+  await expect(page.locator(".message-image")).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__imageUrls()))
+    .toBe(0);
+  await page.getByRole("button", { name: "Jump to bottom" }).click();
+  await expect(page.locator(".message-image img")).toBeVisible();
+  expect(reads).toBe(2);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "‹ Sessions", exact: true }).click();
+  await expect(page.locator(".agent-detail")).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__imageUrls()))
+    .toBe(0);
+});

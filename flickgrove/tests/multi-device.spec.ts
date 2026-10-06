@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { newSession, openSettings } from "./browser-actions";
+import { newSession, openSettings, openHosts } from "./browser-actions";
 
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -40,18 +40,23 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await page.getByRole("button", { name: "Expand Workers" }).first().click();
   await page.getByRole("button", { name: "Expand Workers" }).click();
   await capture(page, "multi-01");
-  await page.getByRole("combobox", { name: "Host filter" }).click();
   await expect(
-    page.getByRole("combobox", { name: "Host filter" }),
-  ).toContainText("All hosts");
+    page
+      .getByRole("group", { name: "Host filter" })
+      .getByRole("button", { name: "NUC", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   await capture(page, "multi-02");
   const info = await (await request.get("/fixture/info")).json();
-  await page.getByRole("option", { name: "NUC Connected" }).click();
+  await page
+    .getByRole("group", { name: "Host filter" })
+    .getByRole("button", { name: "NUC", exact: true })
+    .click();
   await capture(page, "multi-10");
-  await page.getByRole("combobox", { name: "Host filter" }).click();
-  await page.getByRole("option", { name: "All hosts" }).click();
-  await openSettings(page);
-  await page.locator(".settings-hosts > summary").click();
+  await page
+    .getByRole("group", { name: "Host filter" })
+    .getByRole("button", { name: "NUC", exact: true })
+    .click();
+  await openHosts(page);
   await capture(page, "multi-03");
   await page.getByRole("button", { name: "Add host", exact: true }).click();
   await page
@@ -238,14 +243,18 @@ test("two access devices keep independent view/drafts while answers and outages 
     await left.goto("http://127.0.0.1:14319/");
     await right.goto("http://127.0.0.1:14319/");
     const info = await (await request.get("/fixture/info")).json();
-    await left.getByRole("combobox", { name: "Host filter" }).click();
-    await left.getByRole("option", { name: "NUC Connected" }).click();
+    await left
+      .getByRole("group", { name: "Host filter" })
+      .getByRole("button", { name: "NUC", exact: true })
+      .click();
     await left
       .getByRole("button", { name: "Open Streaming voice input Orc" })
       .click();
     await expect(
-      right.getByRole("combobox", { name: "Host filter" }),
-    ).toContainText("All hosts");
+      right
+        .getByRole("group", { name: "Host filter" })
+        .getByRole("button", { name: "NUC", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
     await right
       .getByRole("button", { name: "Open Streaming voice input Orc" })
       .click();
@@ -333,8 +342,7 @@ test("mobile supplementary forms, Stop and quota stay operable within 390 pixels
   await request.post("/fixture/reset", { data: {} });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
-  await openSettings(page);
-  await page.locator(".settings-hosts > summary").click();
+  await openHosts(page);
   await page.getByRole("button", { name: "Add host", exact: true }).click();
   await page
     .getByRole("textbox", { name: "Name", exact: true })
@@ -459,8 +467,7 @@ test("compact detail uses the full height and keeps metadata above the title", a
   ).toBeLessThanOrEqual(390);
   await capture(page, "compact-detail-mobile");
   await page.getByRole("button", { name: "‹ Sessions" }).click();
-  await openSettings(page);
-  await page.locator(".settings-hosts > summary").click();
+  await openHosts(page);
   await expect(
     page.getByRole("button", { name: "Edit host Neil’s Mac" }),
   ).toBeVisible();

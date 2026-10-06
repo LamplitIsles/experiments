@@ -37,32 +37,56 @@
   let client: Peers | undefined;
   let composing = false;
   let snapshot = $state<Snapshot>({ agents: [], settings: null, revision: 0 });
-  let selectedId = $state<string | null>(localStorage.getItem(`${storagePrefix}/selected`));
+  const savedSelection = preferences.selection;
+  let remembered = $state<Record<string, string>>(savedSelection.sessions);
+  let selectedId = $state<string | null>(savedSelection.sessions[savedSelection.host] ?? null);
+  let navigationReady = $state(false); let peersReady = $state(false); let switchingHost = $state(false);
   let detail = $state<Detail | null>(null); let skills = $state<Skill[]>([]);
   let projects = $state<Project[]>([]); let models = $state<Model[]>(preferences.models);
   let connected = $state(false); let loading = $state(true); let error = $state("");
   let now = $state(Date.now()); let sessionList: { visibleIds(): string[]; keydown(event: KeyboardEvent): Promise<void>; expandFocused(): void; reveal(id: string): Promise<void>; closeTarget(): string | null; navigate(offset: number, index?: number): Promise<string | null> };
-  let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | null>(null);
+  let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | "hosts" | null>(null);
   let search = $state(""); let projectId = $state(""); let saving = $state(false);
   let settings = $state<Settings | null>(null); let sequence = 0; let focusCreatedId = $state<string | null>(null);
   let install = $state<(Event & { prompt: () => Promise<void> }) | null>(null);
-  let hostFilter = $state(localStorage.getItem(`${storagePrefix}/host-filter`) ?? "");
+  let hostFilter = $state(savedSelection.host);
   let desktop = $state(matchMedia("(min-width: 701px)").matches);
   let previousVisible: string[] = [];
   let lostSelection: string | null = null;
   $effect(() => {
     const ids = visibleAgents.map(a => a.id);
     const current = navigation.details.at(-1);
-    if (!navigation.surfaces.length && desktop && matchMedia("(min-width: 701px)").matches && !loading && (!current || !ids.includes(current))) {
+    if (!navigationReady || switchingHost || navigation.surfaces.length) return;
+    if (peersReady && hostFilter !== (hosts[0]?.id ?? "") && !hosts.some(h => h.id === hostFilter)) {
+      void selectHost(hosts[0]?.id ?? "", !!current || desktop);
+      return;
+    }
+    // Browser history and explicit cross-device navigation take precedence.
+    if (current && hosts.some(h => current.startsWith(h.id + ":")) && !current.startsWith(hostFilter + ":")) {
+      hostFilter = current.split(":")[0];
+      return;
+    }
+    const host = hosts.find(h => h.id === hostFilter);
+    if (host?.connected && remembered[hostFilter] && !ids.includes(remembered[hostFilter])) {
+      const next = { ...remembered }; delete next[hostFilter]; remembered = next;
+    }
+    if (host?.connected && !loading && (desktop || lostSelection) && (!current || !ids.includes(current))) {
       const position = previousVisible.indexOf(current ?? lostSelection ?? "");
       const adjacent = previousVisible.slice(position + 1).find(id => ids.includes(id)) ?? previousVisible.slice(0, Math.max(0, position)).reverse().find(id => ids.includes(id));
-      const next = adjacent ?? visibleAgents.find(a => a.role === "orc")?.id;
-      if (next) void openConversation(next);
-      else validateNavigation(new Set(ids));
+      const next = remembered[hostFilter] ?? adjacent ?? visibleAgents.find(a => a.role === "orc")?.id ?? null;
+      void openConversation(next);
     }
     previousVisible = sessionList?.visibleIds() ?? visibleAgents.filter(a => a.role === "orc").map(a => a.id);
     lostSelection = null;
   });
+  async function selectHost(id: string, restore = true) {
+    switchingHost = true; hostFilter = id;
+    const host = hosts.find(h => h.id === id);
+    const rememberedId = remembered[id];
+    const next = rememberedId && (!host?.connected || snapshot.agents.some(a => a.id === rememberedId)) ? rememberedId : snapshot.agents.find(a => a.hostId === id && a.role === "orc")?.id ?? null;
+    try { if (restore) await openConversation(next); }
+    finally { switchingHost = false; }
+  }
   let createHost = $state(preferences.host); let catalogSequence = 0;
   const target = $derived(snapshot.agents.find(a => a.id === selectedId));
   // Snapshot identity is display-only; detail remains the write authority.
@@ -70,8 +94,8 @@
   const hosts = $derived(snapshot.hosts ?? []);
   const selectedHost = $derived(hosts.find(h => h.id === shownDetail?.hostId));
   const hostConnected = $derived(!!selectedHost?.connected);
-  const visibleAgents = $derived(snapshot.agents.filter(a => !hostFilter || a.hostId === hostFilter));
-  $effect(() => { localStorage.setItem(`${storagePrefix}/host-filter`, hostFilter); });
+  const visibleAgents = $derived(snapshot.agents.filter(a => a.hostId === hostFilter));
+  $effect(() => { if (navigationReady) preferences.selection = { host: hostFilter, sessions: $state.snapshot(remembered) }; });
   async function chooseHost(id: string) {
     createHost = id; preferences.host = id; projectId = ""; projects = []; const seq = ++catalogSequence;
     try { const registered = await api<Project[]>(`/projects?host=${encodeURIComponent(id)}`); if (seq === catalogSequence) { projects = registered; projectId = registered[0]?.alias ?? ""; } }
@@ -85,11 +109,12 @@
   $effect(() => { if (modal === "new" && !filteredProjects.some(p => p.alias === projectId)) projectId = filteredProjects[0]?.alias ?? ""; });
   function closeDetail() { if (navigation.surfaces.length || !desktop) void back(); else if (selectedId && questionPanels[selectedId]) setQuestionPanel(selectedId, false); }
   $effect(() => {
+    if (!navigationReady) return;
     const id = navigation.details.at(-1) ?? null;
-    if (id !== selectedId) { ++sequence; selectedId = id; detail = null; skills = []; error = ""; if (id) void restoreDetail(id); else { localStorage.removeItem(`${storagePrefix}/selected`); void client?.call("select", {ids:[]}).catch(() => {}); } }
+    if (id !== selectedId) { ++sequence; selectedId = id; detail = null; skills = []; error = ""; if (id) void restoreDetail(id); else { void client?.call("select", {ids:[]}).catch(() => {}); } }
   });
   $effect(() => {
-    const kind = navigation.surfaces.find(s => s === "new" || s === "settings" || s === "keys") ?? null;
+    const kind = navigation.surfaces.find(s => s === "new" || s === "settings" || s === "keys" || s === "hosts") ?? null;
     if (kind !== modal) { modal = kind; modalOpen = !!kind; if (kind) void prepareModal(kind); }
   });
   async function refreshDetail(id: string) {
@@ -101,7 +126,11 @@
   }
   function open(id: string, fromDetail = false) { openConversation(id, fromDetail, snapshot.agents.find(a => a.id === id)?.ownerId); }
   async function restoreDetail(id: string) {
-    error = ""; selectedId = id; observeQuestions(snapshot.agents,id); localStorage.setItem(`${storagePrefix}/selected`, id);
+    error = ""; selectedId = id; observeQuestions(snapshot.agents,id);
+    const host = id.split(":")[0];
+    // Unwinding nested history can briefly restore the previous host's owner.
+    if (!switchingHost || host === hostFilter) remembered = { ...remembered, [host]: id };
+    if (!switchingHost) hostFilter = host;
     const cached = localStorage.getItem(`${storagePrefix}/detail/${id}`); detail = cached ? JSON.parse(cached) : null; skills = [];
     if (hosts.find(h=>h.id===id.split(":")[0])?.connected) {
       void client?.call('select', {ids:[id]}).catch(e => { if(selectedId === id) error = e instanceof Error ? e.message : m.load_failure(); });
@@ -120,7 +149,11 @@
     if (selectedId && !value.agents.some(a => a.id === selectedId)) lostSelection = selectedId;
     snapshot = value; localStorage.setItem(`${storagePrefix}/snapshot`, JSON.stringify(value));
     historyCache.retain(new Set(value.agents.map(a => a.id)));
-    validateNavigation(new Set(value.agents.map(a => a.id)));
+    const valid = new Set(value.agents.map(a => a.id));
+    for (const id of [...navigation.details, ...Object.values(remembered)]) {
+      if (!peersReady || value.hosts?.some(h => !h.connected && id.startsWith(h.id + ":"))) valid.add(id);
+    }
+    validateNavigation(valid);
 
   }
   async function load() {
@@ -148,8 +181,9 @@
       notification.onclick = () => { window.focus(); void open(a.ownerId ?? a.id); notification.close(); };
     }
   }
-  function show(kind: "new" | "settings" | "keys") { setSurface(kind, true); }
-  async function prepareModal(kind: "new" | "settings" | "keys") {
+  let hostsReturnFocus: HTMLElement | null = null;
+  function show(kind: "new" | "settings" | "keys" | "hosts") { if (kind === "hosts") hostsReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null; setSurface(kind, true); }
+  async function prepareModal(kind: "new" | "settings" | "keys" | "hosts") {
     error = "";
     if (kind === "new") { search = ""; void chooseHost(hostFilter || preferences.host || snapshot.entryId || ""); }
     if (kind === "settings") {
@@ -330,6 +364,9 @@
     const cached = localStorage.getItem(`${storagePrefix}/snapshot`); if (cached) {const saved=JSON.parse(cached);snapshot={...saved,hosts:saved.hosts?.map((h:import("./contracts").Host)=>({...h,connected:false}))};}
     const cachedDetail = selectedId && localStorage.getItem(`${storagePrefix}/detail/${selectedId}`); if (cachedDetail) detail = JSON.parse(cachedDetail);
     const cleanupNavigation = initializeNavigation(selectedId);
+    navigationReady = true;
+    const initialId = navigation.details.at(-1);
+    if (initialId) { hostFilter = initialId.split(":")[0]; remembered = { ...remembered, [hostFilter]: initialId }; }
     const media = matchMedia("(min-width: 701px)");
     const resize = () => desktop = media.matches;
     media.addEventListener("change", resize);
@@ -353,7 +390,7 @@
       for(const pending of outgoing.entries)if(pending.agentId.startsWith(id+":")&&pending.status==='sending')unknownOutgoing(pending.agentId,pending.id,m.unknown_delivery());
     });
     setClient(client);
-    void client.start().then(()=>load()).catch(e=>{loading=false;error=e.message;});
+    void client.start().then(()=>{peersReady=true;return load();}).catch(e=>{loading=false;error=e.message;});
     const compositionStart = () => composing = true;
     const compositionEnd = () => composing = false;
     window.addEventListener("compositionstart", compositionStart);
@@ -371,7 +408,7 @@
 
 <Toaster theme="dark" position="bottom-center" />
 <header class="app-header" class:has-selection={!!selectedId}><strong>{m.product()}</strong><span class="session-count">{m.session_count({ count: roots.length })}</span>
-  <HostFilter {hosts} bind:value={hostFilter} />
+  <HostFilter {hosts} value={hostFilter} onselect={selectHost} onmanage={() => show("hosts")} />
   <div class="header-actions"><Weekly hostId={snapshot.entryId} connected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} /><Button variant="ghost" size="icon-sm" aria-label={m.settings()} onclick={() => show("settings")}><SettingsIcon /></Button></div>
 </header>
 <main class:with-detail={!!selectedId}>
@@ -379,11 +416,11 @@
   {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !shownDetail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
   {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
   {#if error && !modal && !shownDetail}<div class="app-error" role="alert"><span>{error}</span><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => error = ""}><X /></Button></div>{/if}
-  {#if shownDetail && selectedId}{#key selectedId}<AgentDetail detail={shownDetail!} ready={!!detail} tree={shownDetail!.role === "orc" ? target : owner} {owner} {skills} {now} connected={hostConnected} entryId={snapshot.entryId} entryConnected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} onstop={stop} onupdate={result => { if (selectedId === result.id) detail = result; snapshot = { ...snapshot, agents: snapshot.agents.map(a => a.id === result.id ? { ...a, model: result.model, effort: result.effort, serviceTier: result.serviceTier } : a) }; }} onrename={rename} onrefresh={load} actionError={error} closeError={closeError?.id === shownDetail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} onlookup={operationId => selectedId ? lookup(selectedId,operationId) : Promise.resolve()} ondismiss={operationId=>{if(selectedId)dismissOutgoing(selectedId,operationId);}} />{/key}{/if}
+  {#if shownDetail && selectedId}{#key selectedId}<AgentDetail detail={shownDetail!} ready={!!detail} tree={shownDetail!.role === "orc" ? target : owner} {owner} {skills} {now} connected={hostConnected} mediaConnected={connected && hostConnected} entryId={snapshot.entryId} entryConnected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} onstop={stop} onupdate={result => { if (selectedId === result.id) detail = result; snapshot = { ...snapshot, agents: snapshot.agents.map(a => a.id === result.id ? { ...a, model: result.model, effort: result.effort, serviceTier: result.serviceTier } : a) }; }} onrename={rename} onrefresh={load} actionError={error} closeError={closeError?.id === shownDetail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} onlookup={operationId => selectedId ? lookup(selectedId,operationId) : Promise.resolve()} ondismiss={operationId=>{if(selectedId)dismissOutgoing(selectedId,operationId);}} />{/key}{/if}
 </main>
 
 <Dialog.Root open={modalOpen} onOpenChange={value => { if (!value && modal) void closeModal(); }}>
-  <Dialog.Content showCloseButton={false} class={`grove-dialog ${modal === "new" ? "new-modal" : modal === "settings" ? "settings-modal" : ""}`} onOpenAutoFocus={e => { e.preventDefault(); if (modal === "new") projectSearch?.focus(); }} onCloseAutoFocus={e => e.preventDefault()}><Button class="modal-close" variant="ghost" size="icon-sm" aria-label={m.close()} onclick={closeModal}><X /></Button>
+  <Dialog.Content showCloseButton={false} class={`grove-dialog ${modal === "new" ? "new-modal" : modal === "settings" ? "settings-modal" : ""}`} onOpenAutoFocus={e => { e.preventDefault(); if (modal === "new") projectSearch?.focus(); }} onCloseAutoFocus={e => { e.preventDefault(); if (hostsReturnFocus?.isConnected) hostsReturnFocus.focus(); hostsReturnFocus = null; }}><Button class="modal-close" variant="ghost" size="icon-sm" aria-label={m.close()} onclick={closeModal}><X /></Button>
     {#if modal === "new"}
       <Dialog.Title>{navigation.surfaces.includes("history") ? m.open_session() : m.new_session()}</Dialog.Title>
       {#if navigation.surfaces.includes("history") && projects.find(p => p.alias === projectId)}
@@ -405,7 +442,8 @@
       <Dialog.Title>{m.settings()}</Dialog.Title><p class="modal-help">{m.settings_help()}</p>
       {#if settings}{#each ["orc", "worker"] as role}{@const key = role as "orc" | "worker"}<section class="role-settings"><h3>{key === "orc" ? m.orc() : m.worker()}</h3><div class="model-fields"><label>{m.model()}<NativeSelect class="model-select" bind:value={settings[key].model} onchange={() => { if (settings) settings[key].effort = models.find(model => model.id === settings![key].model)?.defaultEffort ?? ""; if (settings && !models.find(model => model.id === settings![key].model)?.fastTier) settings.fast = false; }}>{#each models as model}<option value={model.id}>{model.name}</option>{/each}</NativeSelect></label><label>{m.effort()}<NativeSelect class="model-select" bind:value={settings[key].effort}>{#each models.find(model => model.id === settings![key].model)?.efforts ?? [] as effort}<option value={effort}>{effort}</option>{/each}</NativeSelect></label></div></section>{/each}<label class="fast-setting"><span><strong>{m.fast_mode()}</strong><small>{fastAvailable ? m.fast_help() : m.fast_unavailable()}</small></span><Switch aria-label={m.fast_mode()} bind:checked={settings.fast} disabled={!fastAvailable} /></label>{/if}
       <p class="settings-scope">{m.settings_scope()}</p><div class="modal-action">{#if install}<button class="install-link" onclick={() => install?.prompt()}>{m.install_app()}</button>{/if}<Button variant="default" size="sm" disabled={!settings || saving} onclick={saveSettings}>{saving ? m.sending() : m.save_changes()}</Button></div>
-      <details class="settings-hosts"><summary>{m.hosts()}</summary><Hosts {hosts} sessionCount={roots.length} onadopt={value => adopt(value, true)} /></details>
+    {:else if modal === "hosts"}
+      <Dialog.Title>{m.hosts()}</Dialog.Title><Hosts {hosts} sessionCount={roots.length} onadopt={value => adopt(value, true)} />
     {:else if modal === "keys"}
       <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Option + J / K", m.key_session_loop()], ["⌘ 1–9", m.key_visible_session()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Option/Alt + S", m.search_skills()], ["Option/Alt + X", m.close_tree()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
     {/if}

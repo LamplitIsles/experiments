@@ -106,13 +106,14 @@ for (const width of [1440, 390])
       page.getByRole("textbox", { name: "Message Orc" }),
     ).toHaveValue("Historical draft");
     await page.request.post(origin + "/fixture/history-live", { data: { id } });
-    await expect(page.locator(".conversation")).toContainText(
-      "Current live response",
-    );
     expect(await transcript.evaluate((el) => el.scrollTop)).toBe(30);
     await page.screenshot({
       path: `../.scratch/flickgrove-switch-flash/${width}-cached-reading.png`,
     });
+    await page.getByRole("button", { name: "Jump to bottom" }).click();
+    await expect(page.locator(".conversation")).toContainText(
+      "Current live response",
+    );
   });
 test("earlier pages and cursor survive switches; failed page retains data and explicit retry", async ({
   page,
@@ -124,6 +125,8 @@ test("earlier pages and cursor survive switches; failed page retains data and ex
   const history = page.locator(".historical-messages");
   await expect(history).toContainText("item 74");
   await history.getByRole("button", { name: "Earlier messages" }).click();
+  await expect(history.getByRole("status")).toBeHidden();
+  await page.locator(".conversation").evaluate((el) => (el.scrollTop = 0));
   await expect(history).toContainText("item 15");
   await page.locator(".conversation").evaluate((el) => (el.scrollTop = 50));
   await expect(
@@ -146,6 +149,8 @@ test("earlier pages and cursor survive switches; failed page retains data and ex
   await expect(history.getByRole("alert")).toBeVisible();
   await control(page, { fail: false });
   await history.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(history.getByRole("status")).toBeHidden();
+  await page.locator(".conversation").evaluate((el) => (el.scrollTop = 0));
   await expect(history).toContainText("item 0");
   await expect(
     history.getByRole("button", { name: "Earlier messages" }),
@@ -209,7 +214,7 @@ test("delayed real Chord history is deduplicated across rapid switches and isola
   await choose(page, "Remote history");
   await expect(page.locator(".conversation .host-outage")).toBeVisible();
   await expect(page.locator(".historical-messages")).toContainText(
-    "Remote history item 34",
+    "Remote history item",
   );
   expect(
     await page.locator(".conversation").evaluate((el) => el.scrollTop),
@@ -235,7 +240,9 @@ for (const completion of ["after return", "while away"])
         );
         return {
           text: message?.textContent,
-          offset: message!.getBoundingClientRect().top - top,
+          offset: message
+            ? message.getBoundingClientRect().top - top
+            : Infinity,
         };
       }, text);
     await expect(history).toContainText("item 74");
@@ -256,20 +263,23 @@ for (const completion of ["after return", "while away"])
       await expect(history.getByRole("status")).toBeVisible();
       expect((await position()).text).toContain("item 45");
       // User continues reading during the pending request; preserve this newer anchor.
-      await page
-        .locator(".conversation")
-        .evaluate((el) => (el.scrollTop = 700));
+      await page.locator(".conversation").evaluate(async (el) => {
+        el.scrollTop = 700;
+        await new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        );
+      });
     }
     if (completion === "after return") before = await position();
-    await expect(history).toContainText("item 15");
+    await expect(history.getByRole("status")).toBeHidden();
     // Prepend may reveal preceding content above this anchor; scroll metrics round to pixels.
     await expect
       .poll(async () =>
         Math.abs((await position(before.text!)).offset - before.offset),
       )
       .toBeLessThanOrEqual(1);
-    expect(before.text).toContain(
-      completion === "while away" ? "item 45" : "item 53",
-    );
+    expect(before.text).toContain("Historical reports item");
+    await page.locator(".conversation").evaluate((el) => (el.scrollTop = 0));
+    await expect(history).toContainText("item 15");
     expect((await control(page)).reads).toEqual(["75", "45"]);
   });

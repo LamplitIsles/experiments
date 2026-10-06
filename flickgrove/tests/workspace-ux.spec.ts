@@ -8,12 +8,9 @@ const composer = (page: Page) =>
   page.getByRole("textbox", { name: "Message Orc", exact: true });
 const toggle = (page: Page) => page.locator(".questions-toggle");
 async function filter(page: Page, name: string) {
-  await page.getByRole("combobox", { name: "Host filter" }).click();
   await page
-    .getByRole("option", {
-      name: name === "All hosts" ? name : `${name} Connected`,
-      exact: true,
-    })
+    .getByRole("group", { name: "Host filter" })
+    .getByRole("button", { name, exact: true })
     .click();
 }
 
@@ -98,18 +95,19 @@ test("persistent selection, circular physical shortcuts, visible numeric index a
   await page.locator(".role-project").click();
   await page.keyboard.press("ArrowDown");
   await expect(title(page)).toHaveText("Reader performance");
-  await filter(page, "All hosts");
+  await filter(page, "NUC");
+  await expect(title(page)).toHaveText("Streaming voice input");
   await page.locator(".role-project").click();
   await page.keyboard.press("ArrowDown");
-  await expect(title(page)).toHaveText("Streaming voice input");
+  await expect(title(page)).toHaveText("Voice input");
   await page.keyboard.press("ArrowUp");
-  await expect(title(page)).toHaveText("Reader performance");
+  await expect(title(page)).toHaveText("Streaming voice input");
   await expect(page.locator(".navigation-focus")).toHaveCount(0);
   await page.keyboard.press("Escape");
-  await expect(title(page)).toHaveText("Reader performance");
+  await expect(title(page)).toHaveText("Streaming voice input");
 });
 
-test("filter and close choose valid neighbors; Host menu floats above detail; empty range stays empty", async ({
+test("filter and close choose valid neighbors; empty range stays empty", async ({
   page,
   request,
 }) => {
@@ -118,19 +116,19 @@ test("filter and close choose valid neighbors; Host menu floats above detail; em
   });
   await page.goto(origin);
   await expect(title(page)).toHaveText("Streaming voice input");
-  await page.getByRole("combobox", { name: "Host filter" }).click();
-  await expect(page.locator(".host-filter-menu")).toBeVisible();
-  await page.screenshot({ path: `${shots}/desktop-host-menu.png` });
-  await page.getByRole("option", { name: "All hosts", exact: true }).click();
-  await page.keyboard.press("Alt+x");
-  await expect(title(page)).toHaveText("Reader performance");
+  await expect(page.getByRole("group", { name: "Host filter" })).toBeVisible();
   await filter(page, "NUC");
+  await page.keyboard.press("Alt+x");
   await expect(page.locator(".agent-detail")).toHaveCount(0);
   await expect(page.locator(".detail-empty")).toBeVisible();
   await page.keyboard.press("Meta+1");
   await page.keyboard.press("Alt+j");
   await expect(page.locator(".agent-detail")).toHaveCount(0);
   await page.screenshot({ path: `${shots}/desktop-empty.png` });
+  await filter(page, "Neil’s Mac");
+  await expect(title(page)).toHaveText("Reader performance");
+  await filter(page, "NUC");
+  await expect(page.locator(".agent-detail")).toHaveCount(0);
 });
 
 test("closing a middle visible session selects its next neighbor and collapsing selected Worker selects Orc", async ({
