@@ -173,6 +173,7 @@
   "check_delivery": "Check receipt",
   "restore_message": "Restore to draft",
   "answer_batch": "Answer batch",
+  "key_host_loop": "Previous / next device (loop)",
   "key_session_loop": "Next / previous session (loop)",
   "key_visible_session": "Open visible session 1–9",
   "remove_peer": "Remove host",

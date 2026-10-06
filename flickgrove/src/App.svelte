@@ -333,6 +333,16 @@
   function keydown(event: KeyboardEvent) {
     if (event.defaultPrevented || composing || event.isComposing || event.keyCode === 229) return;
     const optionMove = event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && ["KeyJ", "KeyK"].includes(event.code);
+    const hostMove = event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && ["KeyH", "KeyL"].includes(event.code);
+    if (hostMove) {
+      if (navigation.surfaces.length) return;
+      event.preventDefault();
+      if (hosts.length < 2 || switchingHost) return;
+      const index = hosts.findIndex(host => host.id === hostFilter);
+      const offset = event.code === "KeyH" ? -1 : 1;
+      void selectHost(hosts[(index + offset + hosts.length) % hosts.length].id);
+      return;
+    }
     const numberMove = event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && /^Digit[1-9]$/.test(event.code);
     if (optionMove || numberMove) {
       if (navigation.surfaces.length) return;
@@ -445,7 +455,7 @@
     {:else if modal === "hosts"}
       <Dialog.Title>{m.hosts()}</Dialog.Title><Hosts {hosts} sessionCount={roots.length} onadopt={value => adopt(value, true)} />
     {:else if modal === "keys"}
-      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Option + J / K", m.key_session_loop()], ["⌘ 1–9", m.key_visible_session()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Option/Alt + S", m.search_skills()], ["Option/Alt + X", m.close_tree()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
+      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Option + J / K", m.key_session_loop()], ["Option/Alt + H / L", m.key_host_loop()], ["⌘ 1–9", m.key_visible_session()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Option/Alt + S", m.search_skills()], ["Option/Alt + X", m.close_tree()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
     {/if}
     {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
   </Dialog.Content>
