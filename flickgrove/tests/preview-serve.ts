@@ -283,21 +283,23 @@ const server = Bun.serve({
           ? Array.from({ length: body.count }, (_, index) => ({
               id: `history-${index}`,
               role: "assistant" as const,
-              text: body.rich
-                ? `${title} item ${index}\n\n` +
-                  Array.from(
-                    { length: 16 },
-                    (_, n) =>
-                      `- Group ${n}\n  - Nested alpha\n  - Nested beta\n  - Nested gamma`,
-                  ).join("\n") +
-                  "\n\n```typescript\nconst result = records.map(record => ({ id: record.id, value: record.value }));\n```\n\n" +
-                  "| Column A | Column B | Column C | Column D | Column E | Column F |\n|---|---|---|---|---|---|\n" +
-                  Array.from(
-                    { length: 24 },
-                    (_, n) =>
-                      `| ${n} | alpha | beta | gamma | delta | epsilon |`,
-                  ).join("\n")
-                : `${title} item ${index}`,
+              text: body.text
+                ? `${title} item ${index}\n\n${body.text}`
+                : body.rich
+                  ? `${title} item ${index}\n\n` +
+                    Array.from(
+                      { length: 16 },
+                      (_, n) =>
+                        `- Group ${n}\n  - Nested alpha\n  - Nested beta\n  - Nested gamma`,
+                    ).join("\n") +
+                    "\n\n```typescript\nconst result = records.map(record => ({ id: record.id, value: record.value }));\n```\n\n" +
+                    "| Column A | Column B | Column C | Column D | Column E | Column F |\n|---|---|---|---|---|---|\n" +
+                    Array.from(
+                      { length: 24 },
+                      (_, n) =>
+                        `| ${n} | alpha | beta | gamma | delta | epsilon |`,
+                    ).join("\n")
+                  : `${title} item ${index}`,
               at: Date.now(),
             }))
           : [
@@ -305,8 +307,9 @@ const server = Bun.serve({
                 id: "historical-link",
                 role: "assistant",
                 text:
+                  body.text ??
                   "[History chart](reports/plot.png)\n\n" +
-                  "Historical paragraph\n\n".repeat(150),
+                    "Historical paragraph\n\n".repeat(150),
                 at: Date.now(),
               },
             ],
@@ -336,6 +339,8 @@ const server = Bun.serve({
         id,
         text = "Current live response",
         stream = false,
+        input = "Live input",
+        report,
       } = await request.json();
       const target = id.startsWith(remote.service.identity.id + ":")
         ? remote
@@ -345,7 +350,7 @@ const server = Bun.serve({
         target.patch(id, text);
         return Response.json({ ok: true });
       }
-      await target.app.send(agentId, "Live input", crypto.randomUUID());
+      await target.app.send(agentId, input, crypto.randomUUID());
       target.runtime.emit(agentId, {
         type: "item",
         turnId: target.app.detail(agentId).turnId!,
@@ -361,6 +366,23 @@ const server = Bun.serve({
         turnId: target.app.detail(agentId).turnId!,
         status: "completed",
       });
+      if (report) {
+        const worker = (await target.app.tool(
+          target.runtime.agents.get(agentId)!.token,
+          "worker_start",
+          {
+            project: "reporter",
+            title: "Math reporter",
+            spec: "Fixture math report",
+            message: "Prepare math report",
+          },
+        )) as { id: string };
+        await target.app.tool(
+          target.runtime.agents.get(worker.id)!.token,
+          "worker_report",
+          { message: report },
+        );
+      }
       return Response.json({ ok: true });
     }
     if (url.pathname === "/fixture/offline" && request.method === "POST") {

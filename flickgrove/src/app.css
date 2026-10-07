@@ -351,6 +351,20 @@ main {
 .markdown p {
   margin: 0 0 12px;
 }
+.math-formula {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  vertical-align: middle;
+}
+.math-formula.math-block {
+  display: block;
+  margin: 12px 0;
+}
+.math-formula .katex-display {
+  margin: 0;
+}
 .markdown > :last-child {
   margin-bottom: 0;
 }
@@ -381,7 +395,9 @@ pre {
 .markdown pre {
   background: #18181b;
   padding: 14px;
-  white-space: pre-wrap;
+  white-space: pre;
+  max-width: 100%;
+  overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 12px;
@@ -1848,4 +1864,67 @@ pre {
   .session-open[draggable="true"] {
     cursor: grab;
   }
+}
+
+.mermaid-renderer {
+  position: relative;
+  max-width: 100%;
+  margin: 12px 0;
+}
+.mermaid-svg {
+  overflow: auto;
+  max-width: 100%;
+}
+.mermaid-svg svg {
+  max-width: none;
+}
+.mermaid-staging {
+  position: fixed;
+  left: -100000px;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.mermaid-status {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.markdown .th-keyword,
+.markdown .th-tag,
+.markdown .th-meta {
+  color: #ff7b72;
+}
+.markdown .th-string,
+.markdown .th-attr,
+.markdown .th-code-inline {
+  color: #a5d6ff;
+}
+.markdown .th-number,
+.markdown .th-literal,
+.markdown .th-property,
+.markdown .th-operator {
+  color: #79c0ff;
+}
+.markdown .th-function,
+.markdown .th-heading {
+  color: #d2a8ff;
+}
+.markdown .th-variable,
+.markdown .th-type,
+.markdown .th-command {
+  color: #ffa657;
+}
+.markdown .th-comment {
+  color: var(--muted-foreground);
+}
+.markdown .th-inserted,
+.markdown .th-selector {
+  color: #7ee787;
+}
+.markdown .th-deleted {
+  color: #ffa198;
+}
+.markdown .th-link {
+  color: var(--primary);
 }

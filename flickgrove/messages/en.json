@@ -195,5 +195,7 @@
   "tree_fast_on": "On for supported models",
   "tree_fast_off": "Off",
   "tree_native": "Confirmed next-turn tier: {tier}.",
-  "loading_conversation": "Loading conversation…"
+  "loading_conversation": "Loading conversation…",
+  "diagram_loading": "Loading diagram…",
+  "diagram_invalid": "Unable to render diagram. Source is shown below."
 }
