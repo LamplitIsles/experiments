@@ -130,10 +130,16 @@ function rememberAccepted(agentId: string, id: string) {
   );
 }
 export function observeOutgoing(detail: Detail) {
+  for (const delivery of detail.deliveries)
+    if (
+      delivery.status === "sent" ||
+      detail.messages.some((m) => m.role === "user" && m.id === delivery.id)
+    )
+      rememberAccepted(detail.id, delivery.id);
   outgoing.entries = outgoing.entries.filter((o) => {
     if (localStorage.getItem(key(o) + "/dismissed")) return false;
     if (o.agentId !== detail.id) return true;
-    if (detail.messages.some((m) => m.id === o.id)) {
+    if (detail.messages.some((m) => m.role === "user" && m.id === o.id)) {
       rememberAccepted(o.agentId, o.id);
       localStorage.removeItem(key(o));
       if (o.localImageIds?.length || o.images?.length)

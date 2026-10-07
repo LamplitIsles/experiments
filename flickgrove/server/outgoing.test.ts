@@ -49,13 +49,43 @@ test("pending lookup preserves identity and accepted results are monotonic", asy
       Object.assign(globalThis, {location: {origin: "http://fixture.invalid"}, window: {addEventListener() {}}, localStorage: new Proxy({
         getItem: key => records.get(key) ?? null, setItem: (key, value) => records.set(key, value), removeItem: key => records.delete(key)
       }, {ownKeys:()=>[...records.keys()],getOwnPropertyDescriptor:()=>({enumerable:true,configurable:true})})});
-      const {addOutgoing, acceptReceipt, observeOutgoing, outgoing, receiptAlreadyAccepted, withOutgoing} = await import("./outgoing.mjs");
+      const {addOutgoing, acceptReceipt, observeOutgoing, outgoing, receiptAlreadyAccepted, withOutgoing, submissionResult} = await import("./outgoing.mjs");
       assert.deepEqual(outgoing.entries.map(o=>[o.id,o.status]),[["held","pending"],["unknown","pending"],["confirmed","accepted"],["refused","rejected"]]);
       assert.equal(JSON.stringify(outgoing.entries[0].images),JSON.stringify(images));
       assert.equal(JSON.stringify(outgoing.entries[0].answers),JSON.stringify([{questionId:"original",answer:"kept answer"}]));
       assert.equal(JSON.stringify(outgoing.entries[0].localImageIds),JSON.stringify(["local-image"]));
       assert.equal(outgoing.entries[0].at,123);
       outgoing.entries = [];
+      records.clear();
+      // No device-owned operation exists: owner observations still confirm its identity.
+      for (const source of ["user", "question"]) {
+        const id = "server-" + source;
+        const delivery = {id,status:"sent",source,text:"server content",at:123,questionIds:source === "question" ? ["q"] : [],...(source === "question" ? {answers:[{questionId:"q",answer:"confirmed answer"}]} : {})};
+        observeOutgoing({id:"peer:orc",messages:[{id,role:"user",text:delivery.text,at:123}],deliveries:[delivery]});
+        assert.equal(receiptAlreadyAccepted("peer:orc",id),true);
+        assert.equal(outgoing.entries.length,0);
+        acceptReceipt("peer:orc",null);
+        acceptReceipt("peer:orc",{operationId:id,state:"rejected",turnId:null,error:"late failure"});
+        const late = withOutgoing({id:"peer:orc",messages:[],questions:[{id:"q",state:"unanswered"}],deliveries:[{...delivery,status:"uncertain",error:"late unknown"}]});
+        assert.equal(submissionResult(late.deliveries[0]),"accepted");
+        assert.equal(late.deliveries[0].error,undefined);
+        assert.equal(late.deliveries[0].source,source);
+        assert.equal(late.messages.length,1);
+        if(source === "question") {
+          assert.equal(late.questions[0].state,"answered");
+          assert.equal(late.questions[0].answer,"confirmed answer");
+        }
+      }
+      // A matching observed user message is confirmation even beside a stale delivery.
+      observeOutgoing({id:"peer:orc",messages:[{id:"seen-user",role:"user"}],deliveries:[{id:"seen-user",status:"uncertain",source:"user"}]});
+      assert.equal(receiptAlreadyAccepted("peer:orc","seen-user"),true);
+      // Saved sent is authoritative without a local journal or visible message.
+      observeOutgoing({id:"peer:orc",messages:[],deliveries:[{id:"sent-only",status:"sent",source:"user"}]});
+      assert.equal(receiptAlreadyAccepted("peer:orc","sent-only"),true);
+      observeOutgoing({id:"peer:orc",messages:[{id:"assistant",role:"assistant"},{id:"history",role:"user"}],deliveries:[{id:"assistant",status:"sending",source:"user"}]});
+      assert.equal(receiptAlreadyAccepted("peer:orc","assistant"),false);
+      assert.equal(receiptAlreadyAccepted("peer:orc","history"),false);
+      assert.equal(receiptAlreadyAccepted("other:orc","server-user"),false);
       addOutgoing("peer:orc", "draft", "op");
       assert.throws(()=>addOutgoing("peer:orc","changed","op"),/bound/);
       acceptReceipt("peer:orc", null);
@@ -73,7 +103,7 @@ test("pending lookup preserves identity and accepted results are monotonic", asy
       observeOutgoing(detail("uncertain"));
       acceptReceipt('peer:orc',{operationId:'op',state:'rejected',turnId:null,error:'late'});
       assert.equal(outgoing.entries[0].status, "accepted");
-      observeOutgoing({id:'peer:orc',messages:[{id:'op'}],deliveries:[]});
+      observeOutgoing({id:'peer:orc',messages:[{id:'op',role:'user'}],deliveries:[]});
       assert.equal(outgoing.entries.length,0);
       const stale = withOutgoing({id:'peer:orc',messages:[],questions:[],deliveries:[{id:'op',status:'uncertain',source:'user',text:'draft',at:1,questionIds:[]}]});
       assert.equal(stale.deliveries[0].status,'sent');
