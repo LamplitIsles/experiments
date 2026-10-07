@@ -999,21 +999,16 @@ export class Workspace {
     const a = this.state.agents.find((a) => a.id === id);
     if (!a) throw new Error("Agent not found");
     const d = a.deliveries.find((d) => d.id === operationId);
+    if (!d || (d.status !== "sent" && d.status !== "failed")) return null;
     return {
       operationId,
-      state: !d
-        ? ("missing" as const)
-        : d.status === "sent"
-          ? ("accepted" as const)
-          : d.status === "failed"
-            ? ("rejected" as const)
-            : d.status === "uncertain"
-              ? ("uncertain" as const)
-              : ("pending" as const),
-      turnId: d?.turnId ?? null,
-      error: d?.error ?? null,
+      state:
+        d.status === "sent" ? ("accepted" as const) : ("rejected" as const),
+      turnId: d.turnId ?? null,
+      error: d.error ?? null,
     };
   }
+
   send(id: string, text: string, requestId: string, images?: MessageImage[]) {
     return this.serialize(id, async () => {
       const a = this.agent(id);

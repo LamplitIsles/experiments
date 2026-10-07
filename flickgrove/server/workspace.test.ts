@@ -422,7 +422,7 @@ test("lookup retains an uncertain answer without replaying or inventing native a
   );
   await expect(app.closeTree(a.id)).rejects.toThrow("unconfirmed");
   const count = runtime.inputs.length;
-  expect(app.lookup(a.id, "answer-blue").state).toBe("uncertain");
+  expect(app.lookup(a.id, "answer-blue")).toBeNull();
   expect(app.detail(a.id).questions[0].state).toBe("unanswered");
   expect(runtime.inputs).toHaveLength(count);
   runtime.emit(a.id, { type: "completed", turnId, status: "completed" });
@@ -564,7 +564,7 @@ test("queued Worker reports survive restart and unknown delivery keeps closure b
     closing: true,
     reason: expect.stringContaining("report delivery"),
   });
-  expect(restarted.lookup(a.id, d.id).state).toBe("uncertain");
+  expect(restarted.lookup(a.id, d.id)).toBeNull();
   expect(restarted.snapshot().agents.some((a) => a.id === w.id)).toBe(true);
   held.resolve("held-turn");
   await blocker;
@@ -862,7 +862,7 @@ test.each(["pending", "unknown"] as const)(
     });
     runtime.sendOverride = async () => "explicit-retry";
     await app.send(orc.id, "Steer retained", "steer");
-    expect(app.lookup(orc.id, "steer").state).toBe("rejected");
+    expect(app.lookup(orc.id, "steer")?.state).toBe("rejected");
     await app.send(orc.id, "Steer retained", "steer-retry");
     expect(
       app.detail(orc.id).deliveries.find((d) => d.id === "steer-retry")?.status,
@@ -1357,7 +1357,7 @@ test("one immutable answer batch sends once, confirms original IDs, excludes new
       "batch-one",
     ),
   ).rejects.toThrow("different content");
-  expect(app.lookup(a.id, "batch-one").state).toBe("accepted");
+  expect(app.lookup(a.id, "batch-one")?.state).toBe("accepted");
   expect(runtime.inputs).toHaveLength(2);
   app.dispose();
   const resumedRuntime = new FakeRuntime();
@@ -1367,7 +1367,7 @@ test("one immutable answer batch sends once, confirms original IDs, excludes new
     projects: async () => fixtureProjects,
   });
   cleanups.push(() => restored.dispose());
-  expect(restored.lookup(a.id, "batch-one").state).toBe("accepted");
+  expect(restored.lookup(a.id, "batch-one")?.state).toBe("accepted");
   await restored.answerBatch(a.id, answers, "batch-one");
   expect(resumedRuntime.inputs).toHaveLength(0);
 });
@@ -1395,7 +1395,7 @@ test("rejected batch retries its persisted answers; unknown batch lookup and dup
     throw new DeliveryRejected("Synthetic rejection");
   };
   await app.answerBatch(a.id, answers, "rejected-batch");
-  expect(app.lookup(a.id, "rejected-batch").state).toBe("rejected");
+  expect(app.lookup(a.id, "rejected-batch")?.state).toBe("rejected");
   expect(
     app
       .detail(a.id)
@@ -1434,8 +1434,8 @@ test("rejected batch retries its persisted answers; unknown batch lookup and dup
   await expect(app.retryDelivery(a.id, "unknown-batch")).rejects.toThrow(
     "rejected",
   );
-  expect(app.lookup(a.id, "unknown-batch").state).toBe("uncertain");
-  expect(app.lookup(a.id, "never-submitted").state).toBe("missing");
+  expect(app.lookup(a.id, "unknown-batch")).toBeNull();
+  expect(app.lookup(a.id, "never-submitted")).toBeNull();
   expect(runtime.inputs).toHaveLength(count);
   expect(app.detail(a.id).questions.at(-1)?.state).toBe("unanswered");
 });

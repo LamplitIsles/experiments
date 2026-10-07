@@ -4,7 +4,7 @@ import type { Detail, Answer } from "./contracts";
 import {
   imageSchema,
   answerSchema,
-  receiptSchema,
+  lookupSchema,
   type Receipt,
 } from "./chord-contract";
 const prefix = `flickgrove/${location.origin}/outgoing/`;
@@ -17,12 +17,31 @@ const entry = z.object({
   at: z.number(),
   status: z.enum(["sending", "sent", "failed", "uncertain"]),
   error: z.string().optional(),
-  receiptState: z.enum(["pending", "missing"]).optional(),
   images: z.array(imageSchema).optional(),
   localImageIds: z.array(z.string()).optional(),
   answers: z.array(answerSchema).optional(),
 });
-export type Outgoing = z.infer<typeof entry>;
+// The operation journal keeps its existing encoding; presentation has three results.
+export type SubmissionResult = "pending" | "accepted" | "rejected";
+export function submissionResult(
+  delivery: Pick<import("./contracts").Delivery, "status">,
+): SubmissionResult {
+  const { status } = delivery;
+  return status === "sent"
+    ? "accepted"
+    : status === "failed"
+      ? "rejected"
+      : "pending";
+}
+const journalStatus = (status: SubmissionResult) =>
+  status === "accepted"
+    ? ("sent" as const)
+    : status === "rejected"
+      ? ("failed" as const)
+      : ("sending" as const);
+export type Outgoing = Omit<z.infer<typeof entry>, "status"> & {
+  status: SubmissionResult;
+};
 const saved: Outgoing[] = [];
 for (const storageKey of Object.keys(localStorage)) {
   if (!storageKey.startsWith(prefix)) continue;
@@ -31,7 +50,7 @@ for (const storageKey of Object.keys(localStorage)) {
     if (localStorage.getItem(storageKey + "/dismissed")) continue;
     saved.push({
       ...o,
-      status: o.status === "sending" ? "uncertain" : o.status,
+      status: submissionResult(o),
     });
   } catch {
     /* malformed device-owned cache supplies no facts */
@@ -40,17 +59,24 @@ for (const storageKey of Object.keys(localStorage)) {
 export const outgoing = $state<{ entries: Outgoing[] }>({ entries: saved });
 function persist(o: Outgoing) {
   // Each operation owns its record; an unrelated tab cannot erase its journal.
+  if (receiptAlreadyAccepted(o.agentId, o.id)) {
+    o.status = "accepted";
+    o.error = undefined;
+  }
   const raw = localStorage.getItem(key(o));
   try {
     const previous = entry.safeParse(JSON.parse(raw ?? "null"));
     if (previous.success && previous.data.status === "sent") {
-      o.status = "sent";
+      o.status = "accepted";
       o.error = undefined;
     }
   } catch {
     /* A malformed record supplies no receipt. */
   }
-  localStorage.setItem(key(o), JSON.stringify(o));
+  localStorage.setItem(
+    key(o),
+    JSON.stringify({ ...o, status: journalStatus(o.status) }),
+  );
 }
 export function addOutgoing(
   agentId: string,
@@ -66,10 +92,15 @@ export function addOutgoing(
   if (previous) {
     if (
       previous.text !== text ||
-      JSON.stringify(previous.answers) !== JSON.stringify(answers)
+      JSON.stringify(previous.answers) !== JSON.stringify(answers) ||
+      JSON.stringify(previous.images ?? []) !== JSON.stringify(images ?? []) ||
+      JSON.stringify(previous.localImageIds ?? []) !==
+        JSON.stringify(localImageIds ?? [])
     )
       throw new Error("Operation ID is bound to different content");
-    previous.status = "sending";
+    if (previous.status === "accepted" || receiptAlreadyAccepted(agentId, id))
+      return;
+    previous.status = "pending";
     previous.error = undefined;
     persist(previous);
     return;
@@ -79,9 +110,9 @@ export function addOutgoing(
     text,
     id,
     at: Date.now(),
-    status: "sending",
-    images,
-    localImageIds,
+    status: "pending",
+    images: images ? structuredClone(images) : undefined,
+    localImageIds: localImageIds ? [...localImageIds] : undefined,
     ...(answers ? { answers: structuredClone(answers) } : {}),
   };
   persist(o);
@@ -110,25 +141,18 @@ export function observeOutgoing(detail: Detail) {
       return false;
     }
     const d = detail.deliveries.find((d) => d.id === o.id);
-    if (d && o.status !== "sent") {
-      o.status =
-        d.status === "sent"
-          ? "sent"
-          : d.status === "failed"
-            ? "failed"
-            : d.status === "uncertain"
-              ? "uncertain"
-              : o.status;
-      o.receiptState =
-        d.status === "queued" || d.status === "sending" ? "pending" : undefined;
+    if (d && o.status !== "accepted") {
+      o.status = submissionResult(d);
+      if (o.status === "accepted") rememberAccepted(o.agentId, o.id);
       o.error = d.error;
       persist(o);
     }
     return true;
   });
 }
-export function acceptReceipt(agentId: string, raw: Receipt) {
-  const receipt = receiptSchema.parse(raw);
+export function acceptReceipt(agentId: string, raw: Receipt | null) {
+  const receipt = lookupSchema.parse(raw);
+  if (!receipt) return;
   if (receipt.state === "accepted")
     rememberAccepted(agentId, receipt.operationId);
   if (
@@ -139,21 +163,15 @@ export function acceptReceipt(agentId: string, raw: Receipt) {
   const o = outgoing.entries.find(
     (o) => o.agentId === agentId && o.id === receipt.operationId,
   );
-  if (!o || o.status === "sent") return;
-  if (receipt.state === "accepted") o.status = "sent";
-  else if (receipt.state === "rejected") o.status = "failed";
-  else o.status = "uncertain";
-  o.receiptState =
-    receipt.state === "pending" || receipt.state === "missing"
-      ? receipt.state
-      : undefined;
+  if (!o || o.status === "accepted") return;
+  o.status = receipt.state === "accepted" ? "accepted" : "rejected";
   o.error = receipt.error ?? undefined;
   persist(o);
 }
 export function unknownOutgoing(agentId: string, id: string, error: string) {
   const o = outgoing.entries.find((o) => o.agentId === agentId && o.id === id);
-  if (o && o.status !== "sent" && !receiptAlreadyAccepted(agentId, id)) {
-    o.status = "uncertain";
+  if (o && o.status !== "accepted" && !receiptAlreadyAccepted(agentId, id)) {
+    o.status = "pending";
     o.error = error;
     persist(o);
   }
@@ -182,9 +200,17 @@ export function withOutgoing(detail: Detail): Detail {
     questions: detail.questions.map((q) => {
       const confirmed = local.find(
         (o) =>
-          o.status === "sent" && o.answers?.some((a) => a.questionId === q.id),
+          o.status === "accepted" &&
+          o.answers?.some((a) => a.questionId === q.id),
       );
-      const answer = confirmed?.answers?.find((a) => a.questionId === q.id);
+      const accepted =
+        confirmed ??
+        detail.deliveries.find(
+          (d) =>
+            receiptAlreadyAccepted(detail.id, d.id) &&
+            d.answers?.some((a) => a.questionId === q.id),
+        );
+      const answer = accepted?.answers?.find((a) => a.questionId === q.id);
       return answer
         ? { ...q, state: "answered" as const, answer: answer.answer }
         : q;
@@ -208,35 +234,28 @@ export function withOutgoing(detail: Detail): Detail {
       })),
     ],
     deliveries: [
-      ...detail.deliveries.filter(
-        (d) => !dismissed(d.id) && !local.some((o) => o.id === d.id),
-      ),
+      ...detail.deliveries
+        .filter((d) => !dismissed(d.id) && !local.some((o) => o.id === d.id))
+        .map((d) =>
+          receiptAlreadyAccepted(detail.id, d.id)
+            ? { ...d, status: "sent" as const, error: undefined }
+            : d,
+        ),
       ...local.map((o) => ({
         id: o.id,
         text: o.text,
         images: o.images,
-        status: o.status,
+        status: journalStatus(o.status),
         source: o.answers ? ("question" as const) : ("user" as const),
         questionIds: o.answers?.map((a) => a.questionId) ?? [],
         ...(o.answers ? { answers: o.answers } : {}),
         error: o.error,
-        receiptState: o.receiptState,
         at: o.at,
       })),
     ],
   };
 }
 
-export function dismissOutgoing(agentId: string, id: string) {
-  const record = outgoing.entries.find(
-    (o) => o.agentId === agentId && o.id === id,
-  );
-  const storageKey = `${prefix}${encodeURIComponent(agentId)}/${encodeURIComponent(id)}`;
-  localStorage.setItem(storageKey + "/dismissed", "true");
-  localStorage.removeItem(storageKey);
-  outgoing.entries = outgoing.entries.filter((o) => o !== record);
-  dismissedVersion.value++;
-}
 const dismissedVersion = $state({ value: 0 });
 window.addEventListener("storage", (event) => {
   if (!event.key?.startsWith(prefix)) return;
@@ -254,7 +273,8 @@ window.addEventListener("storage", (event) => {
         (o) => o.id === parsed.id && o.agentId === parsed.agentId,
       );
       if (local && parsed.status === "sent") {
-        Object.assign(local, parsed);
+        Object.assign(local, { ...parsed, status: "accepted" });
+        rememberAccepted(local.agentId, local.id);
       }
     } catch {}
   }
@@ -267,7 +287,9 @@ export function setOutgoingImages(
 ) {
   const o = outgoing.entries.find((o) => o.agentId === agentId && o.id === id);
   if (o) {
-    o.images = images;
+    if (o.images && JSON.stringify(o.images) !== JSON.stringify(images))
+      throw new Error("Operation ID is bound to different images");
+    o.images = structuredClone(images);
     persist(o);
   }
 }

@@ -33,7 +33,11 @@ for (const [name, viewport] of [
         page.locator(".user-message").filter({ hasText: text }),
       ).toHaveCount(1);
     }
-    await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
+    await expect(page.locator(".user-message [role=status]")).toHaveText([
+      "Sending…",
+      "Sending…",
+      "Sending…",
+    ]);
     await input.fill("A newer editable draft");
     await expect
       .poll(
@@ -45,7 +49,7 @@ for (const [name, viewport] of [
       )
       .toBe(1);
     await page.screenshot({
-      path: `../.scratch/flickgrove-chord/send-pending-${name}.png`,
+      path: `../.scratch/flickgrove-results/send-pending-${name}.png`,
       animations: "disabled",
     });
     await request.post(origin + "/fixture/change", {
@@ -72,7 +76,7 @@ for (const [name, viewport] of [
     await expect(input).toHaveValue("A newer editable draft");
     await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
     await page.screenshot({
-      path: `../.scratch/flickgrove-directory-branch/screenshots/delivery-success-${name}.png`,
+      path: `../.scratch/flickgrove-results/delivery-success-${name}.png`,
     });
     await page.reload();
     await expect(input).toHaveValue("A newer editable draft");
@@ -91,7 +95,7 @@ for (const [name, viewport] of [
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(viewport.width);
   });
-  test(`${name}: rejected content restores beside new draft; unknown remains checkable across refresh`, async ({
+  test(`${name}: rejected content restores beside new draft; pending survives null lookup across refresh`, async ({
     page,
     request,
   }) => {
@@ -126,7 +130,7 @@ for (const [name, viewport] of [
     await page.getByRole("button", { name: "Restore to draft" }).click();
     await expect(input).toHaveValue("New draft\n\nRejected content");
     await page.screenshot({
-      path: `../.scratch/flickgrove-chord/send-rejected-${name}.png`,
+      path: `../.scratch/flickgrove-results/send-rejected-${name}.png`,
       animations: "disabled",
     });
     await request.post(origin + "/fixture/change", {
@@ -134,17 +138,16 @@ for (const [name, viewport] of [
     });
     await input.fill("Unknown content");
     await input.press("Enter");
-    await expect(
-      page
-        .locator(".delivery-error")
-        .filter({ hasText: "Delivery could not be confirmed" }),
-    ).toBeVisible();
+    const pending = page
+      .locator(".user-message")
+      .filter({ hasText: "Unknown content" });
+    await expect(pending.getByRole("status")).toHaveText("Sending…");
+    await expect(page.locator(".delivery-error")).toHaveCount(1); // Only the proven rejection.
     await page.reload();
-    const unknown = page
-      .locator(".delivery-error")
-      .filter({ hasText: "Delivery could not be confirmed" });
-    await unknown.locator("summary").click();
-    await unknown.getByRole("button", { name: "Check receipt" }).click();
+    await expect(pending.getByRole("status")).toHaveText("Sending…");
+    await expect(
+      page.getByRole("button", { name: "Check receipt" }),
+    ).toHaveCount(0);
     await expect(
       page.locator(".user-message").filter({ hasText: "Unknown content" }),
     ).toHaveCount(1);
@@ -152,7 +155,7 @@ for (const [name, viewport] of [
       (await (await request.get(origin + "/fixture/info")).json()).inputs,
     ).toHaveLength(2);
     await page.screenshot({
-      path: `../.scratch/flickgrove-chord/send-unknown-${name}.png`,
+      path: `../.scratch/flickgrove-results/send-null-pending-${name}.png`,
       animations: "disabled",
     });
   });
@@ -316,6 +319,10 @@ test("two tabs cannot erase an unadmitted operation before its owner has a recei
   await input.fill("Durable identity across tabs");
   await input.press("Enter");
   await expect.poll(() => operationId).not.toBe("");
+  await second
+    .getByRole("group", { name: "Host filter" })
+    .getByRole("button", { name: "Neil’s Mac", exact: true })
+    .click();
   await second
     .getByRole("button", { name: "Open Reader performance Orc" })
     .click();

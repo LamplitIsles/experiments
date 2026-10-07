@@ -11,7 +11,7 @@ import type { Detail, Snapshot } from "./contracts";
 export type View = { snapshot: Snapshot; details: Record<string, Detail> };
 export type Receipt = {
   operationId: string;
-  state: "accepted" | "rejected" | "uncertain" | "pending" | "missing";
+  state: "accepted" | "rejected";
   turnId: string | null;
   error: string | null;
 };
@@ -104,10 +104,11 @@ export type GroveContract = Methods & {
 export const Grove = defineService<GroveContract>("flickgrove.workspace.v1");
 export const receiptSchema = z.object({
   operationId: id,
-  state: z.enum(["accepted", "rejected", "uncertain", "pending", "missing"]),
+  state: z.enum(["accepted", "rejected"]),
   turnId: z.string().nullable(),
   error: z.string().nullable(),
 });
+export const lookupSchema = receiptSchema.nullable();
 // Domain fields are validated on both receiving boundaries; unknown engine fields never enter state.
 const question = z.object({
   id,

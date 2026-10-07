@@ -71,6 +71,9 @@ for (const width of [1440, 390]) {
     await page.keyboard.press("Enter");
     await expect(panel(page)).toContainText("Sending");
     await expect(panel(page)).toBeVisible();
+    await page.screenshot({
+      path: `../.scratch/flickgrove-results/answers-pending-${width}.png`,
+    });
     await change(request, { sendMode: "accepted" });
     await expect(panel(page)).toHaveCount(0);
     await expect
@@ -88,6 +91,9 @@ for (const width of [1440, 390]) {
       .click();
     await expect(panel(page).locator(".answered-item")).toHaveCount(1);
     await expect(panel(page)).toContainText("Immutable answer");
+    await page.screenshot({
+      path: `../.scratch/flickgrove-results/answers-accepted-${width}.png`,
+    });
     await expect(panel(page)).toBeVisible();
     await panel(page)
       .getByRole("button", { name: "Close", exact: true })
@@ -120,43 +126,43 @@ for (const width of [1440, 390]) {
   });
 }
 
-for (const mode of ["rejected", "uncertain"]) {
-  test(`Questions ${mode} stays visible; only authoritative retry success closes`, async ({
-    page,
-    request,
-  }) => {
-    await open(page, request, 390);
-    await question(page, request, mode);
-    await change(request, { sendMode: mode });
-    await panel(page).locator("textarea").fill("Retained immutable answer");
-    await panel(page).locator("textarea").press("Enter");
-    await expect(panel(page).locator(".answer-batch")).toContainText(
-      mode === "rejected"
-        ? "Synthetic rejection"
-        : "Delivery could not be confirmed",
-    );
-    await expect(panel(page)).toBeVisible();
-    expect(await page.evaluate(() => history.state.grove.surfaces)).toEqual([
-      "questions",
-    ]);
-    if (mode === "rejected") {
-      await change(request, { sendMode: "accepted" });
-      await panel(page)
-        .getByRole("button", { name: "Retry", exact: true })
-        .click();
-      await expect(panel(page)).toHaveCount(0);
-      await expect
-        .poll(() => page.evaluate(() => history.state.grove.surfaces))
-        .toEqual([]);
-    } else {
-      await panel(page)
-        .getByRole("button", { name: "Check receipt", exact: true })
-        .click();
+for (const width of [1440, 390])
+  for (const mode of ["rejected", "uncertain"]) {
+    test(`Questions ${mode} at ${width} stays visible; only authoritative retry success closes`, async ({
+      page,
+      request,
+    }) => {
+      await open(page, request, width);
+      await question(page, request, mode);
+      await change(request, { sendMode: mode });
+      await panel(page).locator("textarea").fill("Retained immutable answer");
+      await panel(page).locator("textarea").press("Enter");
+      await expect(panel(page).locator(".answer-batch")).toContainText(
+        mode === "rejected" ? "Synthetic rejection" : "Sending…",
+      );
       await expect(panel(page)).toBeVisible();
-      await expect(panel(page)).toContainText("Retained immutable answer");
-    }
-  });
-}
+      expect(await page.evaluate(() => history.state.grove.surfaces)).toEqual(
+        width === 390 ? ["questions"] : [],
+      );
+      await page.screenshot({
+        path: `../.scratch/flickgrove-results/answers-${mode === "rejected" ? "rejected" : "null-pending"}-${width}.png`,
+      });
+      if (mode === "rejected") {
+        await change(request, { sendMode: "accepted" });
+        await panel(page)
+          .getByRole("button", { name: "Retry", exact: true })
+          .click();
+        await expect(panel(page)).toHaveCount(0);
+        await expect
+          .poll(() => page.evaluate(() => history.state.grove.surfaces))
+          .toEqual([]);
+      } else {
+        await page.reload();
+        await expect(panel(page)).toBeVisible();
+        await expect(panel(page)).toContainText("Retained immutable answer");
+      }
+    });
+  }
 
 test("Late answer completion from another session preserves current questions and drafts", async ({
   page,

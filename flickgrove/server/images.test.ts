@@ -307,7 +307,7 @@ test("native rejection/unknown retains complete immutable media; lookup never re
     };
     const rejected = await app.send(a.id, "caption", "op", refs);
     expect(rejected.deliveries[0].images).toEqual(refs);
-    expect(app.lookup(a.id, "op").state).toBe("rejected");
+    expect(app.lookup(a.id, "op")?.state).toBe("rejected");
     runtime.sendOverride = async () => {
       throw new Error("Unknown");
     };
@@ -315,7 +315,7 @@ test("native rejection/unknown retains complete immutable media; lookup never re
       await png(),
     ]);
     await app.send(a.id, "", "unknown", uncertain);
-    expect(app.lookup(a.id, "unknown").state).toBe("uncertain");
+    expect(app.lookup(a.id, "unknown")).toBeNull();
     await app.send(a.id, "", "unknown", uncertain);
     expect(runtime.inputs.length).toBe(2);
     app.images.cleanup(Date.now() + 2 * 86400000);

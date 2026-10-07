@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { submissionResult } from "./outgoing.svelte";
   import { ChevronLeft, ChevronRight } from "@lucide/svelte";
   import { Textarea } from "$lib/components/ui/textarea/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -6,14 +7,14 @@
   import { tick, untrack } from "svelte";
   import type { Answer, Delivery, Question } from "./contracts";
   import * as m from "./paraglide/messages";
-  let { agentId, questions, deliveries, connected, onanswer, onlookup, onretry, ondismiss }: { agentId: string; questions: Question[]; deliveries: Delivery[]; connected: boolean; onanswer: (answers: Answer[], operationId: string) => Promise<void>; onlookup: (id: string) => Promise<void>; onretry: (id: string) => Promise<void>; ondismiss:(id:string)=>void } = $props();
+  let { agentId, questions, deliveries, connected, onanswer, onretry }: { agentId: string; questions: Question[]; deliveries: Delivery[]; connected: boolean; onanswer: (answers: Answer[], operationId: string) => Promise<void>; onretry: (id: string) => Promise<void>; } = $props();
   const storageKey = untrack(() => `${storagePrefix}/questions/${agentId}`);
   type Draft = { selected: string; text: string; edited?: boolean };
   let drafts = $state<Record<string, Draft>>(JSON.parse(localStorage.getItem(storageKey) ?? "{}"));
   let currentId = $state(untrack(() => localStorage.getItem(`${storageKey}/current`) ?? questions.find(q => q.state === "unanswered")?.id));
   let submitting=$state(false); let composing=false; let feedback=$state("");
   let panel: HTMLElement;
-  const batches = $derived(deliveries.filter(d => d.source === "question" && d.status !== "sent"));
+  const batches = $derived(deliveries.filter(d => d.source === "question" && submissionResult(d) !== "accepted"));
   const blocked = $derived(new Set(batches.flatMap(d => d.questionIds)));
   const pending = $derived(questions.filter(q => q.state === "unanswered" && !blocked.has(q.id)));
   const sent = $derived(questions.filter(q => q.state === "answered"));
@@ -51,10 +52,9 @@
   <div class="question-scroll">
   {#each batches as batch (batch.id)}
     <section class="answer-batch" aria-label={m.answer_batch()} data-operation-id={batch.id}>
-      <p class="batch-status" role="status">{batch.status === "sending" || batch.status === "queued" ? m.sending() : batch.status === "uncertain" ? (batch.receiptState === "missing" ? m.delivery_missing() : batch.receiptState === "pending" ? m.delivery_pending() : m.unknown_delivery()) : batch.error ?? m.load_failure()}</p>
+      <p class="batch-status" role="status">{submissionResult(batch) === "pending" ? m.sending() : batch.error ?? m.load_failure()}</p>
       {#each batch.answers ?? [] as answer}<div class="answered-item"><p>{questions.find(q => q.id === answer.questionId)?.text}</p><span>{answer.answer}</span></div>{/each}
-      {#if batch.status === "uncertain"}<p class="question-hint">{m.lookup_help()}</p><Button variant="ghost" size="sm" disabled={!connected} onclick={() => onlookup(batch.id)}>{m.check_delivery()}</Button><Button variant="ghost" size="sm" onclick={()=>ondismiss(batch.id)}>{m.dismiss_delivery()}</Button>
-      {:else if batch.status === "failed"}<Button variant="secondary" size="sm" disabled={!connected} onclick={() => onretry(batch.id)}>{m.retry()}</Button>{/if}
+      {#if submissionResult(batch) === "rejected"}<Button variant="secondary" size="sm" disabled={!connected} onclick={() => onretry(batch.id)}>{m.retry()}</Button>{/if}
     </section>
   {/each}
   {#if current}

@@ -211,7 +211,9 @@ for (const width of [1440, 390]) {
         .locator(".user-message")
         .filter({ hasText: "Question: required question 1" }),
     ).toHaveCount(1);
-    await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
+    await expect(page.locator(".user-message [role=status]")).toHaveText([
+      "Sending…",
+    ]);
     await page.screenshot({ path: `${shots}/${width}-questions-pending.png` });
     await request.post(origin + "/fixture/change", {
       data: { question: true, questionId: "next", questionOptions: true },
@@ -271,9 +273,14 @@ test("slow upload binds original Peer/conversation while new draft remains isola
   await expect(
     page.locator(".user-message").filter({ hasText: "Original upload" }),
   ).toHaveCount(1);
-  await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
+  await expect(page.locator(".user-message [role=status]")).toHaveText([
+    "Sending…",
+  ]);
   await page.screenshot({ path: `${shots}/desktop-uploading.png` });
-  await composer(page).press("Meta+2");
+  await page
+    .getByRole("group", { name: "Host filter" })
+    .getByRole("button", { name: "Neil’s Mac", exact: true })
+    .click();
   await expect(page.locator(".agent-detail h1")).toHaveText(
     "Reader performance",
   );
@@ -299,7 +306,10 @@ test("slow upload binds original Peer/conversation while new draft remains isola
     )
     .toBe(info.peerInputs.length + 1);
   await expect(page.locator(".message-image")).toHaveCount(1);
-  await composer(page).press("Meta+1");
+  await page
+    .getByRole("group", { name: "Host filter" })
+    .getByRole("button", { name: "NUC", exact: true })
+    .click();
   await expect(page.locator(".message-image")).toHaveCount(1);
   await expect(composer(page)).toHaveValue("");
   await request.post(origin + "/fixture/change", {
@@ -319,30 +329,17 @@ test("slow upload binds original Peer/conversation while new draft remains isola
   });
   await composer(page).fill("Unknown original");
   await composer(page).press("Enter");
-  await expect(
-    page
-      .locator(".delivery-error")
-      .filter({ hasText: "Delivery could not be confirmed" }),
-  ).toBeVisible();
+  const pending = page
+    .locator(".user-message")
+    .filter({ hasText: "Unknown original" });
+  await expect(pending.locator("small[role=status]")).toHaveText("Sending…");
   const before = (await (await request.get(origin + "/fixture/info")).json())
     .inputs.length;
   await page.reload();
+  await expect(pending.locator("small[role=status]")).toHaveText("Sending…");
   await expect(
-    page
-      .locator(".delivery-error")
-      .filter({ hasText: "Delivery could not be confirmed" }),
-  ).toBeVisible();
-  await page
-    .locator(".delivery-error")
-    .filter({ hasText: "Delivery could not be confirmed" })
-    .last()
-    .locator("summary")
-    .click();
-  await page
-    .locator(".delivery-error")
-    .filter({ hasText: "Delivery could not be confirmed" })
-    .getByRole("button", { name: "Check receipt", exact: true })
-    .click();
+    page.getByRole("button", { name: "Check receipt", exact: true }),
+  ).toHaveCount(0);
   expect(
     (await (await request.get(origin + "/fixture/info")).json()).inputs.length,
   ).toBe(before);
@@ -724,3 +721,134 @@ test("virtual image recycling retains only an open viewer row, releases URLs and
     .poll(() => page.evaluate(() => (window as any).__imageUrls()))
     .toBe(0);
 });
+
+for (const width of [1440, 390]) {
+  test(`submission results: image admission, rejection and disconnected null lookup at ${width}`, async ({
+    page,
+    request,
+  }) => {
+    await setup(page, request, width);
+    const before = (await (await request.get(origin + "/fixture/info")).json())
+      .inputs.length;
+    await request.post(origin + "/fixture/change", {
+      data: { sendMode: "held" },
+    });
+    await add(page);
+    await composer(page).fill("Image awaiting native receipt");
+    await composer(page).press("Enter");
+    const image = page
+      .locator(".user-message")
+      .filter({ hasText: "Image awaiting native receipt" });
+    await expect(image.locator("small[role=status]")).toHaveText("Sending…");
+    await expect
+      .poll(
+        async () =>
+          (await (await request.get(origin + "/fixture/info")).json()).inputs
+            .length,
+      )
+      .toBe(before + 1);
+    await composer(page).fill("New draft survives native wait");
+    await page.screenshot({
+      path: `../.scratch/flickgrove-results/image-pending-${width}.png`,
+    });
+    await request.post(origin + "/fixture/change", {
+      data: { sendMode: "accepted" },
+    });
+    await expect(image.locator("small[role=status]")).toHaveCount(0);
+    await expect(composer(page)).toHaveValue("New draft survives native wait");
+    await page.screenshot({
+      path: `../.scratch/flickgrove-results/image-accepted-${width}.png`,
+    });
+    await request.post(origin + "/fixture/change", {
+      data: { sendMode: "held" },
+    });
+    await add(page);
+    await composer(page).fill("Rejected image caption");
+    await composer(page).press("Enter");
+    await expect
+      .poll(
+        async () =>
+          (await (await request.get(origin + "/fixture/info")).json()).inputs
+            .length,
+      )
+      .toBe(before + 2);
+    await composer(page).fill("Newer image draft");
+    await add(page);
+    await request.post(origin + "/fixture/change", {
+      data: { sendMode: "rejected" },
+    });
+    await expect(composer(page)).toHaveValue(
+      "Newer image draft\n\nRejected image caption",
+    );
+    await expect(page.locator(".image-draft")).toHaveCount(2);
+    await expect(page.locator(".delivery-error")).toContainText(
+      "Synthetic rejection",
+    );
+    await page.screenshot({
+      path: `../.scratch/flickgrove-results/image-rejected-${width}.png`,
+    });
+    // Upload succeeds, then the synthetic native call has no confirmed admission.
+    await request.post(origin + "/fixture/change", {
+      data: { sendMode: "uncertain" },
+    });
+    let wireId = "",
+      operationId = "",
+      dropped = false;
+    const calls: string[] = [];
+    await page.routeWebSocket("**/api/socket", (ws) => {
+      const server = ws.connectToServer();
+      ws.onMessage((raw) => {
+        const frame = JSON.parse(String(raw));
+        if (frame.call?.member === "send") {
+          wireId = frame.id;
+          operationId = frame.call.args[0].operationId;
+          calls.push(operationId);
+        }
+        server.send(raw);
+      });
+      server.onMessage((raw) => {
+        const frame = JSON.parse(String(raw));
+        if (wireId && !dropped && frame.type === "update") return;
+        if (!dropped && frame.type === "result" && frame.id === wireId) {
+          dropped = true;
+          ws.close({
+            code: 1011,
+            reason: "Synthetic lost admission acknowledgement",
+          });
+          return;
+        }
+        ws.send(raw);
+      });
+    });
+    await page.reload(); // Apply interception to a new socket; retain drafts and image blobs.
+    await expect(composer(page)).toHaveValue(
+      "Newer image draft\n\nRejected image caption",
+    );
+    await composer(page).fill("Uploaded image without native confirmation");
+    await composer(page).press("Enter");
+    await expect.poll(() => dropped).toBe(true);
+    const pending = page
+      .locator(".user-message")
+      .filter({ hasText: "Uploaded image without native confirmation" });
+    await expect(pending.locator("small[role=status]")).toHaveText("Sending…");
+    await page.reload();
+    await expect(pending.locator("small[role=status]")).toHaveText("Sending…");
+    await expect(pending.locator(".message-image")).toHaveCount(2);
+    await expect(composer(page)).toHaveValue("");
+    await expect(page.locator(".image-draft")).toHaveCount(0); // Null did not authorize recovery.
+    expect(calls).toEqual([operationId]);
+    expect(
+      (await (await request.get(origin + "/fixture/info")).json()).inputs
+        .length,
+    ).toBe(before + 3);
+    await expect(
+      page.getByRole("button", { name: "Check receipt", exact: true }),
+    ).toHaveCount(0);
+    await page.screenshot({
+      path: `../.scratch/flickgrove-results/image-disconnected-pending-${width}.png`,
+    });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
+  });
+}

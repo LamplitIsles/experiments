@@ -15,8 +15,8 @@
   import type { Answer, Agent, Detail, HistorySession, Model, Project, Settings, Skill, Snapshot } from "./contracts";
   import { api, editable, setClient } from "./api";
   import { RequestRejected } from "./chord-client";
-  import { receiptSchema, type Receipt } from "./chord-contract";
-  import { addOutgoing, observeOutgoing, outgoing, withOutgoing, acceptReceipt, unknownOutgoing, dismissOutgoing } from "./outgoing.svelte";
+  import { lookupSchema, type Receipt } from "./chord-contract";
+  import { addOutgoing, observeOutgoing, outgoing, withOutgoing, acceptReceipt, unknownOutgoing, submissionResult } from "./outgoing.svelte";
   import { imageSchema } from "./chord-contract";
   import { restoreImages, type ImageDraft } from "./image-drafts";
   import { receiptAlreadyAccepted, setOutgoingImages } from "./outgoing.svelte";
@@ -244,7 +244,11 @@
   async function lookup(agentId: string, operationId: string) {
     if(!client || !connected || hosts.find(h => h.id === agentId.split(':')[0])?.connected === false) return;
     const key=agentId+"/"+operationId;if(lookups.has(key))return;lookups.add(key);
-    try { acceptReceipt(agentId, receiptSchema.parse(await client.call<Receipt>('lookup',{id:agentId,operationId}))); }
+    try {
+      const receipt = lookupSchema.parse(await client.call<Receipt | null>('lookup',{id:agentId,operationId}));
+      if (receipt && receipt.operationId !== operationId) throw new Error("Receipt operation identity changed");
+      acceptReceipt(agentId, receipt);
+    }
     catch(e) { unknownOutgoing(agentId,operationId,e instanceof Error?e.message:m.load_failure()); }
     finally{lookups.delete(key);}
   }
@@ -256,7 +260,7 @@
     catch(e) { error = e instanceof Error ? e.message : m.load_failure(); }
   }
   async function reconcilePending() {
-    for(const pending of outgoing.entries) if(pending.status === 'uncertain') void lookup(pending.agentId,pending.id);
+    for(const pending of outgoing.entries) if(pending.status === 'pending') void lookup(pending.agentId,pending.id);
   }
   async function send(id: string, text: string, operationId: string, images: ImageDraft[] = []) {
     if (detail?.id !== id) return false;
@@ -281,8 +285,8 @@
       const result=await connection.call<Detail>('send',{id,text,operationId,...(refs ? {images:refs} : {})});
       const delivery=result.deliveries.find(d=>d.id===operationId);
       observeOutgoing(result);
-      if(images.length && delivery?.status==='failed' && !receiptAlreadyAccepted(id,operationId) && !detail?.messages.some(m=>m.id===operationId))try{await restoreImages(id,operationId,text);}catch(e){if(selectedId===id)error=(e as Error).message;}
-      if(!result.deliveries.some(d=>d.id===operationId))unknownOutgoing(id,operationId,m.unknown_delivery());
+      if(images.length && delivery && submissionResult(delivery)==='rejected' && !receiptAlreadyAccepted(id,operationId) && !detail?.messages.some(m=>m.id===operationId))try{await restoreImages(id,operationId,text);}catch(e){if(selectedId===id)error=(e as Error).message;}
+      if(!result.deliveries.some(d=>d.id===operationId))unknownOutgoing(id,operationId,m.sending());
     }catch(e){
       if((!submitted || e instanceof RequestRejected) && !receiptAlreadyAccepted(id,operationId)){
         acceptReceipt(id,{operationId,state:"rejected",turnId:null,error:e instanceof Error?e.message:m.load_failure()});
@@ -329,8 +333,7 @@
     addOutgoing(id, text, operationId, answers);
     try {
       const result = await client.call<Detail>("answerBatch", { id, answers, operationId });
-      const delivery = result.deliveries.find(d => d.id === operationId);
-      if (delivery) acceptReceipt(id, { operationId, state: delivery.status === "sent" ? "accepted" : delivery.status === "failed" ? "rejected" : delivery.status === "uncertain" ? "uncertain" : "pending", turnId: delivery.turnId ?? null, error: delivery.error ?? null });
+      observeOutgoing(result);
     } catch (e) {
       if (e instanceof RequestRejected) { acceptReceipt(id, { operationId, state: "rejected", turnId: null, error: e.message }); return; }
       else unknownOutgoing(id, operationId, e instanceof Error ? e.message : m.load_failure());
@@ -409,7 +412,7 @@
         if(modal==="new"&&!hosts.some(h=>h.id===createHost))void chooseHost(preferences.host&&hosts.some(h=>h.id===preferences.host)?preferences.host:value.snapshot.entryId!);
       }
     },id=>{
-      for(const pending of outgoing.entries)if(pending.agentId.startsWith(id+":")&&pending.status==='sending')unknownOutgoing(pending.agentId,pending.id,m.unknown_delivery());
+      for(const pending of outgoing.entries)if(pending.agentId.startsWith(id+":")&&pending.status==='pending')unknownOutgoing(pending.agentId,pending.id,m.sending());
     });
     setClient(client);
     void client.start().then(()=>{peersReady=true;return load();}).catch(e=>{loading=false;error=e.message;});
@@ -418,13 +421,12 @@
     window.addEventListener("compositionstart", compositionStart);
     window.addEventListener("compositionend", compositionEnd);
     const timer = setInterval(() => now = Date.now(), 1000);
-    const receiptTimer=setInterval(()=>void reconcilePending(),10_000);
     const permission = () => { if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission().catch(() => {}); };
     const completionTab = (e: KeyboardEvent) => { if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey) e.preventDefault(); };
     window.addEventListener("keydown", completionTab, true);
     const installer = (e: Event) => { e.preventDefault(); install = e as Event & { prompt: () => Promise<void> }; };
     window.addEventListener("pointerdown", permission, { once: true }); window.addEventListener("keydown", permission, { once: true }); window.addEventListener("keydown", keydown); window.addEventListener("beforeinstallprompt", installer);
-    return () => { window.removeEventListener("compositionstart", compositionStart); window.removeEventListener("compositionend", compositionEnd); media.removeEventListener("change", resize); cleanupNavigation(); window.removeEventListener("keydown", completionTab, true); disposed = true; client?.close(); setClient(undefined); clearInterval(timer);clearInterval(receiptTimer); window.removeEventListener("pointerdown", permission); window.removeEventListener("keydown", permission); window.removeEventListener("keydown", keydown); window.removeEventListener("beforeinstallprompt", installer); };
+    return () => { window.removeEventListener("compositionstart", compositionStart); window.removeEventListener("compositionend", compositionEnd); media.removeEventListener("change", resize); cleanupNavigation(); window.removeEventListener("keydown", completionTab, true); disposed = true; client?.close(); setClient(undefined); clearInterval(timer);window.removeEventListener("pointerdown", permission); window.removeEventListener("keydown", permission); window.removeEventListener("keydown", keydown); window.removeEventListener("beforeinstallprompt", installer); };
   });
 </script>
 
@@ -438,7 +440,7 @@
   {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !shownDetail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
   {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
   {#if error && !modal && !shownDetail}<div class="app-error" role="alert"><span>{error}</span><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => error = ""}><X /></Button></div>{/if}
-  {#if shownDetail && selectedId}{#key selectedId}<AgentDetail detail={shownDetail!} ready={!!detail} tree={shownDetail!.role === "orc" ? target : owner} {owner} {skills} {now} connected={hostConnected} mediaConnected={connected && hostConnected} entryId={snapshot.entryId} entryConnected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} onstop={stop} onupdate={result => { if (selectedId === result.id) detail = result; snapshot = { ...snapshot, agents: snapshot.agents.map(a => a.id === result.id ? { ...a, model: result.model, effort: result.effort, serviceTier: result.serviceTier } : a) }; }} onrename={rename} onrefresh={load} actionError={error} closeError={closeError?.id === shownDetail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} onlookup={operationId => selectedId ? lookup(selectedId,operationId) : Promise.resolve()} ondismiss={operationId=>{if(selectedId)dismissOutgoing(selectedId,operationId);}} />{/key}{/if}
+  {#if shownDetail && selectedId}{#key selectedId}<AgentDetail detail={shownDetail!} ready={!!detail} tree={shownDetail!.role === "orc" ? target : owner} {owner} {skills} {now} connected={hostConnected} mediaConnected={connected && hostConnected} entryId={snapshot.entryId} entryConnected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} onstop={stop} onupdate={result => { if (selectedId === result.id) detail = result; snapshot = { ...snapshot, agents: snapshot.agents.map(a => a.id === result.id ? { ...a, model: result.model, effort: result.effort, serviceTier: result.serviceTier } : a) }; }} onrename={rename} onrefresh={load} actionError={error} closeError={closeError?.id === shownDetail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} />{/key}{/if}
 </main>
 
 <Dialog.Root open={modalOpen} onOpenChange={value => { if (!value && modal) void closeModal(); }}>

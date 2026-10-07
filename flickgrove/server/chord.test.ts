@@ -2,6 +2,9 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import sharp from "sharp";
+import { DeliveryRejected } from "./runtime";
+import { lookupSchema, receiptSchema } from "../src/chord-contract";
 import { Workspace } from "./workspace";
 import { HostService, qualify } from "./hosts";
 import { FakeRuntime, fixtureProjects } from "./testing";
@@ -98,12 +101,15 @@ test("real socket admits A/B/C in order, start then steer, with operation-bound 
     text === "A" ? hold.promise : turn!;
   const a = client.call<Detail>("send", { id, text: "A", operationId: "A" });
   await until(() => f.runtime.inputs.length === 1);
+  expect(
+    await client.call<Receipt | null>("lookup", { id, operationId: "A" }),
+  ).toBeNull();
   const b = client.call("send", { id, text: "B", operationId: "B" });
   const c = client.call("send", { id, text: "C", operationId: "C" });
   // A slow submission neither blocks lookup nor another Orc on this socket.
   expect(
-    (await client.call<Receipt>("lookup", { id, operationId: "B" })).state,
-  ).toBe("missing");
+    await client.call<Receipt | null>("lookup", { id, operationId: "B" }),
+  ).toBeNull();
   const other = await client.call<{ id: string }>("createOrc", {
     project: "alpha",
     settings: {
@@ -133,7 +139,7 @@ test("real socket admits A/B/C in order, start then steer, with operation-bound 
   expect(f.app.detail(agent.id).state).toBe("working");
   expect(f.runtime.interruptions).toHaveLength(0);
 });
-test("durable lookup after restart preserves accepted and uncertain receipts without native replay", async () => {
+test("durable lookup after restart preserves accepted and null outcomes without native replay", async () => {
   const f = fixture();
   const agent = await f.app.createOrc("alpha");
   const id = qualify(f.service.identity.id, agent.id);
@@ -151,9 +157,11 @@ test("durable lookup after restart preserves accepted and uncertain receipts wit
       .state,
   ).toBe("accepted");
   expect(
-    (await reconnected.call<Receipt>("lookup", { id, operationId: "unknown" }))
-      .state,
-  ).toBe("uncertain");
+    await reconnected.call<Receipt | null>("lookup", {
+      id,
+      operationId: "unknown",
+    }),
+  ).toBeNull();
   expect(f.runtime.inputs).toHaveLength(2);
   await reconnected.call("send", {
     id,
@@ -370,4 +378,117 @@ test("timed out mutation is reconciled by receipt without replay or disconnect",
   expect(receipt.state).toBe("accepted");
   expect(f.runtime.inputs).toHaveLength(1);
   expect(disconnected).toBe(0);
+});
+
+test("nullable receipts over real Chord preserve image and answer admission boundaries", async () => {
+  const f = fixture();
+  const a = await f.app.createOrc("alpha");
+  const id = qualify(f.service.identity.id, a.id);
+  const client = await f.client();
+  const bytes = await sharp({
+    create: { width: 8, height: 8, channels: 4, background: "blue" },
+  })
+    .png()
+    .toBuffer();
+  const refs = await f.app.images.upload(a.id, "image", "caption", [
+    new File([bytes], "image.png", { type: "image/png" }),
+  ]);
+  expect(
+    lookupSchema.parse(
+      await client.call("lookup", { id, operationId: "image" }),
+    ),
+  ).toBeNull();
+  const imageGate = Promise.withResolvers<string>();
+  f.runtime.sendOverride = () => imageGate.promise;
+  const image = client.call("send", {
+    id,
+    text: "caption",
+    images: refs,
+    operationId: "image",
+  });
+  await until(() => f.runtime.inputs.length === 1);
+  expect(
+    lookupSchema.parse(
+      await client.call("lookup", { id, operationId: "image" }),
+    ),
+  ).toBeNull();
+  imageGate.resolve("image-turn");
+  await image;
+  expect(
+    receiptSchema.parse(
+      await client.call("lookup", { id, operationId: "image" }),
+    ).state,
+  ).toBe("accepted");
+  await client.call("send", {
+    id,
+    text: "caption",
+    images: refs,
+    operationId: "image",
+  });
+  expect(f.runtime.inputs).toHaveLength(1);
+  const ask = (itemId: string) =>
+    f.runtime.emit(a.id, {
+      type: "item",
+      turnId: "image-turn",
+      item: {
+        id: itemId,
+        type: "agentMessage",
+        delivery: "async",
+        questions: [{ question: itemId }],
+      },
+    });
+  ask("original");
+  const answers = [
+    {
+      questionId: f.app.detail(a.id).questions[0].id,
+      answer: "immutable answer",
+    },
+  ];
+  const answerGate = Promise.withResolvers<string>();
+  f.runtime.sendOverride = () => answerGate.promise;
+  const answer = client.call("answerBatch", {
+    id,
+    answers,
+    operationId: "answer",
+  });
+  await until(() => f.runtime.inputs.length === 2);
+  expect(
+    lookupSchema.parse(
+      await client.call("lookup", { id, operationId: "answer" }),
+    ),
+  ).toBeNull();
+  expect(f.app.detail(a.id).questions[0].state).toBe("unanswered");
+  ask("new arrival");
+  answerGate.reject(new DeliveryRejected("Native rejected the answer"));
+  await answer;
+  expect(
+    receiptSchema.parse(
+      await client.call("lookup", { id, operationId: "answer" }),
+    ),
+  ).toMatchObject({ state: "rejected", error: "Native rejected the answer" });
+  expect(
+    f.app.detail(a.id).questions.every((q) => q.state === "unanswered"),
+  ).toBe(true);
+  f.runtime.sendOverride = async () => "image-turn";
+  await client.call("retryDelivery", { id, deliveryId: "answer" });
+  expect(
+    receiptSchema.parse(
+      await client.call("lookup", { id, operationId: "answer" }),
+    ).state,
+  ).toBe("accepted");
+  expect(f.app.detail(a.id).questions.map((q) => q.state)).toEqual([
+    "answered",
+    "unanswered",
+  ]);
+  expect(f.runtime.inputs).toHaveLength(3);
+  await client.call("answerBatch", { id, answers, operationId: "answer" });
+  expect(f.runtime.inputs).toHaveLength(3);
+  expect(
+    receiptSchema.safeParse({
+      operationId: "answer",
+      state: "pending",
+      turnId: null,
+      error: null,
+    }).success,
+  ).toBe(false);
 });
