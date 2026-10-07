@@ -279,40 +279,41 @@ const server = Bun.serve({
       target.runtime.names.set(threadId, title);
       target.runtime.historyItems.set(
         threadId,
-        body.count
-          ? Array.from({ length: body.count }, (_, index) => ({
-              id: `history-${index}`,
-              role: "assistant" as const,
-              text: body.text
-                ? `${title} item ${index}\n\n${body.text}`
-                : body.rich
-                  ? `${title} item ${index}\n\n` +
-                    Array.from(
-                      { length: 16 },
-                      (_, n) =>
-                        `- Group ${n}\n  - Nested alpha\n  - Nested beta\n  - Nested gamma`,
-                    ).join("\n") +
-                    "\n\n```typescript\nconst result = records.map(record => ({ id: record.id, value: record.value }));\n```\n\n" +
-                    "| Column A | Column B | Column C | Column D | Column E | Column F |\n|---|---|---|---|---|---|\n" +
-                    Array.from(
-                      { length: 24 },
-                      (_, n) =>
-                        `| ${n} | alpha | beta | gamma | delta | epsilon |`,
-                    ).join("\n")
-                  : `${title} item ${index}`,
-              at: Date.now(),
-            }))
-          : [
-              {
-                id: "historical-link",
-                role: "assistant",
-                text:
-                  body.text ??
-                  "[History chart](reports/plot.png)\n\n" +
-                    "Historical paragraph\n\n".repeat(150),
+        body.messages ??
+          (body.count
+            ? Array.from({ length: body.count }, (_, index) => ({
+                id: `history-${index}`,
+                role: "assistant" as const,
+                text: body.text
+                  ? `${title} item ${index}\n\n${body.text}`
+                  : body.rich
+                    ? `${title} item ${index}\n\n` +
+                      Array.from(
+                        { length: 16 },
+                        (_, n) =>
+                          `- Group ${n}\n  - Nested alpha\n  - Nested beta\n  - Nested gamma`,
+                      ).join("\n") +
+                      "\n\n```typescript\nconst result = records.map(record => ({ id: record.id, value: record.value }));\n```\n\n" +
+                      "| Column A | Column B | Column C | Column D | Column E | Column F |\n|---|---|---|---|---|---|\n" +
+                      Array.from(
+                        { length: 24 },
+                        (_, n) =>
+                          `| ${n} | alpha | beta | gamma | delta | epsilon |`,
+                      ).join("\n")
+                    : `${title} item ${index}`,
                 at: Date.now(),
-              },
-            ],
+              }))
+            : [
+                {
+                  id: "historical-link",
+                  role: "assistant",
+                  text:
+                    body.text ??
+                    "[History chart](reports/plot.png)\n\n" +
+                      "Historical paragraph\n\n".repeat(150),
+                  at: Date.now(),
+                },
+              ]),
       );
       const restored = await target.app.resumeHistory(
         "fixture",

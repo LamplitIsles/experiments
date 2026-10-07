@@ -6,6 +6,7 @@
   import type { HistorySession, HistoryPage, HistoryMessages, Message, Project } from "./contracts";
   import { api } from "./api";
   import { navigation, setSurface, back } from "./navigation.svelte";
+  import MessageTime from "./MessageTime.svelte";
   import Markdown from "./Markdown.svelte";
   import * as m from "./paraglide/messages";
   let { hostId, hostName, project, connected, onresume }: {
@@ -101,7 +102,7 @@
     <div class="history-transcript">
       {#if reading}<p role="status">{m.loading_history()}</p>{/if}
       {#if messageCursor}<Button variant="ghost" size="sm" disabled={reading || !connected} onclick={() => read(true)}>{m.earlier_messages()}</Button>{/if}
-      {#each messages as message (message.id)}<div class:user-message={message.role === "user"} class:assistant-message={message.role === "assistant"}><div class="message-role">{message.role === "user" ? m.history_you() : m.history_assistant()}</div><Markdown text={message.text} /></div>{/each}
+      {#each messages as message (message.id)}<div class:user-message={message.role === "user"} class:assistant-message={message.role === "assistant"}><div class="message-role">{#if message.role === "assistant"}<MessageTime at={message.at} />{/if}{message.role === "user" ? m.history_you() : m.history_assistant()}</div>{#if message.role === "user"}<MessageTime at={message.at} />{/if}<Markdown text={message.text} /></div>{/each}
       {#if !reading && !messages.length && !error}<p class="history-empty">{m.no_messages()}</p>{/if}
     </div>
     <div class="history-action">

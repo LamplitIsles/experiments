@@ -1928,3 +1928,20 @@ pre {
 .markdown .th-link {
   color: var(--primary);
 }
+
+.message-time {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 400;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.message-role .message-time,
+.user-message > .message-time {
+  float: right;
+  margin-left: 12px;
+}
+.report-heading .message-time {
+  margin-left: auto;
+  flex-shrink: 0;
+}

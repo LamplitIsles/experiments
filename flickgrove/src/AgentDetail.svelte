@@ -14,6 +14,7 @@
   import { elapsed } from "./api";
   import TitleEditor from "./TitleEditor.svelte";
   import Weekly from "./Weekly.svelte";
+  import MessageTime from "./MessageTime.svelte";
   import Markdown from "./Markdown.svelte";
   import WorkerReport from "./WorkerReport.svelte";
   import ConversationTimeline from "./ConversationTimeline.svelte";
@@ -93,8 +94,8 @@
     {#snippet renderMessage(message: Message)}
       {@const report = reports.get(message.id)}
       {@const delivery = detail.deliveries.find(d=>d.id===message.id)}
-      {#if report}<WorkerReport agentId={report.reportingWorkerId} text={message.text} sender={workers.find(w => w.id === report.reportingWorkerId)?.title} initiallyExpanded={expandedReports.has(message.id)} onexpanded={value => { if (value) expandedReports.add(message.id); else expandedReports.delete(message.id); }} />
-      {:else}<div class:user-message={message.role === "user"} class:assistant-message={message.role === "assistant"}><div class="message-role">{message.role === "assistant" ? detail.role === "orc" ? m.orc() : m.worker() : ""}</div><Markdown text={message.text} agentId={detail.id} />
+      {#if report}<WorkerReport at={message.at} agentId={report.reportingWorkerId} text={message.text} sender={workers.find(w => w.id === report.reportingWorkerId)?.title} initiallyExpanded={expandedReports.has(message.id)} onexpanded={value => { if (value) expandedReports.add(message.id); else expandedReports.delete(message.id); }} />
+      {:else}<div class:user-message={message.role === "user"} class:assistant-message={message.role === "assistant"}><div class="message-role">{#if message.role === "assistant"}<MessageTime at={message.at} />{/if}{message.role === "assistant" ? detail.role === "orc" ? m.orc() : m.worker() : ""}</div>{#if message.role === "user"}<MessageTime at={message.at} />{/if}<Markdown text={message.text} agentId={detail.id} />
       {#if message.images?.length || message.localImageIds?.length}<MessageImages connected={mediaConnected} agentId={detail.id} operationId={message.id} images={message.images} localImageIds={message.localImageIds} onviewer={open => { if (open) pinnedImage = message.id; else if (pinnedImage === message.id) pinnedImage = undefined; }} />{/if}
       {#if delivery?.status==='failed' || delivery?.status==='uncertain'}<small class:failed={delivery.status==='failed'} role="status">{delivery.status==='failed' ? m.failed() : m.unknown_delivery()}</small>{/if}
       </div>{/if}
