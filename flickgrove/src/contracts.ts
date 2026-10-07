@@ -92,7 +92,6 @@ export interface Delivery {
   reportingWorkerId?: string;
   questionIds: string[];
   error?: string;
-  receiptState?: "pending" | "missing";
   at: number;
 }
 export interface Agent {
