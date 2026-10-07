@@ -266,6 +266,24 @@ export class CodexRuntime implements Runtime {
     for (const entry of response.data) {
       const item = "item" in entry ? entry.item : entry;
       const turnId = "turnId" in entry ? entry.turnId : undefined;
+      // Installed native schema records optional lifecycle Unix milliseconds.
+      // Client 0.2.1 omits these entry fields; bare legacy items have no time.
+      const metadata = entry as {
+        startedAtMs?: number | null;
+        completedAtMs?: number | null;
+      };
+      const times =
+        item.type === "userMessage"
+          ? [metadata.startedAtMs, metadata.completedAtMs]
+          : [metadata.completedAtMs, metadata.startedAtMs];
+      const at =
+        times.find(
+          (time) =>
+            typeof time === "number" &&
+            Number.isFinite(time) &&
+            time > 0 &&
+            time <= 8.64e15,
+        ) ?? 0;
       if (item.type === "userMessage") {
         const text = item.content
           .filter((input) => input.type === "text")
@@ -298,7 +316,7 @@ export class CodexRuntime implements Runtime {
             turnId,
             role: "user",
             text,
-            at: 0,
+            at,
             ...(images.length ? { images } : {}),
           });
       } else if (
@@ -311,7 +329,7 @@ export class CodexRuntime implements Runtime {
           turnId,
           role: "assistant",
           text: item.text,
-          at: 0,
+          at,
         });
       }
     }

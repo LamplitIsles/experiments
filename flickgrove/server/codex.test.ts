@@ -50,6 +50,8 @@ test("history uses indexed metadata for both archive states, reads paginated ite
     historyItems: [
       {
         turnId: "old-turn",
+        startedAtMs: 1791251940000,
+        completedAtMs: 1791252000000,
         item: {
           type: "userMessage",
           id: "old-user",
@@ -61,6 +63,8 @@ test("history uses indexed metadata for both archive states, reads paginated ite
       },
       {
         turnId: "old-turn",
+        startedAtMs: 1791252060000,
+        completedAtMs: 1791252120000,
         item: {
           type: "agentMessage",
           id: "old-answer",
@@ -100,6 +104,28 @@ test("history uses indexed metadata for both archive states, reads paginated ite
         (m) => m.text,
       ),
     ).toEqual(["Original question", "Original answer"]);
+    expect(
+      (await runtime.historyMessages("cli-history")).messages.map((m) => m.at),
+    ).toEqual([1791251940000, 1791252120000]);
+    const original = structuredClone(controls.historyItems);
+    controls.historyItems.forEach((entry) => {
+      delete (entry as { startedAtMs?: number }).startedAtMs;
+      delete (entry as { completedAtMs?: number }).completedAtMs;
+    });
+    await writeFile(controlPath, JSON.stringify(controls));
+    expect(
+      (await runtime.historyMessages("cli-history")).messages.map((m) => m.at),
+    ).toEqual([0, 0]);
+    controls.historyItems[0].completedAtMs = 1791252000000;
+    controls.historyItems[0].startedAtMs = -1;
+    controls.historyItems[1].startedAtMs = 1791252060000;
+    controls.historyItems[1].completedAtMs = 0;
+    await writeFile(controlPath, JSON.stringify(controls));
+    expect(
+      (await runtime.historyMessages("cli-history")).messages.map((m) => m.at),
+    ).toEqual([1791252000000, 1791252060000]);
+    controls.historyItems = original;
+    await writeFile(controlPath, JSON.stringify(controls));
     const agent: RuntimeAgent = {
       id: "imported",
       token: "test-token",
