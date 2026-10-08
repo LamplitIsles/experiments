@@ -285,6 +285,18 @@ function agent(
             : [],
   };
 }
+function fixtureQuestion(state: "unanswered" | "delegated") {
+  return {
+    id: "seed:0",
+    itemId: "seed",
+    index: 0,
+    title: "Question",
+    text: "Seeded Worker question",
+    options: [],
+    state,
+    at: 1,
+  };
+}
 async function reset(mode = "working") {
   for (const socket of browserSockets)
     socket.close(1001, "Synthetic fixture reset");
@@ -334,7 +346,7 @@ async function reset(mode = "working") {
     true,
     [
       agent("orc", "orc", "Streaming voice input", 0),
-      ...(mode === "host-selection"
+      ...(["host-selection", "device-questions"].includes(mode)
         ? [agent("second", "orc", "NUC second session", 0)]
         : []),
       ...(mode === "dense"
@@ -344,7 +356,12 @@ async function reset(mode = "working") {
         : []),
       ...(workers
         ? [
-            agent("voice", "worker", "Voice input", 0, "orc"),
+            {
+              ...agent("voice", "worker", "Voice input", 0, "orc"),
+              ...(mode === "device-worker"
+                ? { questions: [fixtureQuestion("unanswered")] }
+                : {}),
+            },
             agent(
               "docs",
               "worker",
@@ -366,11 +383,18 @@ async function reset(mode = "working") {
     false,
     [
       agent("orc", "orc", "Reader performance", 1),
-      ...(mode === "host-selection"
+      ...(["host-selection", "device-questions"].includes(mode)
         ? [agent("second", "orc", "Mac second session", 1)]
         : []),
       ...(workers
-        ? [agent("reader", "worker", "Reader implementation", 1, "orc")]
+        ? [
+            {
+              ...agent("reader", "worker", "Reader implementation", 1, "orc"),
+              ...(["device-questions", "device-worker"].includes(mode)
+                ? { questions: [fixtureQuestion("delegated")] }
+                : {}),
+            },
+          ]
         : []),
     ],
     () => peerOrigin,
@@ -406,6 +430,8 @@ async function reset(mode = "working") {
     },
   });
   emptyOrigin = `http://127.0.0.1:${empty.server.port}`;
+  if (mode === "device-questions")
+    await peer.app.send("second", "Fixture second-session turn", "user");
   if (!["idle", "no-workers", "host-selection"].includes(mode)) {
     await current.app.send(
       "orc",
@@ -517,6 +543,8 @@ const server = Bun.serve({
         questionOptions?: boolean;
         questionLong?: boolean;
         restartHub?: boolean;
+        closedAgent?: string;
+        questionPeer?: boolean;
         append?: { agentId: string; text: string };
       };
       if (body.detailDelay !== undefined) detailDelay = body.detailDelay;
@@ -542,6 +570,22 @@ const server = Bun.serve({
           socket.close(1001, "Synthetic Hub restart");
         prior.service.dispose();
         prior.app.dispose();
+        if (body.closedAgent) {
+          // Simulate an externally authoritative closure in test-owned persisted state.
+          const db = new Database(
+            join(prior.stateDirectory, "workspace.sqlite"),
+          );
+          const row = db
+            .query("SELECT value FROM workspace WHERE id=1")
+            .get() as { value: string };
+          const state = JSON.parse(row.value);
+          state.agents.find((a: Detail) => a.id === body.closedAgent).closed =
+            true;
+          db.query("UPDATE workspace SET value=? WHERE id=1").run(
+            JSON.stringify(state),
+          );
+          db.close();
+        }
         current = unit(
           "NUC",
           true,
@@ -622,7 +666,8 @@ const server = Bun.serve({
       }
       if (body.question) {
         const questionAgent = body.questionAgent ?? "orc";
-        const target = questionAgent === "peer" ? peer : current;
+        const target =
+          questionAgent === "peer" || body.questionPeer ? peer : current;
         const id = questionAgent === "peer" ? "orc" : questionAgent;
         const turnId = target.app.detail(id).turnId!;
         target.runtime.emit(id, {
