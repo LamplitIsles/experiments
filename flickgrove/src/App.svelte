@@ -94,6 +94,7 @@
   // Snapshot identity is display-only; detail remains the write authority.
   const shownDetail = $derived(detail ? withOutgoing(detail) : target ? { ...target, messages: [], deliveries: [] } : null);
   const hosts = $derived(snapshot.hosts ?? []);
+  const unansweredHosts = $derived(new Set(snapshot.agents.filter(a => a.questions.some(q => q.state === "unanswered")).map(a => a.hostId).filter((id): id is string => !!id)));
   const selectedHost = $derived(hosts.find(h => h.id === shownDetail?.hostId));
   const hostConnected = $derived(!!selectedHost?.connected);
   const visibleAgents = $derived(snapshot.agents.filter(a => a.hostId === hostFilter));
@@ -432,7 +433,7 @@
 
 <Toaster theme="dark" position="bottom-center" />
 <header class="app-header" class:has-selection={!!selectedId}><strong>{m.product()}</strong><span class="session-count">{m.session_count({ count: roots.length })}</span>
-  <HostFilter {hosts} value={hostFilter} onselect={selectHost} onmanage={() => show("hosts")} />
+  <HostFilter {hosts} {unansweredHosts} value={hostFilter} onselect={selectHost} onmanage={() => show("hosts")} />
   <div class="header-actions"><Weekly hostId={snapshot.entryId} connected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} /><Button variant="ghost" size="icon-sm" aria-label={m.settings()} onclick={() => show("settings")}><SettingsIcon /></Button></div>
 </header>
 <main class:with-detail={!!selectedId}>

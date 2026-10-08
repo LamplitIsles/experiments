@@ -796,7 +796,18 @@ pre {
   overflow-x: auto;
 }
 .host-filter-buttons > button {
+  position: relative;
   max-width: min(16rem, 80%);
+}
+.host-question-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #e6ba7b;
+  pointer-events: none;
 }
 .host-filter-buttons > button[aria-pressed="true"] {
   border-color: var(--ring);
