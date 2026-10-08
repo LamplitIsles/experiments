@@ -26,7 +26,8 @@ const types: Record<string, string> = {
   ".ttf": "font/ttf",
   ".otf": "font/otf",
 };
-const within = (root: string, path: string) => path.startsWith(root + sep);
+const within = (root: string, path: string) =>
+  path.startsWith(root.endsWith(sep) ? root : root + sep);
 function clean(path: string) {
   if (/[\0\\]/.test(path) || path.split("/").includes(".."))
     throw new Error("File is outside the preview directory");
@@ -195,13 +196,25 @@ export function filePreview(service: HostService, now = Date.now) {
       if (!link) return fail("File type is not supported");
       clean(link.path);
       const session = resolve(service.previewDirectory(body.agent));
-      const cwd = await realpath(session);
       const requested = resolve(session, link.path);
-      if (!within(session, requested) && !within(cwd, requested))
-        return fail("File is outside the session directory", 403);
       const target = await realpath(requested);
-      if (!within(cwd, target))
-        return fail("File is outside the session directory", 403);
+      // The catalogue belongs to this execution Peer. Failure cannot grant
+      // cross-project access, but does not revoke the session's own directory.
+      const projects = await service.projects().catch(() => []);
+      let allowed = false;
+      for (const path of [session, ...projects.map((p) => p.path)]) {
+        const root = resolve(path);
+        const canonical = await realpath(root).catch(() => undefined);
+        if (canonical && within(canonical, target)) {
+          allowed = true;
+          break;
+        }
+      }
+      if (!allowed)
+        return fail(
+          "File is outside the session and registered project directories",
+          403,
+        );
       if (!localFile(target)) return fail("File type is not supported");
       const root = dirname(target);
       await read(root, target);

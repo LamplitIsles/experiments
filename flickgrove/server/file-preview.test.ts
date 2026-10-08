@@ -29,11 +29,18 @@ async function fixture() {
     "# Notes\n\n<script>window.unsafe=true</script>\n\n![Plot](图%20表%20(1).png)\n\n[unsafe](javascript:alert(1))",
   );
   await writeFile(join(cwd, "private.json"), "{}");
+  const catalogue = {
+    projects: [{ alias: "test", name: "Test", path: cwd }],
+    unavailable: false,
+  };
   const runtime = new FakeRuntime();
   const app = new Workspace({
     directory: join(root, "state"),
     runtime,
-    projects: async () => [{ alias: "test", name: "Test", path: cwd }],
+    projects: async () => {
+      if (catalogue.unavailable) throw new Error("Catalogue unavailable");
+      return catalogue.projects;
+    },
     branches: { read: async () => null },
   });
   cleanup.push(() => app.dispose());
@@ -75,8 +82,105 @@ async function fixture() {
     id,
     headers,
     create,
+    catalogue,
   };
 }
+test("real HTTP admits current execution-Peer project roots with canonical containment and directory-scoped grants", async () => {
+  const f = await fixture();
+  const project = join(f.root, "other");
+  const reports = join(project, "reports");
+  const outside = join(f.root, "other-sibling");
+  await mkdir(reports, { recursive: true });
+  await mkdir(outside);
+  await writeFile(join(reports, "page.html"), "<h1>Other project</h1>");
+  await writeFile(join(reports, "plot.png"), "other image");
+  await writeFile(join(reports, "note.md"), "# Other\n\n![Plot](plot.png)");
+  await writeFile(join(reports, "style.css"), "body{}");
+  await writeFile(join(project, "private.json"), "{}");
+  await writeFile(join(outside, "page.html"), "outside");
+  await symlink(join(outside, "page.html"), join(reports, "escape.html"));
+  const alias = join(f.root, "other-alias");
+  await symlink(project, alias);
+
+  expect((await f.create(join(reports, "page.html"))).status).toBe(403);
+  f.catalogue.projects.push(
+    { alias: "missing", name: "Missing", path: join(f.root, "missing") },
+    { alias: "other", name: "Other", path: alias },
+  );
+  const urls: string[] = [];
+  for (const href of [
+    join(reports, "page.html"),
+    `file://${join(alias, "reports", "plot.png")}`,
+    join(alias, "reports", "note.md"),
+  ]) {
+    const admission = await f.create(href);
+    expect(admission.status).toBe(200);
+    const { url } = await admission.json();
+    urls.push(url);
+    const resource = await fetch(url);
+    expect(resource.status).toBe(200);
+    expect(resource.headers.get("access-control-allow-origin")).toBe("*");
+    expect(resource.headers.get("cache-control")).toBe("no-store");
+    expect(resource.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(resource.headers.get("x-content-type-options")).toBe("nosniff");
+    if (!href.endsWith(".png"))
+      expect(resource.headers.get("content-security-policy")).toBe(
+        "sandbox allow-scripts",
+      );
+    if (href.endsWith(".md"))
+      expect(await resource.text()).toContain(
+        url.replace("note.md", "plot.png"),
+      );
+    else
+      expect(await resource.text()).toContain(
+        href.endsWith(".png") ? "other image" : "Other project",
+      );
+  }
+  for (const href of [join(outside, "page.html"), join(reports, "escape.html")])
+    expect((await f.create(href)).status).toBe(403);
+  expect(
+    (await f.create(join(reports, "page.html"), { agent: "other:agent" })).ok,
+  ).toBe(false);
+  expect(
+    (
+      await f.create(join(reports, "page.html"), {
+        agent: `${f.service.identity.id}:missing`,
+      })
+    ).ok,
+  ).toBe(false);
+  expect(
+    (
+      await f.create(
+        join(reports, "page.html"),
+        {},
+        { "X-Grove-Peer": "wrong" },
+      )
+    ).status,
+  ).toBe(403);
+  const base = urls[0]!.slice(0, urls[0]!.lastIndexOf("/") + 1);
+  expect(await (await fetch(base + "style.css")).text()).toBe("body{}");
+  await symlink(join(project, "private.json"), join(reports, "escape.json"));
+  expect((await fetch(base + "escape.json")).ok).toBe(false);
+  expect((await fetch(base + "%2e%2e%2fprivate.json")).ok).toBe(false);
+  expect((await f.create("reports/page.html")).status).toBe(200);
+  expect((await f.create("reports/note.md")).status).toBe(200);
+
+  f.catalogue.projects = [];
+  expect((await f.create(join(reports, "page.html"))).status).toBe(403);
+  expect((await f.create("reports/page.html")).status).toBe(200);
+  expect((await fetch(urls[0]!)).status).toBe(200);
+  f.catalogue.projects.push({ alias: "other", name: "Other", path: project });
+  expect((await f.create(join(reports, "page.html"))).status).toBe(200);
+  f.catalogue.unavailable = true;
+  expect((await f.create(join(reports, "page.html"))).status).toBe(403);
+  expect((await f.create("reports/page.html")).status).toBe(200);
+
+  const otherPeer = await fixture();
+  expect((await otherPeer.create(join(reports, "page.html"))).status).toBe(403);
+  expect(
+    (await fetch(urls[0]!.replace(f.origin, otherPeer.origin))).status,
+  ).toBe(410);
+});
 test("link classification preserves path characters, decodes once and leaves web/mail/anchors alone", () => {
   for (const href of [
     "https://example.com/a.png",
@@ -279,7 +383,7 @@ test("bounded grants, preflight, stream intake and replaced resource roots", asy
     (
       await fetch(f.origin + "/api/file-preview", {
         method: "POST",
-        headers: f.headers,
+        headers: { ...f.headers, Connection: "close" },
         body: big,
       })
     ).status,
