@@ -3,7 +3,7 @@
   import { navigation, setSurface } from "./navigation.svelte";
   import { Button } from '$lib/components/ui/button/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
-  import { ImagePlus, X, ArrowUp, Square, Sparkles } from '@lucide/svelte';
+  import { Plus, MessagesSquare, Hammer, ClipboardCheck, RotateCcw, X, ArrowUp, Square, Sparkles } from '@lucide/svelte';
   import { storagePrefix, readingCache } from './api';
   import { imagePreview, loadImages, saveImages, draftKey, operationKey, intakeError, IMAGE_ACCEPT, type ImageDraft } from './image-drafts';
   import { onMount, tick, untrack } from 'svelte';
@@ -57,10 +57,16 @@
   export function recover(value: string) { text = text.trim() ? `${text}\n\n${value}` : value; void tick().then(() => input?.focus()); }
   async function restoreInput() { await tick(); input?.focus(); input?.setSelectionRange(insertion.start,insertion.end); }
   async function insertSkill(skill:Skill) {
+    if(composing || stopping || preparing || !connected) return;
     const before = text.slice(0,insertion.start); const after = text.slice(insertion.end);
-    const value = `$${skill.name}${after.startsWith(' ') ? '' : ' '}`;
+    const value = `${before && !/\s$/.test(before) ? ' ' : ''}$${skill.name}${!after || !/^\s/.test(after) ? ' ' : ''}`;
     text = before+value+after; insertion = {start:before.length+value.length,end:before.length+value.length};
     setSurface("skill", false); await restoreInput();
+  }
+  function workflow(name:string) {
+    if(!input || composing || stopping || preparing || !connected || navigation.surfaces.length) return;
+    insertion={start:input.selectionStart,end:input.selectionEnd};
+    void insertSkill({name, description:""});
   }
   async function send() {
     if(!ready && restoration)await restoration;
@@ -108,7 +114,11 @@
     {#if imageError}<p class="inline-error" role="alert">{imageError}</p>{/if}
     {#if preparing}<p role="status">Preparing images…</p>{/if}
     <Textarea onpaste={paste} bind:ref={input} bind:value={text} aria-label={m.message_orc()} placeholder={m.message_placeholder()} disabled={stopping || preparing} rows={2} oncompositionstart={() => { composing = true; }} oncompositionend={() => { composing = false; }} onkeydown={keydown} />
-    <div class="composer-bottom"><Button variant="ghost" size="icon-sm" aria-label="Add images" title="Add images" disabled={preparing || !ready || !imageStorage || stopping} onclick={()=>picker.click()}><ImagePlus /></Button><Button class="mobile-skill" variant="ghost" size="icon-sm" aria-label={m.search_skills()} title={m.search_skills()} disabled={preparing || stopping || !connected} onclick={openSkills}><Sparkles /></Button><div class="composer-actions">
+    <div class="composer-bottom"><div class="composer-tools"><Button variant="ghost" size="icon-sm" aria-label="Add images" title="Add images" disabled={preparing || !ready || !imageStorage || stopping} onclick={()=>picker.click()}><Plus /></Button><Button class="mobile-skill" variant="ghost" size="icon-sm" aria-label={m.search_skills()} title={m.search_skills()} disabled={preparing || stopping || !connected} onclick={openSkills}><Sparkles /></Button><div class="workflow-tools">
+      {#each [{name:"grove-grill-with-docs",label:"Discuss",icon:MessagesSquare},{name:"grove-to-orc-impl",label:"Implement",icon:Hammer},{name:"grove-code-review",label:"Review",icon:ClipboardCheck},{name:"grove-review-again",label:"Re-review",icon:RotateCcw}] as action}
+        <Button variant="ghost" size="sm" disabled={preparing || stopping || !connected} onpointerdown={e => { if(composing)e.preventDefault(); }} onclick={() => workflow(action.name)}><action.icon />{action.label}</Button>
+      {/each}
+    </div></div><div class="composer-actions">
       {#if working || stopping}<Button variant="secondary" class="round-action" size="icon-sm" title={m.stop_orc()} aria-label={m.stop_orc()} disabled={!connected || stopping} onclick={onstop}><Square /></Button>{/if}
       <Button class="round-action" size="icon-sm" aria-label={m.send_message()} title={m.send_message()} disabled={(!text.trim() && !images.length) || !connected || stopping || preparing || !ready} type="submit"><ArrowUp /></Button>
     </div></div>

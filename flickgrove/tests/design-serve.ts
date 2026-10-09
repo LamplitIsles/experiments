@@ -172,6 +172,11 @@ function unit(
     directory: stateDirectory,
     runtime,
     projects: async () => unitProjects,
+    reviewerSnapshot: async () => ({
+      model: "gpt-6.1-sol",
+      effort: "high",
+      prompt: "Synthetic read-only review",
+    }),
     ...(branchFixture
       ? {
           branches: {
@@ -450,6 +455,51 @@ async function reset(mode = "working") {
     await peer.app.tool("fixture-orc", "worker_send", {
       workerId: "reader",
       message: "Implement reader",
+    });
+  }
+  if (mode === "reviewers") {
+    const r = (await current.app.tool("fixture-orc", "reviewer_start", {
+      project: "experiments",
+      profile: "standards",
+      title: "Standards review with a long assignment title for mobile",
+      spec: "#3573",
+      fixedPoint: "0fb4294",
+      reviewedHead: "fixture-head",
+      message: "Read the branch",
+    })) as Detail;
+    for (const a of [current.app.detail("orc"), r])
+      current.runtime.historySessions.set(a.threadId!, {
+        threadId: a.threadId!,
+        title: a.title,
+        cwd: a.project.path,
+        source: "vscode",
+        role: "session",
+        updatedAt: Date.now(),
+        archived: false,
+        preview: "Synthetic managed history",
+      });
+    const token = current.runtime.agents.get(r.id)!.token;
+    await current.app.tool(token, "reviewer_report", {
+      message:
+        "Review evidence received. Read-only findings are bound to fixture-head.",
+      reviewedHead: "fixture-head",
+      spec: "#3573",
+      fixedPoint: "0fb4294",
+    });
+    current.runtime.emit(r.id, {
+      type: "item",
+      turnId: r.turnId!,
+      item: {
+        id: "reviewer-question",
+        type: "agentMessage",
+        delivery: "async",
+        text: "Missing verification",
+        questions: [
+          {
+            question: "Please delegate missing screenshot evidence to Worker.",
+          },
+        ],
+      },
     });
   }
 }

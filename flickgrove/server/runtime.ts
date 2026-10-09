@@ -44,6 +44,8 @@ export type RuntimeEvent = { threadId?: string } & (
 );
 export interface RuntimeAgent extends Detail {
   token: string;
+  orcPromptSnapshot?: string;
+  reviewerSnapshot?: import("./reviewer-config").ReviewerSnapshot;
   workerDefaults?: { model: string; effort: string; serviceTier: string };
   inheritSettings?: boolean;
   restoreArchived?: boolean;

@@ -396,10 +396,6 @@ test("the SDK adapter initializes isolated role configuration, discovers enabled
       sandbox: "danger-full-access",
       serviceTier: "priority",
     });
-    expect(
-      requests.find((r) => r.method === "thread/start" && !r.params.ephemeral)
-        .params.developerInstructions,
-    ).toContain("worker_send");
   } finally {
     await runtime.close();
     await rm(directory, { recursive: true, force: true });

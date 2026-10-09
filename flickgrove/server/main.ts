@@ -2,6 +2,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import {
+  initializeReviewerConfig,
+  reviewerSnapshot,
+  orcPrompt,
+} from "./reviewer-config";
 import { CodexRuntime } from "./codex";
 import { Workspace } from "./workspace";
 import { registeredProjects } from "./projects";
@@ -15,6 +20,7 @@ const { values } = parseArgs({
     origin: { type: "string" },
     name: { type: "string" },
     port: { type: "string", default: "4318" },
+    config: { type: "string" },
     state: { type: "string" },
     codex: { type: "string", default: "codex" },
   },
@@ -31,6 +37,9 @@ if (
   throw new Error("Use an HTTP(S) origin without a path");
 const directory =
   values.state ?? join(homedir(), ".local", "share", "flickgrove");
+const configPath =
+  values.config ?? join(homedir(), ".config", "flickgrove", "config.toml");
+await initializeReviewerConfig(configPath);
 const runtime = new CodexRuntime({
   cwd: process.cwd(),
   origin: () => localOrigin,
@@ -40,6 +49,8 @@ const app = new Workspace({
   directory,
   runtime,
   projects: registeredProjects,
+  orcPrompt: () => orcPrompt(configPath),
+  reviewerSnapshot: (profile) => reviewerSnapshot(configPath, profile),
 });
 const service = new HostService(app, {
   directory,

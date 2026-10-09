@@ -468,7 +468,33 @@ pre {
   gap: 8px;
   padding: 0 10px 10px 16px;
 }
+.composer-tools {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow-x: auto;
+  gap: 4px;
+  scrollbar-width: none;
+}
+.composer-tools > button,
+.workflow-tools > button {
+  flex-shrink: 0;
+}
+.workflow-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 8px;
+}
+.review-target {
+  margin: 0;
+  padding: 4px 20px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
 .composer-actions {
+  flex-shrink: 0;
   margin-left: auto;
   display: flex;
   align-items: center;

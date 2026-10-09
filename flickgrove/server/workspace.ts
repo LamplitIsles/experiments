@@ -15,6 +15,7 @@ import type {
   Snapshot,
   HistorySession,
   Message,
+  ReviewTarget,
 } from "../src/contracts";
 import type {
   Runtime,
@@ -26,6 +27,10 @@ import { sameDirectory } from "./directory";
 import { DeliveryRejected, StaleTurn } from "./runtime";
 import { z } from "zod";
 import { roleTools, toolDefinitions, sessionTitle } from "./tools";
+
+function reviewTargetText(target: ReviewTarget) {
+  return `${target.profile} · spec ${target.spec} · fixed point ${target.fixedPoint} → reviewed HEAD ${target.reviewedHead}`;
+}
 
 type State = {
   agents: RuntimeAgent[];
@@ -46,14 +51,18 @@ export class Workspace {
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly opening = new Map<string, Promise<RuntimeHandle>>();
   private readonly completedTurns = new Set<string>();
-  private readonly closingWorkers = new Set<string>();
-  private readonly failedWorkerCloses = new Set<string>();
+  private readonly closingChildren = new Set<string>();
+  private readonly failedChildCloses = new Set<string>();
   private disposed = false;
   constructor(
     private readonly options: {
       directory: string;
       runtime: Runtime;
       projects: () => Promise<Project[]>;
+      orcPrompt?: () => Promise<string>;
+      reviewerSnapshot?: (
+        profile: import("../src/contracts").ReviewerProfile,
+      ) => Promise<import("./reviewer-config").ReviewerSnapshot>;
       branches?: { read?: BranchReader; intervalMs?: number };
     },
   ) {
@@ -97,9 +106,17 @@ export class Workspace {
         }
     }
     this.save();
-    this.advanceWorkerCloses();
+    this.advanceChildCloses();
     for (const a of this.state.agents) {
       if (a.closed || !a.threadId) continue;
+      // Prefeature Orcs capture the configured prompt on explicit restoration,
+      // not while startup is merely reconciling saved sessions.
+      if (
+        a.role === "orc" &&
+        a.orcPromptSnapshot === undefined &&
+        options.orcPrompt
+      )
+        continue;
       // Resume the original native thread without settings overrides; reconcile
       // before any queued subsequent turn, retaining the cache if unavailable.
       void this.serialize(a.id, async () => {
@@ -189,7 +206,7 @@ export class Workspace {
               title: q.header ?? "Question",
               text: q.question,
               options: q.options ?? [],
-              state: a.role === "worker" ? "delegated" : "unanswered",
+              state: a.role !== "orc" ? "delegated" : "unanswered",
               at: Date.now(),
             });
             newQuestions.push(id);
@@ -203,12 +220,12 @@ export class Workspace {
             turnId: event.turnId,
             at: Date.now(),
           });
-        if (a.role === "worker" && newQuestions.length) {
+        if (a.role !== "orc" && newQuestions.length) {
           const questions = a.questions.filter((q) =>
             newQuestions.includes(q.id),
           );
           const text =
-            `Worker “${a.title}” needs a decision. Worker ID: ${a.id}\n\n` +
+            `${a.role === "reviewer" ? "Reviewer" : "Worker"} “${a.title}” needs a decision. Agent ID: ${a.id}\n\n` +
             (item.text ? `${item.text}\n\n` : "") +
             questions
               .map(
@@ -295,7 +312,7 @@ export class Workspace {
       a.workingSince = undefined;
     }
     this.save();
-    this.advanceWorkerCloses();
+    this.advanceChildCloses();
   }
   previewDirectory(id: string) {
     const agent = this.state.agents.find((a) => a.id === id);
@@ -310,6 +327,8 @@ export class Workspace {
   private publicAgent(a: RuntimeAgent): Agent {
     const {
       token: _token,
+      reviewerSnapshot: _reviewerSnapshot,
+      orcPromptSnapshot: _orcPromptSnapshot,
       inheritSettings: _inheritSettings,
       restoreArchived: _restoreArchived,
       turnEnded: _turnEnded,
@@ -363,6 +382,13 @@ export class Workspace {
   async reconcileSettings(id: string) {
     return this.serialize(id, async () => {
       const a = this.agent(id);
+      // Passive selection/reconnect must not initialize a prefeature Orc.
+      if (
+        a.role === "orc" &&
+        a.orcPromptSnapshot === undefined &&
+        this.options.orcPrompt
+      )
+        return;
       const handle = await this.handle(a, false);
       const value = await handle.readSettings();
       if (this.disposed || a.closed || this.handles.get(id) !== handle) return;
@@ -382,6 +408,10 @@ export class Workspace {
   async updateSettings(id: string, value: { model: string; effort: string }) {
     return this.serialize(id, async () => {
       const a = this.agent(id);
+      if (a.role === "reviewer")
+        throw new Error(
+          "Reviewer model and effort belong to its captured profile",
+        );
       if (a.closeRequest) throw new Error("Session is closing");
       const handle = await this.handle(a, false);
       const current = await handle.readSettings();
@@ -486,7 +516,7 @@ export class Workspace {
     } finally {
       this.treeActions.delete(root.id);
       this.save();
-      this.advanceWorkerCloses();
+      this.advanceChildCloses();
     }
   }
   async weekly() {
@@ -541,7 +571,7 @@ export class Workspace {
     const owner = this.state.agents.find((a) => a.id === agent.ownerId);
     return {
       ...session,
-      title: agent.role === "worker" ? agent.title : session.title,
+      title: agent.role !== "orc" ? agent.title : session.title,
       role: agent.role,
       agentId: agent.id,
       closed: agent.closed,
@@ -671,13 +701,20 @@ export class Workspace {
         !sameDirectory(existing.project.path, project.path)
       )
         throw new Error("Session does not belong to this project directory");
-      if (existing?.role === "worker")
-        throw new Error("Continue this Worker through its original Orc");
+      if (existing && existing.role !== "orc")
+        throw new Error("Continue this owned agent through its original Orc");
       const restore = async () => {
-        if (existing && !existing.closed) return this.publicAgent(existing);
+        if (existing && !existing.closed) {
+          if (
+            existing.orcPromptSnapshot === undefined &&
+            this.options.orcPrompt
+          )
+            await this.handle(existing);
+          return this.publicAgent(existing);
+        }
         const session = await this.historySession(alias, threadId);
-        if (session.role === "worker")
-          throw new Error("Continue this Worker through its original Orc");
+        if (session.role !== "orc" && session.role !== "session")
+          throw new Error("Continue this owned agent through its original Orc");
         const workerDefaults = existing
           ? existing.workerDefaults
           : (await this.executionSettings(settings)).worker;
@@ -757,6 +794,7 @@ export class Workspace {
       title: "New session",
       ...captured.orc,
       workerDefaults: captured.worker,
+      orcPromptSnapshot: await this.options.orcPrompt?.(),
       state: "idle",
       closed: false,
       questions: [],
@@ -779,6 +817,14 @@ export class Workspace {
     if (!handle) {
       let opening = this.opening.get(a.id);
       if (!opening) {
+        if (
+          a.role === "orc" &&
+          a.orcPromptSnapshot === undefined &&
+          this.options.orcPrompt
+        ) {
+          a.orcPromptSnapshot = await this.options.orcPrompt();
+          this.save();
+        }
         let disconnected = false;
         opening = this.options.runtime
           .open(a, (event) => {
@@ -827,7 +873,7 @@ export class Workspace {
     void next
       .finally(() => {
         if (this.queues.get(id) === next) this.queues.delete(id);
-        this.advanceWorkerCloses();
+        this.advanceChildCloses();
       })
       .catch(() => {});
     return next;
@@ -843,7 +889,9 @@ export class Workspace {
   ) {
     if (this.disposed) throw new Error("Workspace is stopped");
     if (a.closeRequest && !questionIds.length)
-      throw new Error("Worker is awaiting closure and cannot accept new tasks");
+      throw new Error(
+        "Owned agent is awaiting closure and cannot accept new tasks",
+      );
     if (a.state === "stopping") {
       const queued = a.deliveries.find(
         (d) => d.id === requestId && d.status === "queued",
@@ -979,6 +1027,8 @@ export class Workspace {
     return this.detail(a.id);
   }
   retryDelivery(id: string, deliveryId: string) {
+    if (this.agent(id).role === "reviewer")
+      throw new Error("Continue Reviewer instructions through Orc");
     const delivery = this.agent(id).deliveries.find((d) => d.id === deliveryId);
     if (delivery?.source === "question" && delivery.status === "failed") {
       if (!delivery.answers)
@@ -1042,13 +1092,14 @@ export class Workspace {
   closeTree(id: string) {
     return this.serialize(id, async () => {
       const a = this.agent(id);
-      if (a.role !== "orc") throw new Error("Only Orc can close Workers");
+      if (a.role !== "orc")
+        throw new Error("Only Orc can close Workers and Reviewers");
       const workers = this.state.agents.filter(
         (w) => w.ownerId === id && !w.closed,
       );
       if (workers.length)
         throw new Error(
-          `Ask Orc to close its Workers first: ${workers.map((w) => w.title).join(", ")}`,
+          `Ask Orc to close its Workers and Reviewers first: ${workers.map((w) => w.title).join(", ")}`,
         );
       this.assertIdle(a);
       const handle = this.handles.get(id);
@@ -1063,7 +1114,7 @@ export class Workspace {
     return this.serialize(id, async () => {
       const a = this.agent(id);
       if (a.role !== "orc")
-        throw new Error("Answer Worker questions through Orc");
+        throw new Error("Answer owned agent questions through Orc");
       const frozen = answers.map((answer) => ({
         questionId: answer.questionId,
         answer: answer.answer.trim(),
@@ -1134,10 +1185,16 @@ export class Workspace {
     const a = this.authenticated(token);
     return { id: a.id, role: a.role, tools: [...roleTools[a.role]] };
   }
-  private ownedWorker(owner: RuntimeAgent, id: string) {
+  private ownedChild(
+    owner: RuntimeAgent,
+    id: string,
+    role: "worker" | "reviewer",
+  ) {
     const w = this.agent(id);
-    if (w.role !== "worker" || w.ownerId !== owner.id)
-      throw new Error("Worker does not belong to this Orc");
+    if (w.role !== role || w.ownerId !== owner.id)
+      throw new Error(
+        `${role === "reviewer" ? "Reviewer" : "Worker"} does not belong to this Orc`,
+      );
     return w;
   }
   async tool(token: string, name: string, args: unknown): Promise<unknown> {
@@ -1145,8 +1202,13 @@ export class Workspace {
     if (!(roleTools[a.role] as readonly string[]).includes(name))
       throw new Error("Tool is not available to this role");
     switch (name) {
+      case "reviewer_start":
       case "worker_start": {
-        const input = z.object(toolDefinitions.worker_start.shape).parse(args);
+        const isReviewer = name === "reviewer_start";
+        const input = z.object(toolDefinitions[name].shape).parse(args);
+        const review = isReviewer
+          ? z.object(toolDefinitions.reviewer_start.shape).parse(args)
+          : undefined;
         return this.serialize(a.id, async () => {
           this.agent(a.id);
           const project = (await this.projects()).find(
@@ -1156,7 +1218,7 @@ export class Workspace {
           const w: RuntimeAgent = {
             id: crypto.randomUUID(),
             token: crypto.randomUUID(),
-            role: "worker",
+            role: isReviewer ? "reviewer" : "worker",
             ownerId: a.id,
             project,
             title: input.title,
@@ -1171,41 +1233,77 @@ export class Workspace {
             messages: [],
             deliveries: [],
           };
+          if (review) {
+            if (!this.options.reviewerSnapshot)
+              throw new Error("Reviewer configuration is unavailable");
+            const snapshot = await this.options.reviewerSnapshot(
+              review.profile,
+            );
+            w.reviewerSnapshot = snapshot;
+            w.model = snapshot.model;
+            w.effort = snapshot.effort;
+            w.reviewTarget = {
+              profile: review.profile,
+              spec: review.spec,
+              fixedPoint: review.fixedPoint,
+              reviewedHead: review.reviewedHead,
+            };
+          }
           {
             const model = (await this.models()).find((m) => m.id === w.model);
-            if (!model) throw new Error("Worker model is unavailable");
+            if (!model || !model.efforts.includes(w.effort))
+              throw new Error(
+                "Assigned model or reasoning effort is unavailable",
+              );
             w.serviceTier =
               (a.treeFast ?? a.serviceTier !== "default")
                 ? (model.fastTier ?? "default")
                 : "default";
           }
+          const assignment = `Assigned spec: ${input.spec}\n${review ? `Review target: ${reviewTargetText(w.reviewTarget!)}\n` : ""}\n${input.message}`;
+          if (assignment.length > 100_000)
+            throw new Error(
+              "Message is too long, including the assignment target",
+            );
           this.state.agents.push(w);
           this.save();
           try {
             await this.handle(w);
           } catch (error) {
+            if (isReviewer) {
+              w.state = "error";
+              w.error = `Reviewer thread startup unconfirmed: ${String(error)}. Inspect this Reviewer before replacing the axis; do not replay start.`;
+              this.save();
+              return this.detail(w.id);
+            }
             w.closed = true;
             this.save();
             throw error;
           }
-          await this.deliver(
-            w,
-            `Assigned spec: ${input.spec}\n\n${input.message}`,
-            crypto.randomUUID(),
-            "worker",
-          );
+          await this.deliver(w, assignment, crypto.randomUUID(), "worker");
           return this.detail(w.id);
         });
       }
+      case "reviewer_list":
       case "worker_list": {
-        z.object(toolDefinitions.worker_list.shape).parse(args);
+        z.object(toolDefinitions[name].shape).parse(args);
         return this.state.agents
-          .filter((w) => w.role === "worker" && w.ownerId === a.id && !w.closed)
+          .filter(
+            (w) =>
+              w.role === (name === "reviewer_list" ? "reviewer" : "worker") &&
+              w.ownerId === a.id &&
+              !w.closed,
+          )
           .map((w) => this.publicAgent(w));
       }
+      case "reviewer_read":
       case "worker_read": {
-        const input = z.object(toolDefinitions.worker_read.shape).parse(args);
-        const w = this.ownedWorker(a, input.workerId);
+        const input = z.object(toolDefinitions[name].shape).parse(args);
+        const w = this.ownedChild(
+          a,
+          "workerId" in input ? input.workerId : input.reviewerId,
+          name === "worker_read" ? "worker" : "reviewer",
+        );
         const end = input.before
           ? w.messages.findIndex((m) => m.id === input.before)
           : w.messages.length;
@@ -1213,50 +1311,116 @@ export class Workspace {
         const start = Math.max(0, end - (input.limit ?? 20));
         const messages = structuredClone(w.messages.slice(start, end));
         return {
-          worker: this.publicAgent(w),
+          [w.role]: this.publicAgent(w),
           messages,
           hasMore: start > 0,
           nextBefore: start > 0 ? messages[0]?.id : null,
         };
       }
+      case "reviewer_send":
       case "worker_send": {
-        const input = z.object(toolDefinitions.worker_send.shape).parse(args);
-        const w = this.ownedWorker(a, input.workerId);
+        const input = z.object(toolDefinitions[name].shape).parse(args);
+        const w = this.ownedChild(
+          a,
+          "workerId" in input ? input.workerId : input.reviewerId,
+          name === "worker_send" ? "worker" : "reviewer",
+        );
         for (const id of input.questionIds ?? [])
           if (!w.questions.some((q) => q.id === id && q.state === "delegated"))
             throw new Error("Delegated question not found");
-        return this.serialize(w.id, () =>
-          this.deliver(
-            this.agent(w.id),
-            input.message,
+        return this.serialize(w.id, async () => {
+          this.agent(w.id);
+          if (w.role === "reviewer" && !w.threadId)
+            throw new Error(
+              "Reviewer thread startup is unconfirmed; inspect native history before replacing this axis",
+            );
+          const previous = w.reviewTarget;
+          let text = input.message;
+          if ("reviewedHead" in input) {
+            const target = {
+              profile: previous!.profile,
+              spec: input.spec,
+              fixedPoint: input.fixedPoint,
+              reviewedHead: input.reviewedHead,
+            };
+            if (
+              w.closeRequest &&
+              JSON.stringify(target) !== JSON.stringify(previous)
+            )
+              throw new Error(
+                "Closing Reviewer cannot accept a new review target",
+              );
+            if (w.closeRequest && !input.questionIds?.length)
+              throw new Error(
+                "Closing Reviewer only accepts delegated answers",
+              );
+            text = `Review target: ${reviewTargetText(target)}\n\n${input.message}`;
+            if (text.length > 100_000)
+              throw new Error(
+                "Message is too long, including the review target",
+              );
+            w.reviewTarget = target;
+            this.save();
+          }
+          await this.deliver(
+            w,
+            text,
             crypto.randomUUID(),
             "worker",
             input.questionIds,
-          ),
-        );
+          );
+          if (w.deliveries.at(-1)?.status === "failed") {
+            w.reviewTarget = previous;
+            this.save();
+          }
+          return this.detail(w.id);
+        });
       }
+      case "reviewer_close":
       case "worker_close": {
-        const input = z.object(toolDefinitions.worker_close.shape).parse(args);
-        const w = this.ownedWorker(a, input.workerId);
+        const input = z.object(toolDefinitions[name].shape).parse(args);
+        const w = this.ownedChild(
+          a,
+          "workerId" in input ? input.workerId : input.reviewerId,
+          name === "worker_close" ? "worker" : "reviewer",
+        );
         if (this.treeActions.has(a.id))
           throw new Error("Tree settings are being saved");
         if (input.confirmInterrupted && (w.state !== "error" || w.turnId))
           throw new Error(
-            "Only an interrupted Worker with no observed active turn can be confirmed",
+            "Only an interrupted owned agent with no observed active turn can be confirmed",
           );
         w.closeRequest ??= {
           reason: "Waiting for current work to finish",
         };
         if (input.confirmInterrupted) w.turnEnded = true;
-        this.failedWorkerCloses.delete(w.id);
+        this.failedChildCloses.delete(w.id);
         this.save();
-        await this.advanceWorkerCloses();
+        await this.advanceChildCloses();
         return {
           closed: w.closed,
           closing: !w.closed,
-          workerId: w.id,
+          [w.role === "worker" ? "workerId" : "reviewerId"]: w.id,
           reason: w.closed ? undefined : w.closeRequest.reason,
         };
+      }
+      case "reviewer_report": {
+        const input = z
+          .object(toolDefinitions.reviewer_report.shape)
+          .parse(args);
+        if (
+          input.reviewedHead !== a.reviewTarget?.reviewedHead ||
+          input.fixedPoint !== a.reviewTarget?.fixedPoint ||
+          input.spec !== a.reviewTarget?.spec
+        )
+          throw new Error(
+            "Report HEAD/spec/fixed point does not match current review target",
+          );
+        return this.report(
+          a,
+          `Reviewer “${a.title}” reports (${reviewTargetText(a.reviewTarget!)}):\n\n${input.message}`,
+          crypto.randomUUID(),
+        );
       }
       case "worker_report": {
         const input = z.object(toolDefinitions.worker_report.shape).parse(args);
@@ -1270,35 +1434,43 @@ export class Workspace {
   }
   private async report(worker: RuntimeAgent, text: string, requestId: string) {
     if (text.length > 100_000)
-      throw new Error(
-        "Message is too long, including the Worker report header",
-      );
+      throw new Error("Message is too long, including the report header");
     const owner = this.agent(worker.ownerId!);
     owner.deliveries.push({
       id: requestId,
       text,
-      source: "worker",
-      reportingWorkerId: worker.id,
+      source: worker.role === "reviewer" ? "reviewer" : "worker",
+      ...(worker.role === "reviewer"
+        ? {
+            reportingReviewerId: worker.id,
+            reviewTarget: structuredClone(worker.reviewTarget),
+          }
+        : { reportingWorkerId: worker.id }),
       status: "queued",
       questionIds: [],
       at: Date.now(),
     });
     this.save();
     return this.serialize(owner.id, () =>
-      this.deliver(this.agent(owner.id), text, requestId, "worker"),
+      this.deliver(
+        this.agent(owner.id),
+        text,
+        requestId,
+        worker.role === "reviewer" ? "reviewer" : "worker",
+      ),
     );
   }
-  private async advanceWorkerCloses() {
+  private async advanceChildCloses() {
     if (this.disposed) return;
     let changed = false;
     const releases: Promise<void>[] = [];
     for (const w of this.state.agents) {
       if (
-        w.role !== "worker" ||
+        w.role === "orc" ||
         w.closed ||
         !w.closeRequest ||
-        this.closingWorkers.has(w.id) ||
-        this.failedWorkerCloses.has(w.id)
+        this.closingChildren.has(w.id) ||
+        this.failedChildCloses.has(w.id)
       )
         continue;
       let reason: string | undefined;
@@ -1307,18 +1479,20 @@ export class Workspace {
         this.queues.has(w.id) ||
         this.opening.has(w.id)
       )
-        reason = "Waiting for in-flight Worker operations";
+        reason = "Waiting for in-flight owned agent operations";
       else if (
         w.deliveries.some((d) =>
           ["queued", "sending", "uncertain"].includes(d.status),
         )
       )
-        reason = "Waiting for Worker delivery confirmation";
+        reason = "Waiting for owned agent delivery confirmation";
       else if (
         this.state.agents
           .find((a) => a.id === w.ownerId)
           ?.deliveries.some(
-            (d) => d.reportingWorkerId === w.id && d.status !== "sent",
+            (d) =>
+              (d.reportingWorkerId ?? d.reportingReviewerId) === w.id &&
+              d.status !== "sent",
           )
       )
         reason =
@@ -1333,7 +1507,7 @@ export class Workspace {
         reason =
           w.state === "working"
             ? "Waiting for current work to finish"
-            : "Current turn outcome is unconfirmed; inspect the Worker before resolving closure";
+            : "Current turn outcome is unconfirmed; inspect the owned agent before resolving closure";
       if (reason) {
         if (w.closeRequest.reason !== reason) {
           w.closeRequest.reason = reason;
@@ -1341,20 +1515,23 @@ export class Workspace {
         }
         continue;
       }
-      this.closingWorkers.add(w.id);
+      this.closingChildren.add(w.id);
       releases.push(
         (async () => {
           try {
-            await this.handles.get(w.id)?.close();
+            const handle = w.threadId
+              ? await this.handle(w, false)
+              : this.handles.get(w.id);
+            await handle?.close();
             if (this.disposed) return;
             this.handles.delete(w.id);
             w.closed = true;
           } catch (error) {
             if (this.disposed) return;
-            this.failedWorkerCloses.add(w.id);
-            w.closeRequest!.reason = `Native thread release failed: ${String(error)}. Retry Worker close.`;
+            this.failedChildCloses.add(w.id);
+            w.closeRequest!.reason = `Native thread release failed: ${String(error)}. Retry ${w.role} close.`;
           } finally {
-            this.closingWorkers.delete(w.id);
+            this.closingChildren.delete(w.id);
             this.save();
           }
         })(),
@@ -1378,9 +1555,11 @@ export class Workspace {
         `${a.title} is still working or has an unconfirmed delivery`,
       );
     if (
-      a.role === "worker" &&
+      a.role !== "orc" &&
       this.agent(a.ownerId!).deliveries.some(
-        (d) => d.reportingWorkerId === a.id && d.status !== "sent",
+        (d) =>
+          (d.reportingWorkerId ?? d.reportingReviewerId) === a.id &&
+          d.status !== "sent",
       )
     )
       throw new Error(`${a.title} has an undelivered report to Orc`);

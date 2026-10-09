@@ -831,6 +831,8 @@ async function handle(request) {
           },
         ],
       };
+    case "skills/extraRoots/set":
+      return {};
     case "skills/list":
       return {
         data: [

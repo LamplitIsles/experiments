@@ -24,6 +24,7 @@ function qualified<T extends Agent>(host: Host, a: T): T {
   const publicAgent: Agent = {
     id: qualify(host.id, a.id),
     role: a.role,
+    reviewTarget: a.reviewTarget,
     ownerId: a.ownerId ? qualify(host.id, a.ownerId) : undefined,
     project: a.project,
     directoryBranch: a.directoryBranch,
@@ -56,6 +57,9 @@ function qualified<T extends Agent>(host: Host, a: T): T {
       messages: detail.messages,
       deliveries: detail.deliveries.map((d) => ({
         ...d,
+        reportingReviewerId: d.reportingReviewerId
+          ? qualify(host.id, d.reportingReviewerId)
+          : undefined,
         reportingWorkerId: d.reportingWorkerId
           ? qualify(host.id, d.reportingWorkerId)
           : undefined,

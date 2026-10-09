@@ -160,6 +160,7 @@
   "earlier_messages": "Load earlier messages",
   "history_you": "You",
   "history_assistant": "Assistant",
+  "history_reviewer_help": "Continue this Reviewer through its original Orc.",
   "history_worker_help": "Continue this Worker through its original Orc.",
   "view_owning_orc": "View owning Orc",
   "history_resume_help": "Continue the original conversation.",
