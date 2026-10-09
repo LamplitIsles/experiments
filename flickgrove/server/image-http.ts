@@ -109,8 +109,16 @@ export async function imageHttp(
       if (files.some((f) => !(f instanceof File)))
         throw new Error("Choose image files");
       const operation = url.searchParams.get("operation") ?? "";
-      const text = form.get("text");
-      if (typeof text !== "string") throw new Error("Missing message text");
+      const encodedText = form.get("text");
+      if (typeof encodedText !== "string")
+        throw new Error("Missing message text");
+      let text: unknown;
+      try {
+        text = JSON.parse(encodedText);
+      } catch {
+        throw new Error("Invalid message text");
+      }
+      if (typeof text !== "string") throw new Error("Invalid message text");
       const images = await service.uploadImages(
         agent,
         operation,

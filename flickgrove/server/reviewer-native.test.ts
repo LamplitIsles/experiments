@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CodexRuntime } from "./codex";
 import type { RuntimeAgent } from "./runtime";
+import { roleTools } from "./tools";
 
 test("strict native wire disables model-aware collaboration on all role starts and original-thread restores while retaining Grove MCP", async () => {
   const root = await mkdtemp(join(tmpdir(), "grove-reviewer-wire-"));
@@ -89,11 +90,31 @@ test("strict native wire disables model-aware collaboration on all role starts a
     await runtime.close();
     runtime = make();
     const restored = await runtime.open(a, () => {});
-    for (const agent of [b, c, d])
+    const restoredResearch = await runtime.open(b, () => {});
+    for (const agent of [c, d])
       expect((await runtime.open(agent, () => {})).threadId).toBe(
         agent.threadId!,
       );
     expect(restored.threadId).toBe(a.threadId);
+    expect(restoredResearch.threadId).toBe(b.threadId);
+    for (const handle of [restored, restoredResearch]) {
+      await handle.readSettings!();
+      await writeFile(
+        join(root, ".fake-app-server-control.json"),
+        JSON.stringify({
+          hold: true,
+          failUnsubscribeThreads: [handle.threadId],
+        }),
+      );
+      await expect(handle.close()).rejects.toThrow(
+        "fixture unsubscribe failed",
+      );
+      await writeFile(
+        join(root, ".fake-app-server-control.json"),
+        JSON.stringify({ hold: true }),
+      );
+      await handle.close();
+    }
     const requests = (
       await readFile(join(root, ".fake-app-server-requests.jsonl"), "utf8")
     )
@@ -107,7 +128,7 @@ test("strict native wire disables model-aware collaboration on all role starts a
     expect(starts).toHaveLength(4);
     for (const r of starts) {
       expect(r.params.sandbox).toBe(
-        r === starts[0] ? "read-only" : "danger-full-access",
+        starts.indexOf(r) < 2 ? "read-only" : "danger-full-access",
       );
       expect(r.params.config.model_reasoning_effort).toBe("medium");
       expect(r.params.model).toBe("fixture-model");
@@ -116,7 +137,41 @@ test("strict native wire disables model-aware collaboration on all role starts a
       (r) => r.method === "thread/resume" && r.params.developerInstructions,
     );
     expect(resumes).toHaveLength(4);
-    for (const r of [...starts, ...resumes]) {
+    const metadataResumes = requests.filter(
+      (r) => r.method === "thread/resume" && !r.params.developerInstructions,
+    );
+    expect(metadataResumes).toHaveLength(4);
+    for (const r of metadataResumes) {
+      expect(r.params.config["mcp_servers.flickgrove"]).toEqual(
+        starts.find(
+          (start) =>
+            start.params.config["mcp_servers.flickgrove"].env
+              .FLICKGROVE_AGENT_TOKEN ===
+            r.params.config["mcp_servers.flickgrove"].env
+              .FLICKGROVE_AGENT_TOKEN,
+        )!.params.config["mcp_servers.flickgrove"],
+      );
+      expect(r.params.config.model_reasoning_effort).toBeUndefined();
+      expect(r.params.sandbox).toBe("read-only");
+      expect(r.params.approvalPolicy).toBe("never");
+    }
+    for (const [index, r] of [...starts, ...resumes].entries()) {
+      const owned = [a, b, c, d][index % 4];
+      const grove = r.params.config["mcp_servers.flickgrove"];
+      expect(grove.tools).toEqual(
+        Object.fromEntries(
+          roleTools[owned.role].map((name) => [
+            name,
+            { approval_mode: "approve" },
+          ]),
+        ),
+      );
+      expect(grove.enabled_tools).toEqual([...roleTools[owned.role]]);
+      expect(grove.env.FLICKGROVE_AGENT_TOKEN).toBe(owned.token);
+      expect(r.params.approvalPolicy).toBe("never");
+      expect(r.params.sandbox).toBe(
+        index % 4 < 2 ? "read-only" : "danger-full-access",
+      );
       expect(r.params.config).toMatchObject({
         "agents.enabled": false,
         "features.multi_agent": false,

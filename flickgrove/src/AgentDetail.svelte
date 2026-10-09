@@ -12,7 +12,7 @@
   import { questionPanels, setQuestionPanel } from "./question-state.svelte";
   import { navigation, setSurface, removeQuestionDrawer, back } from "./navigation.svelte";
   import { untrack } from "svelte";
-  import type { Answer, Agent, Detail, Skill, Message } from "./contracts";
+  import type { Answer, Agent, Detail, Skill, Message, Delivery } from "./contracts";
   import { elapsed } from "./api";
   import TitleEditor from "./TitleEditor.svelte";
   import Weekly from "./Weekly.svelte";
@@ -23,8 +23,23 @@
   import Composer from "./Composer.svelte";
   import Questions from "./Questions.svelte";
   import * as m from "./paraglide/messages";
-  let { detail, ready = true, tree, owner, skills, now, connected, mediaConnected, entryId, entryConnected, workers, lastSeen, actionError, closeError, onrefresh, onstop, onupdate, onrename, onclose, onopen, onsend, onanswer, onretry }: { detail: Detail; ready?: boolean; tree?: Agent; owner?: Agent; skills: Skill[]; now: number; connected: boolean; mediaConnected: boolean; entryId?: string; entryConnected: boolean; workers: Agent[]; lastSeen?: number; actionError: string; closeError?: string; onupdate: (value: Detail) => void; onrefresh: () => Promise<void>; onstop: () => Promise<boolean>; onrename: (title: string) => Promise<string | undefined>; onclose: () => void; onopen: (id: string) => void; onsend: (agentId: string, text: string, requestId: string, images?: ImageDraft[]) => Promise<boolean>; onanswer: (answers: Answer[], operationId: string) => Promise<void>; onretry: (id: string) => Promise<void>; } = $props();
+  let { detail, ready = true, tree, owner, skills, now, connected, mediaConnected, entryId, entryConnected, workers, lastSeen, actionError, closeError, onrefresh, onstop, onupdate, onrename, onclose, onopen, onsend, onanswer, onretry, onrecovered, ondeletefailed }: { detail: Detail; ready?: boolean; tree?: Agent; owner?: Agent; skills: Skill[]; now: number; connected: boolean; mediaConnected: boolean; entryId?: string; entryConnected: boolean; workers: Agent[]; lastSeen?: number; actionError: string; closeError?: string; onupdate: (value: Detail) => void; onrefresh: () => Promise<void>; onstop: () => Promise<boolean>; onrename: (title: string) => Promise<string | undefined>; onclose: () => void; onopen: (id: string) => void; onsend: (agentId: string, text: string, requestId: string, images?: ImageDraft[]) => Promise<boolean>; onanswer: (answers: Answer[], operationId: string) => Promise<void>; onretry: (id: string) => Promise<void>; onrecovered: (agentId:string,operationId:string) => void; ondeletefailed: (agentId:string,operationId:string) => Promise<void>; } = $props();
   let composer = $state<Composer>();
+  let recovering = $state(false);
+  async function recoverDelivery(delivery:Delivery) {
+    if(recovering || submissionResult(delivery)!=="rejected")return;
+    const agentId=detail.id;
+    const count=delivery.images?.length ?? detail.messages.find(m=>m.id===delivery.id)?.localImageIds?.length ?? 0;
+    recovering=true;
+    try {
+      if(count)await restoreImages(agentId,delivery.id,delivery.text,count);
+      else { if(!composer)throw new Error("Open the original conversation to restore this message."); await composer.recover(delivery.text); }
+      await ondeletefailed(agentId,delivery.id);
+      composer?.imageRecoveryError("");
+      onrecovered(agentId,delivery.id);
+    }catch(e){composer?.imageRecoveryError((e as Error).message);}
+    finally{recovering=false;}
+  }
   let timeline = $state<ConversationTimeline>();
   let follow = $state(true);
   let pinnedImage = $state<string>();
@@ -105,7 +120,7 @@
       </div>{/if}
     {/snippet}
     {#snippet footer()}
-    {#each detail.deliveries.filter(d => d.source !== "question" && (submissionResult(d) === "rejected" || ((d.source === "worker" || d.source === "reviewer" || d.source === "researcher") && d.status === "uncertain"))) as delivery}<details class="delivery-error"><summary>{delivery.error}</summary>{#if delivery.source !== 'user'}<p>{delivery.text}</p>{/if}{#if delivery.source === "user" && detail.role === "orc"}<Button variant="ghost" size="sm" onclick={() => delivery.images?.length || detail.messages.find(m=>m.id===delivery.id)?.localImageIds?.length ? restoreImages(detail.id,delivery.id,delivery.text).catch(e=>composer?.imageRecoveryError(e.message)) : composer?.recover(delivery.text)}>{m.restore_message()}</Button>{/if}{#if detail.role !== "reviewer" && detail.role !== "researcher" && (delivery.source === "worker" || delivery.source === "reviewer" || delivery.source === "researcher") && submissionResult(delivery) === "rejected"}<Button variant="ghost" size="sm" disabled={!connected} onclick={() => onretry(delivery.id)}>{m.retry()}</Button>{/if}</details>{/each}
+    {#each detail.deliveries.filter(d => d.source !== "question" && (submissionResult(d) === "rejected" || ((d.source === "worker" || d.source === "reviewer" || d.source === "researcher") && d.status === "uncertain"))) as delivery}<details class="delivery-error"><summary>{delivery.error}</summary>{#if delivery.source !== 'user'}<p>{delivery.text}</p>{/if}{#if delivery.source === "user" && detail.role === "orc"}<Button variant="ghost" size="sm" disabled={recovering} onclick={() => recoverDelivery(delivery)}>{m.restore_message()}</Button>{/if}{#if detail.role !== "reviewer" && detail.role !== "researcher" && (delivery.source === "worker" || delivery.source === "reviewer" || delivery.source === "researcher") && submissionResult(delivery) === "rejected"}<Button variant="ghost" size="sm" disabled={!connected} onclick={() => onretry(delivery.id)}>{m.retry()}</Button>{/if}</details>{/each}
     {#if ready && actionError}<div class="host-outage" role="alert"><p>{actionError}</p><Button variant="ghost" size="sm" onclick={() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus()}>{m.message_orc()}</Button></div>{/if}
     {#if detail.stop?.status === "confirmed"}<p class="stop-confirmed" role="status">{m.stop_confirmed()}</p>{:else if detail.stop?.status === "unknown"}<p class="host-outage" role="status">{m.stop_unknown()} <Button variant="ghost" size="sm" onclick={onrefresh}>{m.retry_connection()}</Button></p>{:else if detail.stop?.status === "completed"}<p role="status">{m.stop_completed()}</p>{/if}
     {/snippet}

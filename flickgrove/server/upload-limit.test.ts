@@ -55,7 +55,7 @@ test("production HTTP listener admits legal image bodies and rejects excess", as
     expect(file.size * 5).toBeLessThanOrEqual(MESSAGE_IMAGE_BYTES);
     const form = (files: File[], text = "") => {
       const body = new FormData();
-      body.set("text", text);
+      body.set("text", JSON.stringify(text));
       for (const f of files) body.append("images", f);
       return body;
     };
@@ -72,7 +72,7 @@ test("production HTTP listener admits legal image bodies and rejects excess", as
     const batch = await fetch(url("batch"), {
       method: "POST",
       headers,
-      body: form(Array(5).fill(file), "ࠀ".repeat(100_000)),
+      body: form(Array(5).fill(file), "\u0000".repeat(100_000)),
     });
     expect(batch.status).toBe(200);
     expect((await batch.json()).images).toHaveLength(5);

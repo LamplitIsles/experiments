@@ -49,10 +49,12 @@ for (const storageKey of Object.keys(localStorage)) {
   if (!storageKey.startsWith(prefix)) continue;
   try {
     const o = entry.parse(JSON.parse(localStorage.getItem(storageKey)!));
-    if (localStorage.getItem(storageKey + "/dismissed")) continue;
     saved.push({
       ...o,
-      status: submissionResult(o),
+      status: receiptAlreadyAccepted(o.agentId, o.id)
+        ? "accepted"
+        : submissionResult(o),
+      error: receiptAlreadyAccepted(o.agentId, o.id) ? undefined : o.error,
     });
   } catch {
     /* malformed device-owned cache supplies no facts */
@@ -147,7 +149,6 @@ export function observeOutgoing(detail: Detail) {
     )
       rememberAccepted(detail.id, delivery.id);
   outgoing.entries = outgoing.entries.filter((o) => {
-    if (localStorage.getItem(key(o) + "/dismissed")) return false;
     if (o.agentId !== detail.id) return true;
     if (detail.messages.some((m) => m.role === "user" && m.id === o.id)) {
       rememberAccepted(o.agentId, o.id);
@@ -193,20 +194,12 @@ export function unknownOutgoing(agentId: string, id: string, error: string) {
   }
 }
 export function withOutgoing(detail: Detail): Detail {
-  void dismissedVersion.value;
-  const dismissed = (id: string) =>
-    !!localStorage.getItem(
-      `${prefix}${encodeURIComponent(detail.id)}/${encodeURIComponent(id)}/dismissed`,
-    );
   const local = outgoing.entries.filter(
     (o) =>
-      o.agentId === detail.id &&
-      !dismissed(o.id) &&
-      !detail.messages.some((m) => m.id === o.id),
+      o.agentId === detail.id && !detail.messages.some((m) => m.id === o.id),
   );
   const unobserved = detail.deliveries.filter(
     (d) =>
-      !dismissed(d.id) &&
       (d.source === "user" || d.source === "question") &&
       !detail.messages.some((m) => m.id === d.id) &&
       !local.some((o) => o.id === d.id),
@@ -251,7 +244,7 @@ export function withOutgoing(detail: Detail): Detail {
     ],
     deliveries: [
       ...detail.deliveries
-        .filter((d) => !dismissed(d.id) && !local.some((o) => o.id === d.id))
+        .filter((d) => !local.some((o) => o.id === d.id))
         .map((d) =>
           receiptAlreadyAccepted(detail.id, d.id)
             ? { ...d, status: "sent" as const, error: undefined }
@@ -272,15 +265,17 @@ export function withOutgoing(detail: Detail): Detail {
   };
 }
 
-const dismissedVersion = $state({ value: 0 });
 window.addEventListener("storage", (event) => {
   if (!event.key?.startsWith(prefix)) return;
-  dismissedVersion.value++;
-  if (event.key.endsWith("/dismissed")) {
-    outgoing.entries = outgoing.entries.filter(
-      (o) => !localStorage.getItem(key(o) + "/dismissed"),
-    );
-    return;
+  if (!event.newValue && event.oldValue) {
+    const previous = entry.safeParse(JSON.parse(event.oldValue));
+    if (previous.success && previous.data.status === "failed")
+      outgoing.entries = outgoing.entries.filter(
+        (o) =>
+          key(o) !== event.key ||
+          o.status !== "rejected" ||
+          receiptAlreadyAccepted(o.agentId, o.id),
+      );
   }
   if (event.newValue) {
     try {
@@ -288,9 +283,9 @@ window.addEventListener("storage", (event) => {
       const local = outgoing.entries.find(
         (o) => o.id === parsed.id && o.agentId === parsed.agentId,
       );
-      if (local && parsed.status === "sent") {
-        Object.assign(local, { ...parsed, status: "accepted" });
-        rememberAccepted(local.agentId, local.id);
+      if (parsed.status === "sent") {
+        if (local) Object.assign(local, { ...parsed, status: "accepted" });
+        rememberAccepted(parsed.agentId, parsed.id);
       }
     } catch {}
   }
@@ -308,4 +303,30 @@ export function setOutgoingImages(
     o.images = structuredClone(images);
     persist(o);
   }
+}
+
+export function deleteRejectedOutgoing(agentId: string, id: string) {
+  if (receiptAlreadyAccepted(agentId, id))
+    throw new Error("Accepted submissions cannot be deleted");
+  const local = outgoing.entries.find(
+    (o) => o.agentId === agentId && o.id === id,
+  );
+  if (local && (local.status !== "rejected" || local.answers))
+    throw new Error("Only a rejected user submission can be deleted");
+  const storageKey = `${prefix}${encodeURIComponent(agentId)}/${encodeURIComponent(id)}`;
+  const raw = localStorage.getItem(storageKey);
+  if (raw) {
+    const stored = entry.parse(JSON.parse(raw));
+    if (
+      stored.agentId !== agentId ||
+      stored.id !== id ||
+      stored.status !== "failed" ||
+      stored.answers
+    )
+      throw new Error("Only a rejected user submission can be deleted");
+  }
+  localStorage.removeItem(storageKey);
+  outgoing.entries = outgoing.entries.filter(
+    (o) => o.agentId !== agentId || o.id !== id,
+  );
 }

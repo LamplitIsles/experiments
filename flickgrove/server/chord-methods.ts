@@ -60,6 +60,10 @@ export async function invoke(app: HostService, member: Method, input: unknown) {
       const p = parse(member);
       return await app.lookup(p.id, p.operationId);
     }
+    case "deleteFailedSubmission": {
+      const p = parse(member);
+      return await app.deleteFailedSubmission(p.id, p.operationId);
+    }
     case "answerBatch": {
       const p = parse(member);
       return await app.answerBatch(p.id, p.answers, p.operationId);

@@ -126,9 +126,55 @@ for (const [name, viewport] of [
     await expect(page.locator(".delivery-error summary")).toHaveText(
       "Synthetic rejection",
     );
+    if (name === "desktop") {
+      const failDeletion = () => {
+        const remove = Storage.prototype.removeItem;
+        (window as any).allowDeletion = false;
+        Storage.prototype.removeItem = function (key) {
+          if (key.includes("/outgoing/") && !(window as any).allowDeletion)
+            throw new DOMException(
+              "Synthetic deletion failure",
+              "QuotaExceededError",
+            );
+          return remove.call(this, key);
+        };
+      };
+      await page.addInitScript(failDeletion);
+      await page.evaluate(failDeletion);
+    }
     await page.locator(".delivery-error summary").click();
     await page.getByRole("button", { name: "Restore to draft" }).click();
     await expect(input).toHaveValue("New draft\n\nRejected content");
+    if (name === "desktop") {
+      await expect(page.locator(".delivery-error")).toHaveCount(1);
+      await input.fill("New draft\n\nRejected content\nLater edit");
+      await page.getByRole("button", { name: "Restore to draft" }).click();
+      await expect(input).toHaveValue(
+        "New draft\n\nRejected content\nLater edit\n\nRejected content",
+      );
+      await page.reload();
+      await expect(input).toHaveValue(
+        "New draft\n\nRejected content\nLater edit\n\nRejected content",
+      );
+      await page.locator(".delivery-error summary").click();
+      await page.evaluate(() => ((window as any).allowDeletion = true));
+      await page.getByRole("button", { name: "Restore to draft" }).click();
+      await expect(input).toHaveValue(
+        "New draft\n\nRejected content\nLater edit\n\nRejected content\n\nRejected content",
+      );
+    }
+    await expect(page.locator(".delivery-error")).toHaveCount(0);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            Object.keys(localStorage).filter((k) => k.includes("/outgoing/"))
+              .length,
+        ),
+      )
+      .toBe(0);
+    await page.reload();
+    await expect(page.locator(".delivery-error")).toHaveCount(0);
     await page.screenshot({
       path: `../.scratch/flickgrove-results/send-rejected-${name}.png`,
       animations: "disabled",
@@ -142,7 +188,7 @@ for (const [name, viewport] of [
       .locator(".user-message")
       .filter({ hasText: "Unknown content" });
     await expect(pending.getByRole("status")).toHaveText("Sending…");
-    await expect(page.locator(".delivery-error")).toHaveCount(1); // Only the proven rejection.
+    await expect(page.locator(".delivery-error")).toHaveCount(0);
     await page.reload();
     await expect(pending.getByRole("status")).toHaveText("Sending…");
     await expect(

@@ -40,9 +40,16 @@ export async function loadImages(key: string): Promise<Record | undefined> {
   const database = await db();
   return result(database.transaction("drafts").objectStore("drafts").get(key));
 }
-let queue = Promise.resolve();
-export function saveImages(key: string, images: ImageDraft[], text = "") {
-  const snapshot = images.map((image) => ({ id: image.id, file: image.file }));
+let queue: Promise<unknown> = Promise.resolve();
+export function saveImages(
+  key: string,
+  images: ImageDraft[] | ((current: ImageDraft[]) => ImageDraft[]),
+  text = "",
+) {
+  const frozen =
+    typeof images === "function"
+      ? images
+      : images.map((image) => ({ id: image.id, file: image.file }));
   const work = queue
     .catch(() => {})
     .then(async () => {
@@ -51,6 +58,10 @@ export function saveImages(key: string, images: ImageDraft[], text = "") {
       const completion = done(tx);
       const store = tx.objectStore("drafts");
       const records: Record[] = await result(store.getAll());
+      const snapshot =
+        typeof frozen === "function"
+          ? frozen(records.find((r) => r.key === key)?.images ?? [])
+          : frozen;
       // Device-owned blob storage has an explicit aggregate bound. No media base64.
       const bytes =
         records
@@ -68,6 +79,7 @@ export function saveImages(key: string, images: ImageDraft[], text = "") {
       if (!snapshot.length && !text) store.delete(key);
       else store.put({ key, images: snapshot, text, at: Date.now() });
       await completion;
+      return snapshot;
     });
   queue = work;
   return work;
@@ -75,29 +87,41 @@ export function saveImages(key: string, images: ImageDraft[], text = "") {
 export const draftKey = (agent: string) => `draft/${agent}`;
 export const operationKey = (agent: string, operation: string) =>
   `operation/${agent}/${operation}`;
-export async function restoreImages(
+const restoring = new Map<string, Promise<void>>();
+export function restoreImages(
   agent: string,
   operation: string,
   text: string,
+  imageCount = 0,
 ) {
-  const original = await loadImages(operationKey(agent, operation));
-  const newer = await loadImages(draftKey(agent));
-  const combined = [
-    ...(newer?.images ?? []),
-    ...(original?.images ?? []).filter(
-      (i) => !newer?.images.some((n) => n.id === i.id),
-    ),
-  ];
-  // A recovery may contain a full older batch alongside a newer batch; no silent
-  // discard. The Composer asks the user to remove images before resubmitting.
-  const textKey = `${storagePrefix}/composer/${agent}`;
-  const newerText = localStorage.getItem(textKey) ?? "";
-  const recovered = newerText.trim() ? `${newerText}\n\n${text}` : text;
-  await saveImages(draftKey(agent), combined);
-  readingCache.writeDevice(textKey, recovered);
-  window.dispatchEvent(
-    new CustomEvent("grove-image-recovery", { detail: agent }),
-  );
+  const key = operationKey(agent, operation);
+  const pending = restoring.get(key);
+  if (pending) return pending;
+  const work = (async () => {
+    const original = await loadImages(operationKey(agent, operation));
+    if ((original?.images.length ?? 0) < imageCount)
+      throw new Error(
+        "Original images are unavailable on this device. Keep the failed message for recovery.",
+      );
+    // A recovery may contain a full older batch alongside a newer batch; no silent
+    // discard. The Composer asks the user to remove images before resubmitting.
+    const textKey = `${storagePrefix}/composer/${agent}`;
+    await saveImages(draftKey(agent), (newer) => [
+      ...newer,
+      ...(original?.images ?? []).filter(
+        (i) => !newer.some((n) => n.id === i.id),
+      ),
+    ]);
+    // Read the newest caption after asynchronous storage, immediately before writing.
+    const newerText = localStorage.getItem(textKey) ?? "";
+    const recovered = newerText.trim() ? `${newerText}\n\n${text}` : text;
+    readingCache.writeDevice(textKey, recovered);
+    window.dispatchEvent(
+      new CustomEvent("grove-image-recovery", { detail: agent }),
+    );
+  })().finally(() => restoring.delete(key));
+  restoring.set(key, work);
+  return work;
 }
 export function intakeError(current: ImageDraft[], files: File[]) {
   if (current.length + files.length > 5)

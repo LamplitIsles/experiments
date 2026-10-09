@@ -43,6 +43,138 @@ const defaults = {
   orc: { model: "sol", effort: "medium" },
   worker: { model: "sol", effort: "medium" },
 };
+test("HTTP upload and real Chord preserve a multiline caption exactly", async () => {
+  const directory = temp();
+  const runtime = new FakeRuntime();
+  const app = new Workspace({
+    directory,
+    runtime,
+    projects: async () => fixtureProjects,
+  });
+  let origin = "";
+  const service = new HostService(app, { directory, origin: () => origin });
+  const handler = createHandler(app, { service, origin: () => origin });
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    websocket: groveWebsocket,
+    fetch: (req, server) => {
+      const upgraded = createUpgrade(app, { service, origin: () => origin })(
+        req,
+        server,
+      );
+      return upgraded === true ? undefined : (upgraded ?? handler(req));
+    },
+  });
+  origin = `http://127.0.0.1:${server.port}`;
+  try {
+    const a = await service.createOrc("alpha", defaults);
+    const other = await service.createOrc("alpha", defaults);
+    const headers = { Origin: origin, "X-Grove-Peer": service.identity.id };
+    const file = await png();
+    for (const [index, text] of [
+      "",
+      "caption",
+      "a\nb",
+      "a\r\nb",
+      '中文\n"caption"\\\tend',
+      "a\r\u0000\ud800b",
+    ].entries()) {
+      const operationId = `caption-${index}`;
+      const form = new FormData();
+      form.set("text", JSON.stringify(text));
+      form.append("images", file);
+      form.append(
+        "images",
+        new File([await file.arrayBuffer()], "second.png", {
+          type: "image/png",
+        }),
+      );
+      const upload = await fetch(
+        `${origin}/api/images?agent=${a.id}&operation=${operationId}`,
+        {
+          method: "POST",
+          headers,
+          body: form,
+        },
+      );
+      expect(upload.status).toBe(200);
+      const refs = (await upload.json()).images;
+      const input = { text, operationId, images: refs };
+      for (const [id, changed] of [
+        [other.id, input],
+        [`wrong:${a.id}`, input],
+        [a.id, { ...input, operationId: `${operationId}-wrong` }],
+        [a.id, { ...input, text: `${text} changed` }],
+        [a.id, { ...input, images: [...refs].reverse() }],
+        [a.id, { ...input, images: [{ ...refs[0], width: 1 }, refs[1]] }],
+        [
+          a.id,
+          { ...input, images: [{ ...refs[0], id: "0".repeat(64) }, refs[1]] },
+        ],
+      ] as const) {
+        const refused = await callRoute(
+          origin,
+          `/api/agents/${id}/messages`,
+          changed,
+        );
+        expect(refused.status).toBe(400);
+        expect((await refused.json()).error).toContain(
+          id.startsWith("wrong:")
+            ? "another Peer"
+            : "Images do not belong to this conversation and operation",
+        );
+        expect(runtime.inputs).toHaveLength(index);
+      }
+      const manifest = JSON.parse(
+        readFileSync(join(app.images.directory, "index.json"), "utf8"),
+      );
+      expect(
+        manifest.find((u: { operation: string }) => u.operation === operationId)
+          .text,
+      ).toBe(text);
+      for (let duplicate = 0; duplicate < 2; duplicate++) {
+        const sent = await callRoute(
+          origin,
+          `/api/agents/${a.id}/messages`,
+          input,
+        );
+        const result = await sent.json();
+        expect(result).not.toHaveProperty("error");
+        expect(sent.status).toBe(200);
+      }
+      expect(runtime.inputs).toHaveLength(index + 1);
+      expect(runtime.inputs[index].text).toBe(text);
+      expect(runtime.inputs[index].images).toHaveLength(2);
+      expect(service.lookup(a.id, operationId)?.state).toBe("accepted");
+      const changed = await callRoute(origin, `/api/agents/${a.id}/messages`, {
+        ...input,
+        text: `${text} changed`,
+      });
+      expect(changed.status).toBe(400);
+      expect((await changed.json()).error).toContain("different content");
+    }
+    for (const encoded of ["not-json", "null", "42", "{}", "[]"]) {
+      const form = new FormData();
+      form.set("text", encoded);
+      form.append("images", file);
+      const refused = await fetch(
+        `${origin}/api/images?agent=${a.id}&operation=invalid`,
+        {
+          method: "POST",
+          headers,
+          body: form,
+        },
+      );
+      expect(refused.status).toBe(400);
+      expect((await refused.json()).error).toBe("Invalid message text");
+    }
+    expect(runtime.inputs).toHaveLength(6);
+  } finally {
+    server.stop(true);
+    app.dispose();
+  }
+});
 test("lossless full dimensions/RGBA and alpha; smaller only, separate bounded preview; persisted ownership and orphan cleanup", async () => {
   const directory = temp();
   let store = new ImageStore(directory);
@@ -191,7 +323,7 @@ test("direct cross-origin authorized HTTP upload/read/preflight on real socket a
     ).toBeNull();
     const file = await png();
     const form = new FormData();
-    form.set("text", "");
+    form.set("text", JSON.stringify(""));
     form.append("images", file);
     const upload = await fetch(
       `${origin}/api/images?agent=${a.id}&operation=one`,

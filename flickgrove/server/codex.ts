@@ -13,6 +13,7 @@ import { stat, readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nativeCollaborationConfig } from "./native-collaboration";
+import { roleTools } from "./tools";
 import { roleInstructions } from "./role-instructions";
 import { sameDirectory } from "./directory";
 import { nameThreadFromPrompt } from "./thread-title";
@@ -512,6 +513,31 @@ export class CodexRuntime implements Runtime {
           });
       }),
     ];
+    const sessionConfig = {
+      ...nativeCollaborationConfig,
+      "mcp_servers.flickgrove": {
+        command: process.execPath,
+        args: [fileURLToPath(new URL("./mcp.ts", import.meta.url))],
+        env: {
+          FLICKGROVE_ORIGIN: this.options.origin(),
+          FLICKGROVE_AGENT_TOKEN: agent.token,
+        },
+        enabled_tools: [...roleTools[agent.role]],
+        tools: Object.fromEntries(
+          roleTools[agent.role].map((name) => [
+            name,
+            { approval_mode: "approve" },
+          ]),
+        ),
+      },
+    };
+    const rolePermissions = {
+      approvalPolicy: "never" as const,
+      sandbox:
+        agent.role === "reviewer" || agent.role === "researcher"
+          ? ("read-only" as const)
+          : ("danger-full-access" as const),
+    };
     const params = {
       cwd: agent.project.path,
       model: agent.threadId || agent.inheritSettings ? undefined : agent.model,
@@ -519,25 +545,13 @@ export class CodexRuntime implements Runtime {
         agent.threadId || agent.inheritSettings
           ? undefined
           : (agent.serviceTier ?? "default"),
-      approvalPolicy: "never" as const,
-      sandbox:
-        agent.role === "reviewer"
-          ? ("read-only" as const)
-          : ("danger-full-access" as const),
+      ...rolePermissions,
       developerInstructions: roleInstructions(agent),
       config: {
         ...(agent.threadId || agent.inheritSettings
           ? {}
           : { model_reasoning_effort: agent.effort }),
-        ...nativeCollaborationConfig,
-        "mcp_servers.flickgrove": {
-          command: process.execPath,
-          args: [fileURLToPath(new URL("./mcp.ts", import.meta.url))],
-          env: {
-            FLICKGROVE_ORIGIN: this.options.origin(),
-            FLICKGROVE_AGENT_TOKEN: agent.token,
-          },
-        },
+        ...sessionConfig,
       },
     };
     let historyCursor: string | undefined;
@@ -614,9 +628,10 @@ export class CodexRuntime implements Runtime {
         // Loaded-thread resume returns its live config snapshot without rebuilding
         // or starting a turn. Keep collaboration disabled; no execution settings change.
         const value = await client.threadResume({
+          ...rolePermissions,
           threadId: id,
           excludeTurns: true,
-          config: nativeCollaborationConfig,
+          config: sessionConfig,
         });
         if (closed || this.threads.get(id) !== client)
           throw new Error("Session connection changed");
@@ -800,9 +815,10 @@ export class CodexRuntime implements Runtime {
                   resuming = true;
                   const resumed = await client.threadResume(
                     {
+                      ...rolePermissions,
                       threadId: id,
                       excludeTurns: true,
-                      config: nativeCollaborationConfig,
+                      config: sessionConfig,
                     },
                     options(),
                   );

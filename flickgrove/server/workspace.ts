@@ -1061,6 +1061,38 @@ export class Workspace {
     };
   }
 
+  deleteFailedSubmission(id: string, operationId: string) {
+    return this.serialize(id, async () => {
+      const a = this.agent(id);
+      const index = a.deliveries.findIndex((d) => d.id === operationId);
+      const d = a.deliveries[index];
+      if (
+        a.role !== "orc" ||
+        a.messages.some((m) => m.role === "user" && m.id === operationId) ||
+        (d && (d.source !== "user" || d.status !== "failed"))
+      )
+        throw new Error("Only a rejected user submission can be deleted");
+      if (!d) {
+        if (
+          this.state.agents.some(
+            (other) =>
+              other.id !== id &&
+              other.deliveries.some((d) => d.id === operationId),
+          )
+        )
+          throw new Error("Submission belongs to another conversation");
+        return this.detail(id); // Pre-admission rejection or already deleted, after queue drain.
+      }
+      a.deliveries.splice(index, 1);
+      try {
+        this.save();
+      } catch (error) {
+        a.deliveries.splice(index, 0, d);
+        throw error;
+      }
+      return this.detail(id);
+    });
+  }
   send(id: string, text: string, requestId: string, images?: MessageImage[]) {
     return this.serialize(id, async () => {
       const a = this.agent(id);

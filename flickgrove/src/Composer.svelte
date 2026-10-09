@@ -39,12 +39,12 @@
     preparing=true;
     try {
       for(const file of files){ const bitmap=await createImageBitmap(file); const valid=bitmap.width*bitmap.height<=40_000_000 && bitmap.width<=16383 && bitmap.height<=16383;bitmap.close();if(!valid)throw new Error("Image exceeds 40 megapixels or 16383 pixels per side."); }
-      const next=[...images,...files.map(file=>({id:crypto.randomUUID(),file}))];
-      await saveImages(draftKey(agentId),next); if(active){images=next;revision++;}
+      const added=files.map(file=>({id:crypto.randomUUID(),file}));
+      const next=await saveImages(draftKey(agentId),current=>[...current,...added]); if(active){images=next;revision++;}
     }catch(e){imageError=(e as Error).message;}finally{if(active)preparing=false;}
   }
   function removeImage(id:string) {
-    intake=intake.catch(()=>{}).then(async()=>{preparing=true;const next=images.filter(i=>i.id!==id);try{await saveImages(draftKey(agentId),next);if(active){images=next;revision++;}}catch(e){imageError=(e as Error).message;}finally{preparing=false;}});
+    intake=intake.catch(()=>{}).then(async()=>{preparing=true;try{const next=await saveImages(draftKey(agentId),current=>current.filter(i=>i.id!==id));if(active){images=next;revision++;}}catch(e){imageError=(e as Error).message;}finally{preparing=false;}});
   }
   function paste(e:ClipboardEvent) { const files=Array.from(e.clipboardData?.items ?? []).filter(i=>i.kind==='file' && i.type.startsWith('image/')).map(i=>i.getAsFile()).filter((i):i is File=>!!i);if(files.length){e.preventDefault();void addFiles(files);} }
 
@@ -54,7 +54,7 @@
     catch(e) { imageError=(e as Error).message; }
   });
   export function imageRecoveryError(value:string) {imageError=value;}
-  export function recover(value: string) { text = text.trim() ? `${text}\n\n${value}` : value; void tick().then(() => input?.focus()); }
+  export async function recover(value: string) { const next = text.trim() ? `${text}\n\n${value}` : value; readingCache.writeDevice(`${storagePrefix}/composer/${agentId}`,next); text=next; await tick(); input?.focus(); }
   async function restoreInput() { await tick(); input?.focus(); input?.setSelectionRange(insertion.start,insertion.end); }
   async function insertSkill(skill:Skill) {
     if(composing || stopping || preparing || !connected) return;
@@ -78,8 +78,7 @@
       if(frozen.length) await saveImages(operationKey(agentId,id),frozen,value);
       addOutgoing(agentId,value,id,undefined,undefined,frozen.map(i=>i.id));
       if(frozen.length){
-        const stored=await loadImages(draftKey(agentId));
-        if(JSON.stringify(stored?.images.map(i=>i.id) ?? [])===JSON.stringify(frozen.map(i=>i.id)))await saveImages(draftKey(agentId),[]);
+        await saveImages(draftKey(agentId),current=>JSON.stringify(current.map(i=>i.id))===JSON.stringify(frozen.map(i=>i.id)) ? [] : current);
       }
       try {
         if(localStorage.getItem(`${storagePrefix}/composer/${agentId}`)?.trim()===value)readingCache.writeDevice(`${storagePrefix}/composer/${agentId}`,'');

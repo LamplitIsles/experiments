@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CodexRuntime } from "./codex";
 import type { RuntimeAgent, RuntimeEvent } from "./runtime";
+import { roleTools } from "./tools";
 
 async function until(check: () => Promise<boolean> | boolean) {
   for (let i = 0; i < 150; i++) {
@@ -133,13 +134,23 @@ test("one managed process isolates concurrent threads, native requests, Stop/Clo
     );
     for (const r of configCalls) {
       if (r.method === "thread/resume" && !r.params.cwd) {
-        expect(r.params).toEqual({
+        expect(r.params).toMatchObject({
           threadId: ah.threadId,
           excludeTurns: true,
           config: {
             "agents.enabled": false,
             "features.multi_agent": false,
             "features.multi_agent_v2": false,
+            "mcp_servers.flickgrove": {
+              enabled_tools: [...roleTools.orc],
+              tools: Object.fromEntries(
+                roleTools.orc.map((name) => [
+                  name,
+                  { approval_mode: "approve" },
+                ]),
+              ),
+              env: { FLICKGROVE_AGENT_TOKEN: a.token },
+            },
           },
         });
         continue;

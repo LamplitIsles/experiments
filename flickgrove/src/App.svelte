@@ -20,7 +20,7 @@
   import { addOutgoing, observeOutgoing, outgoing, withOutgoing, acceptReceipt, unknownOutgoing, submissionResult } from "./outgoing.svelte";
   import { imageSchema } from "./chord-contract";
   import { restoreImages, type ImageDraft } from "./image-drafts";
-  import { receiptAlreadyAccepted, setOutgoingImages } from "./outgoing.svelte";
+  import { receiptAlreadyAccepted, setOutgoingImages, deleteRejectedOutgoing } from "./outgoing.svelte";
   import { observeQuestions, questionPanels, setQuestionPanel } from "./question-state.svelte";
   import HostFilter from "./HostFilter.svelte";
   import Hosts from "./Hosts.svelte";
@@ -271,11 +271,31 @@
   async function reconcilePending() {
     for(const pending of outgoing.entries) if(pending.status === 'pending') void lookup(pending.agentId,pending.id);
   }
+  let recoveryFailure = $state<{agentId:string; operationId:string; message:string} | null>(null);
+  function recoveryFailed(agentId:string,operationId:string,e:unknown) {
+    if(selectedId===agentId)recoveryFailure={agentId,operationId,message:(e as Error).message};
+  }
+  function recovered(agentId:string,operationId:string) {
+    if(recoveryFailure?.agentId===agentId && recoveryFailure.operationId===operationId)recoveryFailure=null;
+  }
+  async function deleteFailedSubmission(id:string,operationId:string) {
+    if(!client)throw new Error("Connect to the owning host to delete the failed submission.");
+    if(receiptAlreadyAccepted(id,operationId))throw new Error("Accepted submissions cannot be deleted");
+    const result=await client.call<Detail>("deleteFailedSubmission",{id,operationId});
+    observeOutgoing(result);
+    deleteRejectedOutgoing(id,operationId);
+    if(detail?.id===id)detail=result;
+  }
+  async function recoverImageRejection(id:string, operationId:string, text:string, count:number) {
+    await restoreImages(id,operationId,text,count);
+    await deleteFailedSubmission(id,operationId);
+    recovered(id,operationId);
+  }
   async function send(id: string, text: string, operationId: string, images: ImageDraft[] = []) {
     if (detail?.id !== id) return false;
     if (!client || !hosts.find(h=>h.id===id.split(':')[0])?.connected) {
       acceptReceipt(id,{operationId,state:"rejected",turnId:null,error:"Execution host disconnected before submission"});
-      try{await restoreImages(id,operationId,text);}catch(e){if(selectedId===id)error=(e as Error).message;}
+      try{await recoverImageRejection(id,operationId,text,images.length);}catch(e){recoveryFailed(id,operationId,e);}
       return false;
     }
     const connection = client;
@@ -284,7 +304,8 @@
     try {
       let refs;
       if(images.length){
-        const form=new FormData();form.set('text',text);for(const image of images)form.append('images',image.file,image.file.name);
+        // Multipart string fields normalize newlines; JSON preserves the Chord caption exactly.
+        const form=new FormData();form.set('text',JSON.stringify(text));for(const image of images)form.append('images',image.file,image.file.name);
         const response=await connection.media(id,`/api/images?agent=${encodeURIComponent(id)}&operation=${encodeURIComponent(operationId)}`,{method:'POST',body:form});
         const upload=await response.json();
         if(upload.agent!==id || upload.operation!==operationId)throw new Error("Image operation identity changed");
@@ -294,12 +315,12 @@
       const result=await connection.call<Detail>('send',{id,text,operationId,...(refs ? {images:refs} : {})});
       const delivery=result.deliveries.find(d=>d.id===operationId);
       observeOutgoing(result);
-      if(images.length && delivery && submissionResult(delivery)==='rejected' && !receiptAlreadyAccepted(id,operationId) && !detail?.messages.some(m=>m.id===operationId))try{await restoreImages(id,operationId,text);}catch(e){if(selectedId===id)error=(e as Error).message;}
+      if(images.length && delivery && submissionResult(delivery)==='rejected' && !receiptAlreadyAccepted(id,operationId) && !detail?.messages.some(m=>m.id===operationId))try{await recoverImageRejection(id,operationId,text,images.length);}catch(e){recoveryFailed(id,operationId,e);}
       if(!result.deliveries.some(d=>d.id===operationId))unknownOutgoing(id,operationId,m.sending());
     }catch(e){
       if((!submitted || e instanceof RequestRejected) && !receiptAlreadyAccepted(id,operationId)){
         acceptReceipt(id,{operationId,state:"rejected",turnId:null,error:e instanceof Error?e.message:m.load_failure()});
-        if(images.length)try{await restoreImages(id,operationId,text);}catch(recovery){if(selectedId===id)error=(recovery as Error).message;}
+        if(images.length)try{await recoverImageRejection(id,operationId,text,images.length);}catch(recovery){recoveryFailed(id,operationId,recovery);}
       }else unknownOutgoing(id,operationId,e instanceof Error?e.message:m.load_failure());
     }
     if(submitted)void lookup(id,operationId);
@@ -449,7 +470,7 @@
   {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !shownDetail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
   {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
   {#if error && !modal && !shownDetail}<div class="app-error" role="alert"><span>{error}</span><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => error = ""}><X /></Button></div>{/if}
-  {#if shownDetail && selectedId}{#key selectedId}<AgentDetail detail={shownDetail!} ready={!!detail} tree={shownDetail!.role === "orc" ? target : owner} {owner} {skills} {now} connected={hostConnected} mediaConnected={connected && hostConnected} entryId={snapshot.entryId} entryConnected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} onstop={stop} onupdate={result => { if (selectedId === result.id) detail = result; snapshot = { ...snapshot, agents: snapshot.agents.map(a => a.id === result.id ? { ...a, model: result.model, effort: result.effort, serviceTier: result.serviceTier } : a) }; }} onrename={rename} onrefresh={load} actionError={error} closeError={closeError?.id === shownDetail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} />{/key}{/if}
+  {#if shownDetail && selectedId}{#key selectedId}<AgentDetail detail={shownDetail!} ready={!!detail} tree={shownDetail!.role === "orc" ? target : owner} {owner} {skills} {now} connected={hostConnected} mediaConnected={connected && hostConnected} entryId={snapshot.entryId} entryConnected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} onstop={stop} onupdate={result => { if (selectedId === result.id) detail = result; snapshot = { ...snapshot, agents: snapshot.agents.map(a => a.id === result.id ? { ...a, model: result.model, effort: result.effort, serviceTier: result.serviceTier } : a) }; }} onrename={rename} onrefresh={load} onrecovered={recovered} ondeletefailed={deleteFailedSubmission} actionError={error || (recoveryFailure?.agentId===selectedId ? recoveryFailure.message : "")} closeError={closeError?.id === shownDetail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} />{/key}{/if}
 </main>
 
 <Dialog.Root open={modalOpen} onOpenChange={value => { if (!value && modal) void closeModal(); }}>

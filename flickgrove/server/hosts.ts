@@ -252,6 +252,12 @@ export class HostService {
   lookup(id: string, operationId: string) {
     return this.workspace.lookup(this.raw(id), operationId);
   }
+  async deleteFailedSubmission(id: string, operationId: string) {
+    return qualified(
+      this.local(),
+      await this.workspace.deleteFailedSubmission(this.raw(id), operationId),
+    );
+  }
   async stop(id: string, turnId: string) {
     return qualified(
       this.local(),

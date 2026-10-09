@@ -76,6 +76,71 @@ async function clipboard(page: Page, kind: "paste" | "drop") {
   );
 }
 for (const width of [1440, 390]) {
+  test(`multiline image caption survives browser HTTP upload and Chord send at ${width}`, async ({
+    page,
+    request,
+  }) => {
+    let uploaded: any;
+    let submitted: any;
+    page.on("response", async (response) => {
+      if (response.url().includes("/api/images?"))
+        uploaded = await response.json();
+    });
+    page.on("websocket", (socket) =>
+      socket.on("framesent", ({ payload }) => {
+        const frame = JSON.parse(String(payload));
+        if (frame.call?.member === "send") submitted = frame.call.args[0];
+      }),
+    );
+    await setup(page, request, width);
+    const before = (await (await request.get(origin + "/fixture/info")).json())
+      .inputs.length;
+    for (const text of ["a\nb", "ab", "Synthetic first line\nsecond line"]) {
+      uploaded = submitted = undefined;
+      await add(page);
+      await composer(page).fill(text);
+      await composer(page).press("Enter");
+      await expect.poll(() => !!submitted && !!uploaded).toBe(true);
+      expect(submitted.id).toBe(uploaded.agent);
+      expect(submitted.operationId).toBe(uploaded.operation);
+      expect(submitted.images).toEqual(uploaded.images);
+      expect(submitted.text).toBe(text);
+      const info = await (await request.get(origin + "/fixture/info")).json();
+      const stored = info.imageUploads.find(
+        (u: any) => u.operation === submitted.operationId,
+      );
+      expect(submitted.id).toBe(`${info.hub}:${stored.agent}`);
+      expect(stored.images).toEqual(submitted.images);
+      expect(stored.text).toBe(text);
+      await expect
+        .poll(
+          async () =>
+            (
+              await (await request.get(origin + "/fixture/info")).json()
+            ).inputs.filter(
+              (i: any) => i.text === text && i.images?.length === 1,
+            ).length,
+        )
+        .toBe(1);
+      await expect(
+        page.getByText(
+          "Images do not belong to this conversation and operation",
+          { exact: true },
+        ),
+      ).toHaveCount(0);
+      await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
+      await expect(page.locator(".image-draft")).toHaveCount(0);
+    }
+    await page.screenshot({
+      path: `../.scratch/flickgrove-image-ownership/screenshots/accepted-${width}.png`,
+    });
+    await page.reload();
+    expect(
+      (await (await request.get(origin + "/fixture/info")).json()).inputs,
+    ).toHaveLength(before + 3);
+  });
+}
+for (const width of [1440, 390]) {
   test(`images picker/paste/drag, persistent drafts, remove, limits, pure image and full size at ${width}`, async ({
     page,
     request,
@@ -320,7 +385,7 @@ test("slow upload binds original Peer/conversation while new draft remains isola
   await composer(page).press("Enter");
   await expect(
     page.locator(".delivery-error").filter({ hasText: "Synthetic rejection" }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(composer(page)).toHaveValue("Restore full message");
   await expect(page.locator(".image-draft")).toHaveCount(1);
   await page.screenshot({ path: `${shots}/desktop-image-failed.png` });
@@ -395,9 +460,7 @@ test("storage failure keeps complete editable draft; HTTP rejection merges newer
   await expect(composer(page)).toHaveValue(
     "Newer original-session draft\n\nNever discard this",
   );
-  await expect(page.locator(".delivery-error")).toContainText(
-    "Synthetic upload rejection",
-  );
+  await expect(page.locator(".delivery-error")).toHaveCount(0);
   await request.post(origin + "/fixture/change", {
     data: {
       question: true,
@@ -482,7 +545,7 @@ test("bounded local draft/pending/rejected previews retain original and edited r
   await page.unrouteAll({ behavior: "wait" });
   await expect(composer(page)).toHaveValue("Original rejected caption");
   await boundedPreview(page, ".image-draft img");
-  await boundedPreview(page, ".message-image img");
+  await expect(page.locator(".message-image")).toHaveCount(0);
   await composer(page).fill("Edited recovered caption");
   await page.reload();
   await expect(composer(page)).toHaveValue("Edited recovered caption");
@@ -852,3 +915,144 @@ for (const width of [1440, 390]) {
     ).toBeLessThanOrEqual(width);
   });
 }
+
+test("server image ownership rejection restores fully before deleting; failed recovery retains evidence", async ({
+  page,
+  request,
+}) => {
+  let release!: () => void;
+  let arrived!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const arrival = new Promise<void>((r) => (arrived = r));
+  let exactError = false;
+  await page.routeWebSocket("**/api/socket", (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage(async (raw) => {
+      const frame = JSON.parse(String(raw));
+      if (frame.call?.member === "send" && frame.call.args[0].images?.length) {
+        arrived();
+        await gate;
+        frame.call.args[0].text += " changed"; // Real validation refusal, no forged result.
+        server.send(JSON.stringify(frame));
+      } else server.send(raw);
+    });
+    server.onMessage((raw) => {
+      const frame = JSON.parse(String(raw));
+      if (
+        frame.type === "error" &&
+        frame.error ===
+          "Images do not belong to this conversation and operation"
+      )
+        exactError = true;
+      ws.send(raw);
+    });
+  });
+  await setup(page, request, 1440);
+  const before = (await (await request.get(origin + "/fixture/info")).json())
+    .inputs.length;
+  await add(page);
+  await composer(page).fill("Original\ncaption");
+  await composer(page).press("Enter");
+  await arrival;
+  await add(page);
+  await composer(page).fill("Newer draft");
+  await page.evaluate(() => {
+    const put = IDBObjectStore.prototype.put;
+    (window as any).allowRecovery = () => (IDBObjectStore.prototype.put = put);
+    IDBObjectStore.prototype.put = function (value: any, ...args: any[]) {
+      if (value.key.startsWith("draft/"))
+        throw new DOMException(
+          "Synthetic recovery failure",
+          "QuotaExceededError",
+        );
+      return put.call(this, value, ...(args as []));
+    };
+  });
+  release();
+  await expect.poll(() => exactError).toBe(true);
+  await expect(page.locator(".user-message [role=status]")).toHaveText(
+    "Needs attention",
+  );
+  await expect(composer(page)).toHaveValue("Newer draft");
+  await expect(page.locator(".image-draft")).toHaveCount(1);
+  await expect(page.locator(".delivery-error")).toContainText(
+    "Images do not belong",
+  );
+  const failDeletion = () => {
+    const remove = Storage.prototype.removeItem;
+    (window as any).allowDeletion = false;
+    Storage.prototype.removeItem = function (key) {
+      if (key.includes("/outgoing/") && !(window as any).allowDeletion)
+        throw new DOMException(
+          "Synthetic deletion failure",
+          "QuotaExceededError",
+        );
+      return remove.call(this, key);
+    };
+  };
+  await page.addInitScript(failDeletion);
+  await page.evaluate(failDeletion);
+  await page.evaluate(() => (window as any).allowRecovery());
+  await page.locator(".delivery-error summary").click();
+  await page.getByRole("button", { name: "Restore to draft" }).dblclick();
+  await expect(composer(page)).toHaveValue("Newer draft\n\nOriginal\ncaption");
+  await expect(page.locator(".image-draft")).toHaveCount(2);
+  await expect(page.locator(".delivery-error")).toHaveCount(1);
+  await composer(page).fill("Newer draft\n\nOriginal\ncaption\nLater edit");
+  await page.getByLabel("Choose message images").setInputFiles({
+    ...(await png()),
+    name: "later.png",
+  });
+  await expect(page.locator(".image-draft")).toHaveCount(3);
+  await page.getByRole("button", { name: "Restore to draft" }).click();
+  await expect(composer(page)).toHaveValue(
+    "Newer draft\n\nOriginal\ncaption\nLater edit\n\nOriginal\ncaption",
+  );
+  await expect(page.locator(".image-draft")).toHaveCount(3);
+  await page.reload();
+  await expect(composer(page)).toHaveValue(
+    "Newer draft\n\nOriginal\ncaption\nLater edit\n\nOriginal\ncaption",
+  );
+  await page.locator(".delivery-error summary").click();
+  await page.evaluate(() => ((window as any).allowDeletion = true));
+  await page.getByRole("button", { name: "Restore to draft" }).click();
+  await expect(composer(page)).toHaveValue(
+    "Newer draft\n\nOriginal\ncaption\nLater edit\n\nOriginal\ncaption\n\nOriginal\ncaption",
+  );
+  await expect(page.locator(".delivery-error")).toHaveCount(0);
+  await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
+  await expect(page.locator(".host-outage")).toHaveCount(0);
+  await page.screenshot({
+    path: "../.scratch/flickgrove-image-ownership/screenshots/recovered-1440.png",
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({
+    path: "../.scratch/flickgrove-image-ownership/screenshots/recovered-390.png",
+  });
+  await page.reload();
+  await expect(composer(page)).toHaveValue(
+    "Newer draft\n\nOriginal\ncaption\nLater edit\n\nOriginal\ncaption\n\nOriginal\ncaption",
+  );
+  await expect(page.locator(".image-draft")).toHaveCount(3);
+  await expect(page.locator(".delivery-error")).toHaveCount(0);
+  // Automatic image restoration also deletes only after successful recovery.
+  await page.evaluate(() => ((window as any).allowDeletion = true));
+  await composer(page).press("Enter");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          Object.keys(localStorage).filter((k) => k.includes("/outgoing/"))
+            .length,
+      ),
+    )
+    .toBe(0);
+  await expect(composer(page)).toHaveValue(
+    "Newer draft\n\nOriginal\ncaption\nLater edit\n\nOriginal\ncaption\n\nOriginal\ncaption",
+  );
+  await expect(page.locator(".image-draft")).toHaveCount(3);
+  await expect(page.locator(".delivery-error")).toHaveCount(0);
+  expect(
+    (await (await request.get(origin + "/fixture/info")).json()).inputs,
+  ).toHaveLength(before);
+});

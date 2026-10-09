@@ -13,8 +13,8 @@ import { imageSchema } from "../src/chord-contract";
 import type { MessageImage } from "../src/contracts";
 export const IMAGE_BYTES = 5 * 1024 * 1024;
 export const MESSAGE_IMAGE_BYTES = 20 * 1024 * 1024;
-// Bounded room for message text and multipart metadata in addition to image bytes.
-export const IMAGE_UPLOAD_BYTES = MESSAGE_IMAGE_BYTES + 500_000;
+// Up to 100,000 JSON-escaped UTF-16 units (600KB) plus multipart metadata.
+export const IMAGE_UPLOAD_BYTES = MESSAGE_IMAGE_BYTES + 700_000;
 export const PREVIEW_BYTES = 160_000;
 const hash = (value: string | Buffer) =>
   createHash("sha256").update(value).digest("hex");

@@ -531,3 +531,111 @@ test("passive Chord select and reconnect preserve prefeature Orc until explicit 
   );
   expect(runtime.settingsReads).toContain(a.id);
 });
+
+test("failed submission deletion is owning-Peer durable, serialized and rejected-user-only", async () => {
+  const f = fixture();
+  const a = await f.app.createOrc("alpha"),
+    b = await f.app.createOrc("alpha");
+  const id = qualify(f.service.identity.id, a.id),
+    other = qualify(f.service.identity.id, b.id);
+  const client = await f.client();
+  const remove = (target = id, operationId = "failed") =>
+    client.call<Detail>("deleteFailedSubmission", { id: target, operationId });
+  f.runtime.sendOverride = async () => {
+    throw new DeliveryRejected("Synthetic rejection");
+  };
+  await client.call("send", {
+    id,
+    text: "Rejected content",
+    operationId: "failed",
+  });
+  await expect(remove(`foreign:${a.id}`)).rejects.toThrow();
+  await expect(remove(other)).rejects.toThrow();
+  const save = (f.app as any).save;
+  (f.app as any).save = () => {
+    throw new Error("Synthetic delete save failure");
+  };
+  await expect(remove()).rejects.toThrow("Synthetic delete save failure");
+  (f.app as any).save = save;
+  expect(f.app.lookup(a.id, "failed")?.state).toBe("rejected");
+  expect((await remove()).deliveries).toHaveLength(0);
+  expect((await remove()).deliveries).toHaveLength(0);
+  expect((await remove(id, "local-rejected-only")).deliveries).toHaveLength(0);
+  const runtime = f.restart();
+  const fresh = await f.client();
+  expect(await fresh.call("lookup", { id, operationId: "failed" })).toBeNull();
+  const hold = Promise.withResolvers<string>();
+  runtime.sendOverride = async () => hold.promise;
+  const accepted = fresh.call("send", {
+    id,
+    text: "Accepted content",
+    operationId: "accepted",
+  });
+  await until(() => runtime.inputs.length === 1);
+  let settled = false;
+  const deleting = fresh
+    .call("deleteFailedSubmission", { id, operationId: "accepted" })
+    .then(
+      () => {
+        settled = true;
+        return "deleted";
+      },
+      (e) => {
+        settled = true;
+        return e.message;
+      },
+    );
+  await new Promise((r) => setTimeout(r, 10));
+  expect(settled).toBe(false);
+  hold.resolve("turn");
+  await accepted;
+  expect(await deleting).toBe("Only a rejected user submission can be deleted");
+  expect(
+    (await fresh.call<Detail>("detail", { id })).messages.some(
+      (m) => m.id === "accepted",
+    ),
+  ).toBe(true);
+  runtime.sendOverride = async () => {
+    throw new Error("Synthetic unknown admission");
+  };
+  await fresh.call("send", {
+    id,
+    text: "Unknown content",
+    operationId: "unknown",
+  });
+  await expect(
+    fresh.call("deleteFailedSubmission", { id, operationId: "unknown" }),
+  ).rejects.toThrow();
+  expect(await fresh.call("lookup", { id, operationId: "unknown" })).toBeNull();
+  expect(runtime.inputs.length).toBe(2);
+  runtime.sendOverride = undefined;
+  const token = runtime.agents.get(a.id)!.token;
+  const worker = (await f.app.tool(token, "worker_start", {
+    project: "alpha",
+    title: "Synthetic Worker",
+    spec: "test",
+    message: "Synthetic task",
+  })) as { id: string };
+  const workerToken = runtime.agents.get(worker.id)!.token;
+  runtime.sendOverride = async () => {
+    throw new DeliveryRejected("Synthetic report rejection");
+  };
+  await f.app.tool(workerToken, "worker_report", {
+    message: "Synthetic report",
+  });
+  const report = f.app
+    .detail(a.id)
+    .deliveries.find((d) => d.source === "worker")!;
+  await expect(
+    fresh.call("deleteFailedSubmission", { id, operationId: report.id }),
+  ).rejects.toThrow();
+  await expect(
+    fresh.call("deleteFailedSubmission", {
+      id: qualify(f.service.identity.id, worker.id),
+      operationId: "missing",
+    }),
+  ).rejects.toThrow();
+  expect(
+    f.app.detail(a.id).deliveries.find((d) => d.id === report.id)?.status,
+  ).toBe("failed");
+});

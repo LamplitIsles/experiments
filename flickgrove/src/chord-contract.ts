@@ -80,6 +80,9 @@ export const inputs = {
       "Write a message or choose an image",
     ),
   retryDelivery: z.object({ id, deliveryId: id }),
+  deleteFailedSubmission: z
+    .object({ id, operationId: z.string().min(1).max(120) })
+    .strict(),
   lookup: z.object({ id, operationId: z.string().min(1).max(120) }),
   answerBatch: z.object({
     id,

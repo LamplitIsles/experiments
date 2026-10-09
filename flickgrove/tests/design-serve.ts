@@ -9,7 +9,7 @@ import { temporaryGit, fixtureGit } from "../server/branch-testing";
 import { readDirectoryBranch } from "../server/directory-branches";
 import type { ServerWebSocket } from "bun";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Workspace } from "../server/workspace";
@@ -605,6 +605,12 @@ const server = Bun.serve({
         emptyUrl: emptyOrigin,
         emptyToken: empty.service.credential,
         inputs: current.runtime.inputs,
+        imageUploads: JSON.parse(
+          readFileSync(
+            join(current.app.images.directory, "index.json"),
+            "utf8",
+          ),
+        ),
       });
     if (url.pathname === "/fixture/change" && request.method === "POST") {
       const body = (await request.json()) as {

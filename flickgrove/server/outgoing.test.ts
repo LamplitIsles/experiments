@@ -54,7 +54,7 @@ test("pending lookup preserves identity and accepted results are monotonic", asy
           records.set(key, value);
         }, removeItem: key => records.delete(key)
       }, {ownKeys:()=>[...records.keys()],getOwnPropertyDescriptor:()=>({enumerable:true,configurable:true})})});
-      const {addOutgoing, acceptReceipt, observeOutgoing, outgoing, receiptAlreadyAccepted, withOutgoing, submissionResult} = await import("./outgoing.mjs");
+      const {addOutgoing, acceptReceipt, observeOutgoing, outgoing, receiptAlreadyAccepted, withOutgoing, submissionResult, deleteRejectedOutgoing} = await import("./outgoing.mjs");
       assert.deepEqual(outgoing.entries.map(o=>[o.id,o.status]),[["held","pending"],["unknown","pending"],["confirmed","accepted"],["refused","rejected"]]);
       assert.equal(JSON.stringify(outgoing.entries[0].images),JSON.stringify(images));
       assert.equal(JSON.stringify(outgoing.entries[0].answers),JSON.stringify([{questionId:"original",answer:"kept answer"}]));
@@ -62,6 +62,20 @@ test("pending lookup preserves identity and accepted results are monotonic", asy
       assert.equal(outgoing.entries[0].at,123);
       outgoing.entries = [];
       records.clear();
+      const failed = {id:"recovered",status:"failed",source:"user",text:"original",at:123,questionIds:[]};
+      const owner = {id:"peer:orc",messages:[],questions:[],deliveries:[failed]};
+      addOutgoing(owner.id,failed.text,failed.id);
+      acceptReceipt(owner.id,{operationId:failed.id,state:"rejected",turnId:null,error:"refused"});
+      acceptReceipt(owner.id,null);
+      deleteRejectedOutgoing(owner.id,failed.id);
+      assert.equal(records.has(prefix+failed.id),false);
+      assert.equal(outgoing.entries.length,0);
+      assert.equal(withOutgoing({...owner,deliveries:[]}).messages.length,0);
+      addOutgoing(owner.id,"pending","pending");
+      assert.throws(()=>deleteRejectedOutgoing(owner.id,"pending"), /Only a rejected/);
+      acceptReceipt(owner.id,{operationId:"pending",state:"accepted",turnId:"turn",error:null});
+      assert.throws(()=>deleteRejectedOutgoing(owner.id,"pending"), /Accepted/);
+      outgoing.entries=[];
       // No device-owned operation exists: owner observations still confirm its identity.
       for (const source of ["user", "question"]) {
         const id = "server-" + source;
