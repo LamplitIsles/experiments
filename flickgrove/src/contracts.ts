@@ -1,4 +1,15 @@
-export type Role = "orc" | "worker";
+export type Role = "orc" | "worker" | "reviewer";
+export type ReviewerProfile =
+  | "standards"
+  | "spec"
+  | "high_risk_spec"
+  | "penpot";
+export interface ReviewTarget {
+  profile: ReviewerProfile;
+  spec: string;
+  fixedPoint: string;
+  reviewedHead: string;
+}
 export type WorkState = "idle" | "working" | "stopping" | "error";
 export type Effort = string;
 export interface Project {
@@ -88,13 +99,16 @@ export interface Delivery {
   id: string;
   text: string;
   status: "queued" | "sending" | "sent" | "failed" | "uncertain";
-  source: "user" | "worker" | "question";
+  source: "user" | "worker" | "reviewer" | "question";
+  reportingReviewerId?: string;
+  reviewTarget?: ReviewTarget;
   reportingWorkerId?: string;
   questionIds: string[];
   error?: string;
   at: number;
 }
 export interface Agent {
+  reviewTarget?: ReviewTarget;
   treeFast?: boolean;
   treeFastBusy?: boolean;
   treeFastError?: string;

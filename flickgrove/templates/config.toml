@@ -1,0 +1,19 @@
+[reviewers.standards]
+model = "gpt-6-luna"
+reasoning_effort = "high"
+prompt_file = "prompts/standards.md"
+
+[reviewers.spec]
+model = "gpt-6-luna"
+reasoning_effort = "high"
+prompt_file = "prompts/spec.md"
+
+[reviewers.high_risk_spec]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+prompt_file = "prompts/high_risk_spec.md"
+
+[reviewers.penpot]
+model = "gpt-6.1-sol"
+reasoning_effort = "high"
+prompt_file = "prompts/penpot.md"

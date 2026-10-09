@@ -277,6 +277,11 @@ test("Orc tools own their Workers while Workers can only report to their parent"
     "worker_read",
     "worker_send",
     "worker_close",
+    "reviewer_start",
+    "reviewer_list",
+    "reviewer_read",
+    "reviewer_send",
+    "reviewer_close",
   ]);
   const worker = (await app.tool(tokenA, "worker_start", {
     project: "beta",
@@ -679,7 +684,7 @@ test("an oversized Worker report envelope is rejected before queue persistence",
     app.tool(runtime.agents.get(w.id)!.token, "worker_report", {
       message: "x".repeat(100_000),
     }),
-  ).rejects.toThrow("including the Worker report header");
+  ).rejects.toThrow("including the report header");
   expect(app.detail(a.id).deliveries).toHaveLength(0);
   await app.tool(token, "worker_close", { workerId: w.id });
 });
@@ -704,7 +709,9 @@ test("stop targets only the observed Orc turn, waits for authoritative interrupt
       (d) => d.id === "more",
     )?.status,
   ).toBe("failed");
-  await expect(app.closeTree(orc.id)).rejects.toThrow("Workers first");
+  await expect(app.closeTree(orc.id)).rejects.toThrow(
+    "Workers and Reviewers first",
+  );
   runtime.emit(orc.id, { type: "completed", turnId, status: "interrupted" });
   expect(app.detail(orc.id).state).toBe("idle");
   expect(app.detail(orc.id).stop?.status).toBe("confirmed");
@@ -1019,7 +1026,7 @@ test("restart retains pending closure without pretending an interrupted turn com
       workerId: worker.id,
       confirmInterrupted: true,
     }),
-  ).rejects.toThrow("interrupted Worker");
+  ).rejects.toThrow("interrupted owned agent");
   runtime.emit(worker.id, {
     type: "error",
     turnId: app.detail(worker.id).turnId!,

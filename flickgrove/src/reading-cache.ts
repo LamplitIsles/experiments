@@ -24,7 +24,8 @@ function readingCopy(detail: Detail, start: number): ReadingDetail {
     messages,
     deliveries: detail.deliveries.flatMap((d) => {
       if (d.status !== "sent") return [d];
-      if (d.source !== "worker" || !ids.has(d.id)) return [];
+      if ((d.source !== "worker" && d.source !== "reviewer") || !ids.has(d.id))
+        return [];
       return [{ ...d, text: "", answers: undefined, images: undefined }];
     }),
   };

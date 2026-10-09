@@ -17,6 +17,11 @@ test("a real stdio MCP client discovers role tools and delegates through the aut
     directory,
     runtime,
     projects: async () => fixtureProjects,
+    reviewerSnapshot: async () => ({
+      model: "sol",
+      effort: "high",
+      prompt: "Synthetic Reviewer scope",
+    }),
   });
   let origin = "";
   const http = Bun.serve({
@@ -54,6 +59,11 @@ test("a real stdio MCP client discovers role tools and delegates through the aut
       "worker_read",
       "worker_send",
       "worker_close",
+      "reviewer_start",
+      "reviewer_list",
+      "reviewer_read",
+      "reviewer_send",
+      "reviewer_close",
     ]);
     const result = await client.callTool({
       name: "worker_start",
@@ -80,6 +90,45 @@ test("a real stdio MCP client discovers role tools and delegates through the aut
     expect(app.detail(orc.id).messages.at(-1)?.text).toContain(
       "Reader is ready",
     );
+    const target = { spec: "#3573", fixedPoint: "base", reviewedHead: "head" };
+    const review = await client.callTool({
+      name: "reviewer_start",
+      arguments: {
+        ...target,
+        project: "alpha",
+        profile: "standards",
+        title: "Standards",
+        message: "Read branch",
+      },
+    });
+    expect(review.isError).not.toBe(true);
+    const reviewer = JSON.parse(
+      (review.content as { text: string }[])[0].text,
+    ) as { id: string };
+    const reviewerClient = await connect(
+      runtime.agents.get(reviewer.id)!.token,
+    );
+    expect((await reviewerClient.listTools()).tools.map((t) => t.name)).toEqual(
+      ["reviewer_report"],
+    );
+    const conclusion = await reviewerClient.callTool({
+      name: "reviewer_report",
+      arguments: { ...target, message: "PASS with supplied evidence" },
+    });
+    expect(conclusion.isError).not.toBe(true);
+    expect(app.detail(orc.id).deliveries.at(-1)).toMatchObject({
+      source: "reviewer",
+      reportingReviewerId: reviewer.id,
+      reviewTarget: { ...target, profile: "standards" },
+    });
+    expect(
+      (
+        await client.callTool({
+          name: "worker_read",
+          arguments: { workerId: reviewer.id },
+        })
+      ).isError,
+    ).toBe(true);
   } finally {
     await Promise.all(clients.map((c) => c.close()));
     await http.stop(true);

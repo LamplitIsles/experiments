@@ -189,7 +189,9 @@ test("mobile swipe only reveals, one row at a time; right/outside collapse and e
   await expect(page.locator(".agent-detail")).toHaveCount(0);
   await page.screenshot({ path: `${shots}/mobile-swipe.png` });
   await first.locator(".tree-close-action").click();
-  await expect(first.getByRole("alert")).toContainText("Workers first");
+  await expect(first.getByRole("alert")).toContainText(
+    "Workers and Reviewers first",
+  );
   await page.screenshot({ path: `${shots}/mobile-close-refused.png` });
   await swipe(page, 100, box.y + 30, 150);
   await expect(page.locator(".tree-close-action")).toHaveCount(0);

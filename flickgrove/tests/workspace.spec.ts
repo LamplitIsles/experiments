@@ -100,7 +100,9 @@ test("create, delegate, read a Worker, insert a skill and close the tree through
   await page.getByRole("combobox", { name: "Search skills…" }).press("Tab");
   await expect(input).toHaveValue("$to-orc-impl ");
   await page.keyboard.press("Alt+x");
-  await expect(page.getByRole("alert")).toContainText("Workers first");
+  await expect(page.getByRole("alert")).toContainText(
+    "Workers and Reviewers first",
+  );
   await input.fill("Close the workers");
   await input.press("Enter");
   await expect(
