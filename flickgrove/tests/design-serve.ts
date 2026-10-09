@@ -467,6 +467,17 @@ async function reset(mode = "working") {
       reviewedHead: "fixture-head",
       message: "Read the branch",
     })) as Detail;
+    for (const a of [current.app.detail("orc"), r])
+      current.runtime.historySessions.set(a.threadId!, {
+        threadId: a.threadId!,
+        title: a.title,
+        cwd: a.project.path,
+        source: "vscode",
+        role: "session",
+        updatedAt: Date.now(),
+        archived: false,
+        preview: "Synthetic managed history",
+      });
     const token = current.runtime.agents.get(r.id)!.token;
     await current.app.tool(token, "reviewer_report", {
       message:

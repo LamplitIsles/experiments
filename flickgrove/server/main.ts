@@ -2,7 +2,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { initializeReviewerConfig, reviewerSnapshot } from "./reviewer-config";
+import {
+  initializeReviewerConfig,
+  reviewerSnapshot,
+  orcPrompt,
+} from "./reviewer-config";
 import { CodexRuntime } from "./codex";
 import { Workspace } from "./workspace";
 import { registeredProjects } from "./projects";
@@ -45,6 +49,7 @@ const app = new Workspace({
   directory,
   runtime,
   projects: registeredProjects,
+  orcPrompt: () => orcPrompt(configPath),
   reviewerSnapshot: (profile) => reviewerSnapshot(configPath, profile),
 });
 const service = new HostService(app, {

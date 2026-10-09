@@ -486,10 +486,6 @@ pre {
   gap: 2px;
   margin-left: 8px;
 }
-.workflow-tools > button {
-  padding-inline: 7px;
-  font-size: 12px;
-}
 .review-target {
   margin: 0;
   padding: 4px 20px;

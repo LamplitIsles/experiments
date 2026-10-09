@@ -59,6 +59,7 @@ export class Workspace {
       directory: string;
       runtime: Runtime;
       projects: () => Promise<Project[]>;
+      orcPrompt?: () => Promise<string>;
       reviewerSnapshot?: (
         profile: import("../src/contracts").ReviewerProfile,
       ) => Promise<import("./reviewer-config").ReviewerSnapshot>;
@@ -108,6 +109,14 @@ export class Workspace {
     this.advanceChildCloses();
     for (const a of this.state.agents) {
       if (a.closed || !a.threadId) continue;
+      // Prefeature Orcs capture the configured prompt on explicit restoration,
+      // not while startup is merely reconciling saved sessions.
+      if (
+        a.role === "orc" &&
+        a.orcPromptSnapshot === undefined &&
+        options.orcPrompt
+      )
+        continue;
       // Resume the original native thread without settings overrides; reconcile
       // before any queued subsequent turn, retaining the cache if unavailable.
       void this.serialize(a.id, async () => {
@@ -319,6 +328,7 @@ export class Workspace {
     const {
       token: _token,
       reviewerSnapshot: _reviewerSnapshot,
+      orcPromptSnapshot: _orcPromptSnapshot,
       inheritSettings: _inheritSettings,
       restoreArchived: _restoreArchived,
       turnEnded: _turnEnded,
@@ -687,7 +697,14 @@ export class Workspace {
       if (existing && existing.role !== "orc")
         throw new Error("Continue this owned agent through its original Orc");
       const restore = async () => {
-        if (existing && !existing.closed) return this.publicAgent(existing);
+        if (existing && !existing.closed) {
+          if (
+            existing.orcPromptSnapshot === undefined &&
+            this.options.orcPrompt
+          )
+            await this.handle(existing);
+          return this.publicAgent(existing);
+        }
         const session = await this.historySession(alias, threadId);
         if (session.role !== "orc" && session.role !== "session")
           throw new Error("Continue this owned agent through its original Orc");
@@ -770,6 +787,7 @@ export class Workspace {
       title: "New session",
       ...captured.orc,
       workerDefaults: captured.worker,
+      orcPromptSnapshot: await this.options.orcPrompt?.(),
       state: "idle",
       closed: false,
       questions: [],
@@ -792,6 +810,14 @@ export class Workspace {
     if (!handle) {
       let opening = this.opening.get(a.id);
       if (!opening) {
+        if (
+          a.role === "orc" &&
+          a.orcPromptSnapshot === undefined &&
+          this.options.orcPrompt
+        ) {
+          a.orcPromptSnapshot = await this.options.orcPrompt();
+          this.save();
+        }
         let disconnected = false;
         opening = this.options.runtime
           .open(a, (event) => {

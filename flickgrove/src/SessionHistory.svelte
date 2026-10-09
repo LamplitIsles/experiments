@@ -76,7 +76,7 @@
     catch(e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { resuming = false; }
   }
-  function label(s: HistorySession) { return s.role === "worker" ? m.worker() : s.agentId ? m.orc() : s.source; }
+  function label(s: HistorySession) { return s.role === "reviewer" ? "Reviewer" : s.role === "worker" ? m.worker() : s.agentId ? m.orc() : s.source; }
   onMount(() => { void tick().then(() => input?.focus()); return () => { ++sequence; ++previewSequence; }; });
 </script>
 
@@ -106,7 +106,7 @@
       {#if !reading && !messages.length && !error}<p class="history-empty">{m.no_messages()}</p>{/if}
     </div>
     <div class="history-action">
-      {#if selected.role === "worker"}<span>{m.history_worker_help()}</span><Button size="sm" disabled={!connected || reading || !selected.ownerThreadId} onclick={owningOrc}>{m.view_owning_orc()}</Button>
+      {#if selected.role === "worker" || selected.role === "reviewer"}<span>{selected.role === "reviewer" ? m.history_reviewer_help() : m.history_worker_help()}</span><Button size="sm" disabled={!connected || reading || !selected.ownerThreadId} onclick={owningOrc}>{m.view_owning_orc()}</Button>
       {:else}<span>{m.history_resume_help()}</span><Button size="sm" disabled={!connected || resuming} onclick={resume}>{resuming ? m.resuming_session() : selected.agentId && !selected.closed ? m.open_existing_session() : selected.archived ? m.restore_resume() : m.resume_session()}</Button>{/if}
     </div>
   {/if}

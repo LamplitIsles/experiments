@@ -25,6 +25,7 @@ const profileSchema = z.object({
   prompt_file: z.string().trim().min(1),
 });
 const configSchema = z.object({
+  orc: z.object({ prompt_file: z.string().trim().min(1) }),
   reviewers: z.object({
     standards: profileSchema,
     spec: profileSchema,
@@ -48,6 +49,10 @@ export async function initializeReviewerConfig(path: string) {
   });
   for (const [target, source] of [
     [path, resolve(templates, "config.toml")],
+    [
+      resolve(dirname(path), "prompts/orc.md"),
+      resolve(templates, "prompts/orc.md"),
+    ],
     ...reviewerProfiles.map((p) => [
       resolve(dirname(path), `prompts/${p}.md`),
       resolve(templates, `prompts/${p}.md`),
@@ -62,6 +67,7 @@ export async function initializeReviewerConfig(path: string) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
   }
+  await orcPrompt(path);
   for (const profile of reviewerProfiles) await reviewerSnapshot(path, profile);
 }
 export async function readReviewerConfig(path: string) {
@@ -79,15 +85,25 @@ export async function reviewerSnapshot(
 ): Promise<ReviewerSnapshot> {
   const value = (await readReviewerConfig(path)).reviewers[profile];
   const promptPath = resolve(dirname(path), value.prompt_file);
+  return {
+    model: value.model,
+    effort: value.reasoning_effort,
+    prompt: await readPrompt(promptPath, "Reviewer"),
+  };
+}
+export async function orcPrompt(path: string) {
+  const config = await readReviewerConfig(path);
+  return readPrompt(resolve(dirname(path), config.orc.prompt_file), "Orc");
+}
+async function readPrompt(promptPath: string, role: string) {
   let prompt: string;
   try {
     prompt = await readFile(promptPath, "utf8");
   } catch (error) {
     throw new Error(
-      `Cannot read Reviewer prompt ${promptPath}: ${String(error)}`,
+      `Cannot read ${role} prompt ${promptPath}: ${String(error)}`,
     );
   }
-  if (!prompt.trim())
-    throw new Error(`Reviewer prompt is empty: ${promptPath}`);
-  return { model: value.model, effort: value.reasoning_effort, prompt };
+  if (!prompt.trim()) throw new Error(`${role} prompt is empty: ${promptPath}`);
+  return prompt;
 }

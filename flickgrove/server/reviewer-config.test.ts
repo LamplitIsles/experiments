@@ -2,7 +2,12 @@ import { expect, test } from "bun:test";
 import { mkdtemp, readFile, writeFile, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initializeReviewerConfig, reviewerSnapshot } from "./reviewer-config";
+import {
+  initializeReviewerConfig,
+  readReviewerConfig,
+  reviewerSnapshot,
+  orcPrompt,
+} from "./reviewer-config";
 
 test("configuration initializes missing files, retains customization, retries partial initialization and rejects errors", async () => {
   const root = await mkdtemp(join(tmpdir(), "grove-config-"));
@@ -10,6 +15,37 @@ test("configuration initializes missing files, retains customization, retries pa
   try {
     await initializeReviewerConfig(path);
     const original = await readFile(path, "utf8");
+    expect((await readReviewerConfig(path)).orc.prompt_file).toBe(
+      "prompts/orc.md",
+    );
+    expect(
+      (await readFile(join(root, "prompts/orc.md"), "utf8")).trim(),
+    ).not.toBe("");
+    await writeFile(join(root, "prompts/orc.md"), "Custom Orc scope");
+    await initializeReviewerConfig(path);
+    expect(await orcPrompt(path)).toBe("Custom Orc scope");
+    await unlink(join(root, "prompts/orc.md"));
+    await initializeReviewerConfig(path);
+    expect((await orcPrompt(path)).trim()).not.toBe("");
+    await writeFile(join(root, "custom-orc.md"), "Relative Orc scope");
+    await writeFile(path, original.replace("prompts/orc.md", "custom-orc.md"));
+    expect(await orcPrompt(path)).toBe("Relative Orc scope");
+    await writeFile(join(root, "custom-orc.md"), " ");
+    await expect(initializeReviewerConfig(path)).rejects.toThrow(
+      "Orc prompt is empty",
+    );
+    await unlink(join(root, "custom-orc.md"));
+    await expect(initializeReviewerConfig(path)).rejects.toThrow(
+      "Cannot read Orc prompt",
+    );
+    await writeFile(
+      path,
+      original.replace(/\[orc\]\nprompt_file = [^\n]+\n/, ""),
+    );
+    await expect(initializeReviewerConfig(path)).rejects.toThrow(
+      "Invalid Grove reviewer configuration",
+    );
+    await writeFile(path, original);
     const snapshot = await reviewerSnapshot(path, "standards");
     expect(snapshot).toMatchObject({ model: "gpt-6-luna", effort: "high" });
     await writeFile(join(root, "prompts/standards.md"), "Custom axis scope");

@@ -145,3 +145,38 @@ for (const width of [1440, 390])
       ),
     ).toBe(true);
   });
+
+test("Reviewer history identifies its role and routes to its owning Orc", async ({
+  page,
+  request,
+}) => {
+  await request.post(`${origin}/fixture/reset`, {
+    data: { mode: "reviewers" },
+  });
+  await page.goto(origin);
+  await page.keyboard.press("n");
+  await page.getByRole("button", { name: "Experiments", exact: true }).click();
+  await page.getByRole("button", { name: "Find history", exact: true }).click();
+  const row = page
+    .locator(".history-result")
+    .filter({ hasText: "Standards review" });
+  await expect(row.locator(".history-result-meta")).toContainText("Reviewer");
+  await row.click();
+  await expect(page.locator(".history-action")).toContainText(
+    "Continue this Reviewer through its original Orc.",
+  );
+  await expect(
+    page.getByRole("button", { name: "Open session", exact: true }),
+  ).toHaveCount(0);
+  await page.screenshot({ path: `${shots}/1440-reviewer-history.png` });
+  await page
+    .getByRole("button", { name: "View owning Orc", exact: true })
+    .click();
+  await expect(page.locator(".history-title")).toHaveText(
+    "Streaming voice input",
+  );
+  await page.getByRole("button", { name: "Open session", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Message Orc", exact: true }),
+  ).toBeVisible();
+});

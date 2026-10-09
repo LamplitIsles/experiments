@@ -1,3 +1,6 @@
+[orc]
+prompt_file = "prompts/orc.md"
+
 [reviewers.standards]
 model = "gpt-6-luna"
 reasoning_effort = "high"
