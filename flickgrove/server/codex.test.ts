@@ -271,8 +271,9 @@ test("the SDK adapter initializes isolated role configuration, discovers enabled
     expect(
       requestsAtStart.find((r) => r.method === "thread/start").params.config,
     ).toMatchObject({
-      "features.multi_agent": true,
-      "features.multi_agent_v2": true,
+      "agents.enabled": false,
+      "features.multi_agent": false,
+      "features.multi_agent_v2": false,
       "mcp_servers.flickgrove": {
         command: process.execPath,
         env: {

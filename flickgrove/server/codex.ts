@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { stat, readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
+import { nativeCollaborationConfig } from "./native-collaboration";
 import { roleInstructions } from "./role-instructions";
 import { sameDirectory } from "./directory";
 import { nameThreadFromPrompt } from "./thread-title";
@@ -528,8 +529,7 @@ export class CodexRuntime implements Runtime {
         ...(agent.threadId || agent.inheritSettings
           ? {}
           : { model_reasoning_effort: agent.effort }),
-        "features.multi_agent": true,
-        "features.multi_agent_v2": true,
+        ...nativeCollaborationConfig,
         "mcp_servers.flickgrove": {
           command: process.execPath,
           args: [fileURLToPath(new URL("./mcp.ts", import.meta.url))],
@@ -612,10 +612,11 @@ export class CodexRuntime implements Runtime {
         if (closed || this.threads.get(id) !== client)
           throw new Error("Session connection unavailable");
         // Loaded-thread resume returns its live config snapshot without rebuilding
-        // or starting a turn. No setting overrides are sent.
+        // or starting a turn. Keep collaboration disabled; no execution settings change.
         const value = await client.threadResume({
           threadId: id,
           excludeTurns: true,
+          config: nativeCollaborationConfig,
         });
         if (closed || this.threads.get(id) !== client)
           throw new Error("Session connection changed");
@@ -795,10 +796,14 @@ export class CodexRuntime implements Runtime {
                 );
                 if (!nativeReleased && loaded.data.includes(id)) {
                   // Failed unload removes the listener. Resume the original live
-                  // thread without overrides/turns to rebuild it and re-subscribe.
+                  // thread without a turn to re-subscribe, retaining collaboration overrides.
                   resuming = true;
                   const resumed = await client.threadResume(
-                    { threadId: id, excludeTurns: true },
+                    {
+                      threadId: id,
+                      excludeTurns: true,
+                      config: nativeCollaborationConfig,
+                    },
                     options(),
                   );
                   // Resume may race a late close and reacquire this same thread.

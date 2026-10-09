@@ -66,3 +66,5 @@ A completed run includes one PR and approval-gated merge unless the user limited
 Preserve blocked or failed Workers until evidence is recovered or the user chooses to discard them.
 
 The final report records the starting and reviewed commits, execution host/project and Worker IDs, ticket or acceptance-criterion/commit coverage, verification, review iterations, judgement calls, changed-LOC variance, PR URL, merge and closure status, and remaining blockers.
+
+Implementation belongs to Worker, independent target-bound review to Reviewer, and bounded evidence investigation to Researcher under `grove-research`. Researchers do not replace review axes or implement fixes. Use Grove collaboration tools; native collaboration is disabled in managed sessions.

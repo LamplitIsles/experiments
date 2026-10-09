@@ -101,7 +101,7 @@ test("create, delegate, read a Worker, insert a skill and close the tree through
   await expect(input).toHaveValue("$to-orc-impl ");
   await page.keyboard.press("Alt+x");
   await expect(page.getByRole("alert")).toContainText(
-    "Workers and Reviewers first",
+    "Workers, Reviewers and Researchers first",
   );
   await input.fill("Close the workers");
   await input.press("Enter");

@@ -1,4 +1,4 @@
-export type Role = "orc" | "worker" | "reviewer";
+export type Role = "orc" | "worker" | "reviewer" | "researcher";
 export type ReviewerProfile =
   | "standards"
   | "spec"
@@ -99,7 +99,9 @@ export interface Delivery {
   id: string;
   text: string;
   status: "queued" | "sending" | "sent" | "failed" | "uncertain";
-  source: "user" | "worker" | "reviewer" | "question";
+  source: "user" | "worker" | "reviewer" | "researcher" | "question";
+  reportingResearcherId?: string;
+  researchQuestion?: string;
   reportingReviewerId?: string;
   reviewTarget?: ReviewTarget;
   reportingWorkerId?: string;
@@ -108,6 +110,7 @@ export interface Delivery {
   at: number;
 }
 export interface Agent {
+  researchQuestion?: string;
   reviewTarget?: ReviewTarget;
   treeFast?: boolean;
   treeFastBusy?: boolean;

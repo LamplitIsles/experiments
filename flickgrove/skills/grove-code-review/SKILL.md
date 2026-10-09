@@ -163,3 +163,5 @@ A change can pass one axis and fail the other:
 - Correct behavior and clean code with a visually different page → **Penpot fail**, when that axis applies.
 
 Reporting them separately stops one axis from masking the other.
+
+Implementation belongs to Worker, independent target-bound review to Reviewer, and bounded evidence investigation to Researcher under `grove-research`. Researchers do not replace review axes or implement fixes. Use Grove collaboration tools; native collaboration is disabled in managed sessions.

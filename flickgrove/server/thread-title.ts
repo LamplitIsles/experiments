@@ -1,3 +1,5 @@
+import { nativeCollaborationConfig } from "./native-collaboration";
+
 /** Isolated, best-effort title generation for a durable Codex thread. */
 type TitleClient = {
   call(method: string, params?: Record<string, unknown>): Promise<any>;
@@ -101,6 +103,7 @@ export async function nameThreadFromPrompt(
     ...Object.fromEntries(
       disabled.map((feature) => [`features.${feature}`, false]),
     ),
+    ...nativeCollaborationConfig,
     "cloud.skills.enabled": false,
     "skills.include_instructions": false,
     "token_budget.use_history_notes_extension": false,

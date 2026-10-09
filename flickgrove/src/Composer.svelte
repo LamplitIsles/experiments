@@ -3,7 +3,7 @@
   import { navigation, setSurface } from "./navigation.svelte";
   import { Button } from '$lib/components/ui/button/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
-  import { Plus, MessagesSquare, Hammer, ClipboardCheck, RotateCcw, X, ArrowUp, Square, Sparkles } from '@lucide/svelte';
+  import { Plus, MessagesSquare, Hammer, ClipboardCheck, RotateCcw, Telescope, X, ArrowUp, Square, Sparkles } from '@lucide/svelte';
   import { storagePrefix, readingCache } from './api';
   import { imagePreview, loadImages, saveImages, draftKey, operationKey, intakeError, IMAGE_ACCEPT, type ImageDraft } from './image-drafts';
   import { onMount, tick, untrack } from 'svelte';
@@ -115,7 +115,7 @@
     {#if preparing}<p role="status">Preparing images…</p>{/if}
     <Textarea onpaste={paste} bind:ref={input} bind:value={text} aria-label={m.message_orc()} placeholder={m.message_placeholder()} disabled={stopping || preparing} rows={2} oncompositionstart={() => { composing = true; }} oncompositionend={() => { composing = false; }} onkeydown={keydown} />
     <div class="composer-bottom"><div class="composer-tools"><Button variant="ghost" size="icon-sm" aria-label="Add images" title="Add images" disabled={preparing || !ready || !imageStorage || stopping} onclick={()=>picker.click()}><Plus /></Button><Button class="mobile-skill" variant="ghost" size="icon-sm" aria-label={m.search_skills()} title={m.search_skills()} disabled={preparing || stopping || !connected} onclick={openSkills}><Sparkles /></Button><div class="workflow-tools">
-      {#each [{name:"grove-grill-with-docs",label:"Discuss",icon:MessagesSquare},{name:"grove-to-orc-impl",label:"Implement",icon:Hammer},{name:"grove-code-review",label:"Review",icon:ClipboardCheck},{name:"grove-review-again",label:"Re-review",icon:RotateCcw}] as action}
+      {#each [{name:"grove-grill-with-docs",label:"Discuss",icon:MessagesSquare},{name:"grove-to-orc-impl",label:"Implement",icon:Hammer},{name:"grove-code-review",label:"Review",icon:ClipboardCheck},{name:"grove-review-again",label:"Re-review",icon:RotateCcw},{name:"grove-research",label:"Research",icon:Telescope}] as action}
         <Button variant="ghost" size="sm" disabled={preparing || stopping || !connected} onpointerdown={e => { if(composing)e.preventDefault(); }} onclick={() => workflow(action.name)}><action.icon />{action.label}</Button>
       {/each}
     </div></div><div class="composer-actions">

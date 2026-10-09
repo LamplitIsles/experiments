@@ -172,6 +172,11 @@ function unit(
     directory: stateDirectory,
     runtime,
     projects: async () => unitProjects,
+    researcherSnapshot: async () => ({
+      model: "gpt-6.1-sol",
+      effort: "high",
+      prompt: "Synthetic evidence investigation",
+    }),
     reviewerSnapshot: async () => ({
       model: "gpt-6.1-sol",
       effort: "high",
@@ -455,6 +460,45 @@ async function reset(mode = "working") {
     await peer.app.tool("fixture-orc", "worker_send", {
       workerId: "reader",
       message: "Implement reader",
+    });
+  }
+  if (mode === "researchers") {
+    const r = (await current.app.tool("fixture-orc", "researcher_start", {
+      project: "experiments",
+      title:
+        "Native collaboration evidence with a long bounded research question",
+      question: "Which supported override disables model-aware collaboration?",
+      message: "Collect primary evidence",
+    })) as Detail;
+    for (const a of [current.app.detail("orc"), r])
+      current.runtime.historySessions.set(a.threadId!, {
+        threadId: a.threadId!,
+        title: a.title,
+        cwd: a.project.path,
+        source: "vscode",
+        role: "session",
+        updatedAt: Date.now(),
+        archived: false,
+        preview: "Synthetic managed history",
+      });
+    const token = current.runtime.agents.get(r.id)!.token;
+    await current.app.tool(token, "researcher_report", {
+      question: r.researchQuestion,
+      message:
+        "Verified config gate [primary source](https://example.org). Interpretation is separate; remaining unknown is paid-turn inventory.",
+    });
+    current.runtime.emit(r.id, {
+      type: "item",
+      turnId: r.turnId!,
+      item: {
+        id: "researcher-question",
+        type: "agentMessage",
+        delivery: "async",
+        text: "Need framing",
+        questions: [
+          { question: "Which installed version should evidence cover?" },
+        ],
+      },
     });
   }
   if (mode === "reviewers") {

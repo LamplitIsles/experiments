@@ -47,3 +47,5 @@ This step is complete when each reopened conclusion is resolved and the current 
 Report `stop`, `focused review`, or `full re-review`; the reviewed HEAD and current HEAD; reused or replaced reviewer targets; reopened conclusions; checks run; and remaining blockers.
 
 Use explicit spec/fixedPoint/reviewedHead in reviewer_send. List/read after uncertain admission, never automatically replay. Keep original profile/prompt snapshots, targets and axes; report current HEAD with Reviewer IDs. End turn after confirmed dispatch and await asynchronous reports. Close through reviewer_close only after conclusions are settled.
+
+Implementation belongs to Worker, independent target-bound review to Reviewer, and bounded evidence investigation to Researcher under `grove-research`. Researchers do not replace review axes or implement fixes. Use Grove collaboration tools; native collaboration is disabled in managed sessions.

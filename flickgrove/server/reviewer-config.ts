@@ -26,6 +26,7 @@ const profileSchema = z.object({
 });
 const configSchema = z.object({
   orc: z.object({ prompt_file: z.string().trim().min(1) }),
+  researcher: profileSchema,
   reviewers: z.object({
     standards: profileSchema,
     spec: profileSchema,
@@ -53,6 +54,10 @@ export async function initializeReviewerConfig(path: string) {
       resolve(dirname(path), "prompts/orc.md"),
       resolve(templates, "prompts/orc.md"),
     ],
+    [
+      resolve(dirname(path), "prompts/researcher.md"),
+      resolve(templates, "prompts/researcher.md"),
+    ],
     ...reviewerProfiles.map((p) => [
       resolve(dirname(path), `prompts/${p}.md`),
       resolve(templates, `prompts/${p}.md`),
@@ -67,6 +72,25 @@ export async function initializeReviewerConfig(path: string) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
   }
+  // Spec-authorized initialization only: preserve every existing table and prompt.
+  const text = await readFile(path, "utf8");
+  if (
+    (Bun.TOML.parse(text) as Record<string, unknown>).researcher === undefined
+  ) {
+    const defaults = await readFile(resolve(templates, "config.toml"), "utf8");
+    const value = (Bun.TOML.parse(defaults) as Record<string, unknown>)
+      .researcher as {
+      model: string;
+      reasoning_effort: string;
+      prompt_file: string;
+    };
+    await writeFile(
+      path,
+      `${text}${text.endsWith("\n") ? "" : "\n"}\n[researcher]\nmodel = ${JSON.stringify(value.model)}\nreasoning_effort = ${JSON.stringify(value.reasoning_effort)}\nprompt_file = ${JSON.stringify(value.prompt_file)}\n`,
+      { mode: 0o600 },
+    );
+  }
+  await researcherSnapshot(path);
   await orcPrompt(path);
   for (const profile of reviewerProfiles) await reviewerSnapshot(path, profile);
 }
@@ -89,6 +113,19 @@ export async function reviewerSnapshot(
     model: value.model,
     effort: value.reasoning_effort,
     prompt: await readPrompt(promptPath, "Reviewer"),
+  };
+}
+export async function researcherSnapshot(
+  path: string,
+): Promise<ReviewerSnapshot> {
+  const value = (await readReviewerConfig(path)).researcher;
+  return {
+    model: value.model,
+    effort: value.reasoning_effort,
+    prompt: await readPrompt(
+      resolve(dirname(path), value.prompt_file),
+      "Researcher",
+    ),
   };
 }
 export async function orcPrompt(path: string) {
