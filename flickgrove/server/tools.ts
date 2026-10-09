@@ -9,7 +9,51 @@ const target = {
   fixedPoint: z.string().trim().min(1).max(500),
   reviewedHead: z.string().trim().min(1).max(500),
 };
+const researcherId = z.string().min(1);
+const question = z.string().trim().min(1).max(10_000);
 export const toolDefinitions = {
+  researcher_start: {
+    description:
+      "Start an owned Researcher for one bounded question in a registered project. Captures application configuration. Includes dispatch; inspect list/read after unknown admission before retrying.",
+    shape: {
+      project: z.string().min(1),
+      title: sessionTitle,
+      question,
+      message,
+    },
+  },
+  researcher_list: {
+    description: "List your open Researchers, questions and state.",
+    shape: {},
+  },
+  researcher_read: {
+    description:
+      "Read your Researcher and its evidence conversation; paginate with nextBefore. Does not poll.",
+    shape: {
+      researcherId,
+      before: z.string().min(1).optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+    },
+  },
+  researcher_send: {
+    description:
+      "Follow up the same research question, steering when busy or starting when idle. questionIds answers only specific delegated questions. Closing accepts only existing answers; inspect unknown delivery before retrying.",
+    shape: {
+      researcherId,
+      message,
+      questionIds: z.array(z.string().min(1)).max(100).optional(),
+    },
+  },
+  researcher_close: {
+    description:
+      "Request durable asynchronous closure with existing work/question/report guards. closing=true means accepted. confirmInterrupted acknowledges an inspected unknown turn; native release failure can be retried.",
+    shape: { researcherId, confirmInterrupted: z.boolean().optional() },
+  },
+  researcher_report: {
+    description:
+      "Return natural-language progress, questions or evidence to owning Orc for your assigned question. Include verified facts/sources, interpretations, conflicts, unknowns and leads; Orc owns synthesis and archival.",
+    shape: { question, message },
+  },
   reviewer_start: {
     description:
       "Start an independent read-only Reviewer in a registered project. Captures profile configuration and prompt. Includes initial dispatch; inspect reviewer_list/read after uncertain admission, never replay blindly.",
@@ -101,6 +145,11 @@ export const toolDefinitions = {
 };
 export const roleTools = {
   orc: [
+    "researcher_start",
+    "researcher_list",
+    "researcher_read",
+    "researcher_send",
+    "researcher_close",
     "worker_start",
     "worker_list",
     "worker_read",
@@ -114,4 +163,5 @@ export const roleTools = {
   ],
   worker: ["worker_report"],
   reviewer: ["reviewer_report"],
+  researcher: ["researcher_report"],
 } as const;

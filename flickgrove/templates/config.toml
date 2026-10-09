@@ -1,6 +1,11 @@
 [orc]
 prompt_file = "prompts/orc.md"
 
+[researcher]
+model = "gpt-6-luna"
+reasoning_effort = "high"
+prompt_file = "prompts/researcher.md"
+
 [reviewers.standards]
 model = "gpt-6-luna"
 reasoning_effort = "high"

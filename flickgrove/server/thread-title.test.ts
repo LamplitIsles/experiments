@@ -68,6 +68,9 @@ test("generates a structured title in an isolated ephemeral thread and persists 
     sandbox: "read-only",
     approvalPolicy: "never",
     config: {
+      "agents.enabled": false,
+      "features.multi_agent": false,
+      "features.multi_agent_v2": false,
       "features.unified_exec": false,
       "features.shell_tool": false,
       "cloud.skills.enabled": false,

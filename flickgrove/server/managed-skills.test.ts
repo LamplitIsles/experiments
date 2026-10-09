@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { CodexAppServerClient } from "@jaminzhou/codex-app-server-client";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,9 @@ test("installed native discovers version-owned grove skills across projects with
     mkdir(first),
     mkdir(second),
   ]);
+  const globalConfig =
+    "[agents]\nenabled = true\n\n[features]\nmulti_agent = true\nmulti_agent_v2 = true\n";
+  await writeFile(join(codexHome, "config.toml"), globalConfig);
   const old = join(home, ".agents/skills/code-review");
   await mkdir(old, { recursive: true });
   await writeFile(
@@ -59,7 +62,12 @@ test("installed native discovers version-owned grove skills across projects with
       approvalPolicy: "never",
       sandbox: "read-only",
       developerInstructions: "Test-owned role context",
-      config: { model_reasoning_effort: "high" },
+      config: {
+        model_reasoning_effort: "high",
+        "agents.enabled": false,
+        "features.multi_agent": false,
+        "features.multi_agent_v2": false,
+      },
       historyMode: "paginated",
     });
     expect(thread.model).toBe("gpt-6.1-sol");
@@ -70,12 +78,20 @@ test("installed native discovers version-owned grove skills across projects with
       client.threadResume({
         threadId: thread.thread.id,
         excludeTurns: true,
+        config: {
+          "agents.enabled": false,
+          "features.multi_agent": false,
+          "features.multi_agent_v2": false,
+        },
         developerInstructions: "Test-owned role context",
         approvalPolicy: "never",
         sandbox: "read-only",
       }),
     ).rejects.toThrow("no rollout found");
     await client.call("thread/unsubscribe", { threadId: thread.thread.id });
+    expect(await readFile(join(codexHome, "config.toml"), "utf8")).toBe(
+      globalConfig,
+    );
     for (const entry of response.data) {
       expect(entry.errors).toEqual([]);
       expect(
@@ -89,6 +105,7 @@ test("installed native discovers version-owned grove skills across projects with
         "grove-grill-with-docs",
         "grove-grilling",
         "grove-orc-impl",
+        "grove-research",
         "grove-review-again",
         "grove-spec-self-review",
         "grove-to-orc-impl",

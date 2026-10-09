@@ -38,6 +38,7 @@ function qualified<T extends Agent>(host: Host, a: T): T {
     turnId: a.turnId,
     error: a.error,
     closed: a.closed,
+    researchQuestion: a.researchQuestion,
     questions: a.questions,
     serviceTier: a.serviceTier,
     treeFast: a.treeFast,
@@ -57,6 +58,9 @@ function qualified<T extends Agent>(host: Host, a: T): T {
       messages: detail.messages,
       deliveries: detail.deliveries.map((d) => ({
         ...d,
+        reportingResearcherId: d.reportingResearcherId
+          ? qualify(host.id, d.reportingResearcherId)
+          : undefined,
         reportingReviewerId: d.reportingReviewerId
           ? qualify(host.id, d.reportingReviewerId)
           : undefined,

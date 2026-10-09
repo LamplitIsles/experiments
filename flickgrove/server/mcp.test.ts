@@ -17,6 +17,11 @@ test("a real stdio MCP client discovers role tools and delegates through the aut
     directory,
     runtime,
     projects: async () => fixtureProjects,
+    researcherSnapshot: async () => ({
+      model: "sol",
+      effort: "high",
+      prompt: "Synthetic research scope",
+    }),
     reviewerSnapshot: async () => ({
       model: "sol",
       effort: "high",
@@ -54,6 +59,11 @@ test("a real stdio MCP client discovers role tools and delegates through the aut
     const orc = await app.createOrc("alpha");
     const client = await connect(runtime.agents.get(orc.id)!.token);
     expect((await client.listTools()).tools.map((t) => t.name)).toEqual([
+      "researcher_start",
+      "researcher_list",
+      "researcher_read",
+      "researcher_send",
+      "researcher_close",
       "worker_start",
       "worker_list",
       "worker_read",
@@ -90,6 +100,38 @@ test("a real stdio MCP client discovers role tools and delegates through the aut
     expect(app.detail(orc.id).messages.at(-1)?.text).toContain(
       "Reader is ready",
     );
+    const research = await client.callTool({
+      name: "researcher_start",
+      arguments: {
+        project: "beta",
+        title: "Evidence",
+        question: "Which fact is verified?",
+        message: "Read primary evidence",
+      },
+    });
+    expect(research.isError).not.toBe(true);
+    const researcher = JSON.parse(
+      (research.content as { text: string }[])[0].text,
+    ) as { id: string };
+    const researcherClient = await connect(
+      runtime.agents.get(researcher.id)!.token,
+    );
+    expect(
+      (await researcherClient.listTools()).tools.map((t) => t.name),
+    ).toEqual(["researcher_report"]);
+    const evidence = await researcherClient.callTool({
+      name: "researcher_report",
+      arguments: {
+        question: "Which fact is verified?",
+        message: "Verified fact and source; unknown.",
+      },
+    });
+    expect(evidence.isError).not.toBe(true);
+    expect(app.detail(orc.id).deliveries.at(-1)).toMatchObject({
+      source: "researcher",
+      reportingResearcherId: researcher.id,
+      researchQuestion: "Which fact is verified?",
+    });
     const target = { spec: "#3573", fixedPoint: "base", reviewedHead: "head" };
     const review = await client.callTool({
       name: "reviewer_start",

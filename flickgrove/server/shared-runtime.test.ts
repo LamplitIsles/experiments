@@ -133,7 +133,15 @@ test("one managed process isolates concurrent threads, native requests, Stop/Clo
     );
     for (const r of configCalls) {
       if (r.method === "thread/resume" && !r.params.cwd) {
-        expect(r.params).toEqual({ threadId: ah.threadId, excludeTurns: true });
+        expect(r.params).toEqual({
+          threadId: ah.threadId,
+          excludeTurns: true,
+          config: {
+            "agents.enabled": false,
+            "features.multi_agent": false,
+            "features.multi_agent_v2": false,
+          },
+        });
         continue;
       }
       const owned = r.params.cwd === a.project.path ? a : b;

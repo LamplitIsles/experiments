@@ -173,7 +173,7 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await capture(page, "controls-04");
   await page.keyboard.press("Alt+x");
   await expect(page.getByRole("alert")).toContainText(
-    "Workers and Reviewers first",
+    "Workers, Reviewers and Researchers first",
   );
   await capture(page, "controls-06");
   await request.post("/fixture/reset", { data: {} });

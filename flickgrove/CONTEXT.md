@@ -16,8 +16,16 @@ _Avoid_：独立助手、子进程
 受委派对指定工作进行独立只读审查的 agent，通过阅读代码和已有证据提出结论；不修改被审查的工作，也不运行测试、构建或浏览器验证。
 _Avoid_：实现 Worker
 
+**Researcher（调查者）**：
+受所属 Orc 委派调查一个明确、有边界的问题，异步返回已验证事实与来源、解释/猜测、冲突、未知项和后续线索。Orc 负责综合、最终推荐与 FlickNote 存档；Researcher 不开发代码、不写仓库或 FlickNote、不创建 agent。职责约束不等同于硬权限隔离。
+_Avoid_：Reviewer、实现 Worker、最终推荐者
+
+**Researcher 配置快照**：
+创建时捕获的模型、推理力度与职责文本，随身份、owner、调查问题、报告及原生 thread 持久保留。跟进和恢复沿用；后续配置变化仅影响新 Researcher。
+_Avoid_：审查目标、实时全局配置
+
 **Agent 会话**：
-一个 Orc、Worker 或 Reviewer 持有的持续对话与工作上下文。关闭详情或访问界面不等于关闭 Agent 会话。
+一个 Orc、Worker、Reviewer 或 Researcher 持有的持续对话与工作上下文。关闭详情或访问界面不等于关闭 Agent 会话。
 _Avoid_：浏览器会话、窗口
 
 **历史会话**：
@@ -33,7 +41,7 @@ _Avoid_：历史会话、本地待确认项
 _Avoid_：新建会话、转换角色
 
 **会话树**：
-一个 Orc 与它所属的全部 Worker 和 Reviewer 的协作集合。一棵会话树完整归属一台执行主机。
+一个 Orc 与它所属的全部 Worker、Reviewer 和 Researcher 的协作集合。一棵会话树完整归属一台执行主机。
 _Avoid_：Session、工作区
 
 **关闭会话树**：

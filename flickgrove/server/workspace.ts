@@ -60,6 +60,9 @@ export class Workspace {
       runtime: Runtime;
       projects: () => Promise<Project[]>;
       orcPrompt?: () => Promise<string>;
+      researcherSnapshot?: () => Promise<
+        import("./reviewer-config").ReviewerSnapshot
+      >;
       reviewerSnapshot?: (
         profile: import("../src/contracts").ReviewerProfile,
       ) => Promise<import("./reviewer-config").ReviewerSnapshot>;
@@ -225,7 +228,7 @@ export class Workspace {
             newQuestions.includes(q.id),
           );
           const text =
-            `${a.role === "reviewer" ? "Reviewer" : "Worker"} “${a.title}” needs a decision. Agent ID: ${a.id}\n\n` +
+            `${a.role === "reviewer" ? "Reviewer" : a.role === "researcher" ? "Researcher" : "Worker"} “${a.title}” needs a decision. Agent ID: ${a.id}\n\n` +
             (item.text ? `${item.text}\n\n` : "") +
             questions
               .map(
@@ -328,6 +331,7 @@ export class Workspace {
     const {
       token: _token,
       reviewerSnapshot: _reviewerSnapshot,
+      researcherSnapshot: _researcherSnapshot,
       orcPromptSnapshot: _orcPromptSnapshot,
       inheritSettings: _inheritSettings,
       restoreArchived: _restoreArchived,
@@ -408,9 +412,9 @@ export class Workspace {
   async updateSettings(id: string, value: { model: string; effort: string }) {
     return this.serialize(id, async () => {
       const a = this.agent(id);
-      if (a.role === "reviewer")
+      if (a.role === "reviewer" || a.role === "researcher")
         throw new Error(
-          "Reviewer model and effort belong to its captured profile",
+          "Reviewer/Researcher model and effort belong to its captured profile",
         );
       if (a.closeRequest) throw new Error("Session is closing");
       const handle = await this.handle(a, false);
@@ -1027,8 +1031,8 @@ export class Workspace {
     return this.detail(a.id);
   }
   retryDelivery(id: string, deliveryId: string) {
-    if (this.agent(id).role === "reviewer")
-      throw new Error("Continue Reviewer instructions through Orc");
+    if (["reviewer", "researcher"].includes(this.agent(id).role))
+      throw new Error("Continue Reviewer/Researcher instructions through Orc");
     const delivery = this.agent(id).deliveries.find((d) => d.id === deliveryId);
     if (delivery?.source === "question" && delivery.status === "failed") {
       if (!delivery.answers)
@@ -1093,13 +1097,15 @@ export class Workspace {
     return this.serialize(id, async () => {
       const a = this.agent(id);
       if (a.role !== "orc")
-        throw new Error("Only Orc can close Workers and Reviewers");
+        throw new Error(
+          "Only Orc can close Workers, Reviewers and Researchers",
+        );
       const workers = this.state.agents.filter(
         (w) => w.ownerId === id && !w.closed,
       );
       if (workers.length)
         throw new Error(
-          `Ask Orc to close its Workers and Reviewers first: ${workers.map((w) => w.title).join(", ")}`,
+          `Ask Orc to close its Workers, Reviewers and Researchers first: ${workers.map((w) => w.title).join(", ")}`,
         );
       this.assertIdle(a);
       const handle = this.handles.get(id);
@@ -1188,12 +1194,12 @@ export class Workspace {
   private ownedChild(
     owner: RuntimeAgent,
     id: string,
-    role: "worker" | "reviewer",
+    role: "worker" | "reviewer" | "researcher",
   ) {
     const w = this.agent(id);
     if (w.role !== role || w.ownerId !== owner.id)
       throw new Error(
-        `${role === "reviewer" ? "Reviewer" : "Worker"} does not belong to this Orc`,
+        `${role === "reviewer" ? "Reviewer" : role === "researcher" ? "Researcher" : "Worker"} does not belong to this Orc`,
       );
     return w;
   }
@@ -1202,9 +1208,11 @@ export class Workspace {
     if (!(roleTools[a.role] as readonly string[]).includes(name))
       throw new Error("Tool is not available to this role");
     switch (name) {
+      case "researcher_start":
       case "reviewer_start":
       case "worker_start": {
         const isReviewer = name === "reviewer_start";
+        const isResearcher = name === "researcher_start";
         const input = z.object(toolDefinitions[name].shape).parse(args);
         const review = isReviewer
           ? z.object(toolDefinitions.reviewer_start.shape).parse(args)
@@ -1218,7 +1226,11 @@ export class Workspace {
           const w: RuntimeAgent = {
             id: crypto.randomUUID(),
             token: crypto.randomUUID(),
-            role: isReviewer ? "reviewer" : "worker",
+            role: isReviewer
+              ? "reviewer"
+              : isResearcher
+                ? "researcher"
+                : "worker",
             ownerId: a.id,
             project,
             title: input.title,
@@ -1233,6 +1245,15 @@ export class Workspace {
             messages: [],
             deliveries: [],
           };
+          if ("question" in input) {
+            if (!this.options.researcherSnapshot)
+              throw new Error("Researcher configuration is unavailable");
+            const snapshot = await this.options.researcherSnapshot();
+            w.researcherSnapshot = snapshot;
+            w.model = snapshot.model;
+            w.effort = snapshot.effort;
+            w.researchQuestion = input.question;
+          }
           if (review) {
             if (!this.options.reviewerSnapshot)
               throw new Error("Reviewer configuration is unavailable");
@@ -1260,7 +1281,10 @@ export class Workspace {
                 ? (model.fastTier ?? "default")
                 : "default";
           }
-          const assignment = `Assigned spec: ${input.spec}\n${review ? `Review target: ${reviewTargetText(w.reviewTarget!)}\n` : ""}\n${input.message}`;
+          const assignment =
+            "question" in input
+              ? `Assigned research question: ${input.question}\n\n${input.message}`
+              : `Assigned spec: ${input.spec}\n${review ? `Review target: ${reviewTargetText(w.reviewTarget!)}\n` : ""}\n${input.message}`;
           if (assignment.length > 100_000)
             throw new Error(
               "Message is too long, including the assignment target",
@@ -1270,9 +1294,9 @@ export class Workspace {
           try {
             await this.handle(w);
           } catch (error) {
-            if (isReviewer) {
+            if (isReviewer || isResearcher) {
               w.state = "error";
-              w.error = `Reviewer thread startup unconfirmed: ${String(error)}. Inspect this Reviewer before replacing the axis; do not replay start.`;
+              w.error = `${isReviewer ? "Reviewer" : "Researcher"} thread startup unconfirmed: ${String(error)}. Inspect this agent before replacing it; do not replay start.`;
               this.save();
               return this.detail(w.id);
             }
@@ -1284,25 +1308,40 @@ export class Workspace {
           return this.detail(w.id);
         });
       }
+      case "researcher_list":
       case "reviewer_list":
       case "worker_list": {
         z.object(toolDefinitions[name].shape).parse(args);
         return this.state.agents
           .filter(
             (w) =>
-              w.role === (name === "reviewer_list" ? "reviewer" : "worker") &&
+              w.role ===
+                (name === "researcher_list"
+                  ? "researcher"
+                  : name === "reviewer_list"
+                    ? "reviewer"
+                    : "worker") &&
               w.ownerId === a.id &&
               !w.closed,
           )
           .map((w) => this.publicAgent(w));
       }
+      case "researcher_read":
       case "reviewer_read":
       case "worker_read": {
         const input = z.object(toolDefinitions[name].shape).parse(args);
         const w = this.ownedChild(
           a,
-          "workerId" in input ? input.workerId : input.reviewerId,
-          name === "worker_read" ? "worker" : "reviewer",
+          "workerId" in input
+            ? input.workerId
+            : "researcherId" in input
+              ? input.researcherId
+              : input.reviewerId,
+          name === "worker_read"
+            ? "worker"
+            : name === "researcher_read"
+              ? "researcher"
+              : "reviewer",
         );
         const end = input.before
           ? w.messages.findIndex((m) => m.id === input.before)
@@ -1317,22 +1356,31 @@ export class Workspace {
           nextBefore: start > 0 ? messages[0]?.id : null,
         };
       }
+      case "researcher_send":
       case "reviewer_send":
       case "worker_send": {
         const input = z.object(toolDefinitions[name].shape).parse(args);
         const w = this.ownedChild(
           a,
-          "workerId" in input ? input.workerId : input.reviewerId,
-          name === "worker_send" ? "worker" : "reviewer",
+          "workerId" in input
+            ? input.workerId
+            : "researcherId" in input
+              ? input.researcherId
+              : input.reviewerId,
+          name === "worker_send"
+            ? "worker"
+            : name === "researcher_send"
+              ? "researcher"
+              : "reviewer",
         );
         for (const id of input.questionIds ?? [])
           if (!w.questions.some((q) => q.id === id && q.state === "delegated"))
             throw new Error("Delegated question not found");
         return this.serialize(w.id, async () => {
           this.agent(w.id);
-          if (w.role === "reviewer" && !w.threadId)
+          if ((w.role === "reviewer" || w.role === "researcher") && !w.threadId)
             throw new Error(
-              "Reviewer thread startup is unconfirmed; inspect native history before replacing this axis",
+              `${w.role === "researcher" ? "Researcher" : "Reviewer"} thread startup is unconfirmed; inspect native history before replacing this agent`,
             );
           const previous = w.reviewTarget;
           let text = input.message;
@@ -1376,13 +1424,22 @@ export class Workspace {
           return this.detail(w.id);
         });
       }
+      case "researcher_close":
       case "reviewer_close":
       case "worker_close": {
         const input = z.object(toolDefinitions[name].shape).parse(args);
         const w = this.ownedChild(
           a,
-          "workerId" in input ? input.workerId : input.reviewerId,
-          name === "worker_close" ? "worker" : "reviewer",
+          "workerId" in input
+            ? input.workerId
+            : "researcherId" in input
+              ? input.researcherId
+              : input.reviewerId,
+          name === "worker_close"
+            ? "worker"
+            : name === "researcher_close"
+              ? "researcher"
+              : "reviewer",
         );
         if (this.treeActions.has(a.id))
           throw new Error("Tree settings are being saved");
@@ -1400,9 +1457,23 @@ export class Workspace {
         return {
           closed: w.closed,
           closing: !w.closed,
-          [w.role === "worker" ? "workerId" : "reviewerId"]: w.id,
+          [`${w.role}Id`]: w.id,
           reason: w.closed ? undefined : w.closeRequest.reason,
         };
+      }
+      case "researcher_report": {
+        const input = z
+          .object(toolDefinitions.researcher_report.shape)
+          .parse(args);
+        if (input.question !== a.researchQuestion)
+          throw new Error(
+            "Report question does not match assigned research question",
+          );
+        return this.report(
+          a,
+          `Researcher “${a.title}” reports (Question: ${a.researchQuestion}):\n\n${input.message}`,
+          crypto.randomUUID(),
+        );
       }
       case "reviewer_report": {
         const input = z
@@ -1439,13 +1510,23 @@ export class Workspace {
     owner.deliveries.push({
       id: requestId,
       text,
-      source: worker.role === "reviewer" ? "reviewer" : "worker",
-      ...(worker.role === "reviewer"
+      source:
+        worker.role === "researcher"
+          ? "researcher"
+          : worker.role === "reviewer"
+            ? "reviewer"
+            : "worker",
+      ...(worker.role === "researcher"
         ? {
-            reportingReviewerId: worker.id,
-            reviewTarget: structuredClone(worker.reviewTarget),
+            reportingResearcherId: worker.id,
+            researchQuestion: worker.researchQuestion,
           }
-        : { reportingWorkerId: worker.id }),
+        : worker.role === "reviewer"
+          ? {
+              reportingReviewerId: worker.id,
+              reviewTarget: structuredClone(worker.reviewTarget),
+            }
+          : { reportingWorkerId: worker.id }),
       status: "queued",
       questionIds: [],
       at: Date.now(),
@@ -1456,7 +1537,11 @@ export class Workspace {
         this.agent(owner.id),
         text,
         requestId,
-        worker.role === "reviewer" ? "reviewer" : "worker",
+        worker.role === "researcher"
+          ? "researcher"
+          : worker.role === "reviewer"
+            ? "reviewer"
+            : "worker",
       ),
     );
   }
@@ -1491,8 +1576,9 @@ export class Workspace {
           .find((a) => a.id === w.ownerId)
           ?.deliveries.some(
             (d) =>
-              (d.reportingWorkerId ?? d.reportingReviewerId) === w.id &&
-              d.status !== "sent",
+              (d.reportingWorkerId ??
+                d.reportingReviewerId ??
+                d.reportingResearcherId) === w.id && d.status !== "sent",
           )
       )
         reason =
@@ -1558,8 +1644,9 @@ export class Workspace {
       a.role !== "orc" &&
       this.agent(a.ownerId!).deliveries.some(
         (d) =>
-          (d.reportingWorkerId ?? d.reportingReviewerId) === a.id &&
-          d.status !== "sent",
+          (d.reportingWorkerId ??
+            d.reportingReviewerId ??
+            d.reportingResearcherId) === a.id && d.status !== "sent",
       )
     )
       throw new Error(`${a.title} has an undelivered report to Orc`);

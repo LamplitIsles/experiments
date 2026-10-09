@@ -272,6 +272,11 @@ test("Orc tools own their Workers while Workers can only report to their parent"
   const tokenA = runtime.agents.get(a.id)!.token;
   const tokenB = runtime.agents.get(b.id)!.token;
   expect(app.identity(tokenA).tools).toEqual([
+    "researcher_start",
+    "researcher_list",
+    "researcher_read",
+    "researcher_send",
+    "researcher_close",
     "worker_start",
     "worker_list",
     "worker_read",
@@ -710,7 +715,7 @@ test("stop targets only the observed Orc turn, waits for authoritative interrupt
     )?.status,
   ).toBe("failed");
   await expect(app.closeTree(orc.id)).rejects.toThrow(
-    "Workers and Reviewers first",
+    "Workers, Reviewers and Researchers first",
   );
   runtime.emit(orc.id, { type: "completed", turnId, status: "interrupted" });
   expect(app.detail(orc.id).state).toBe("idle");

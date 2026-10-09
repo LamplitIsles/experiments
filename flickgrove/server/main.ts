@@ -5,6 +5,7 @@ import { parseArgs } from "node:util";
 import {
   initializeReviewerConfig,
   reviewerSnapshot,
+  researcherSnapshot,
   orcPrompt,
 } from "./reviewer-config";
 import { CodexRuntime } from "./codex";
@@ -50,6 +51,7 @@ const app = new Workspace({
   runtime,
   projects: registeredProjects,
   orcPrompt: () => orcPrompt(configPath),
+  researcherSnapshot: () => researcherSnapshot(configPath),
   reviewerSnapshot: (profile) => reviewerSnapshot(configPath, profile),
 });
 const service = new HostService(app, {

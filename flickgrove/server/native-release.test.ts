@@ -16,12 +16,18 @@ async function closeRetry(shutdownFailure: string) {
       new URL("../tests/fake-codex.mjs", import.meta.url),
     ),
     env: {
-      ...process.env,
+      PATH: process.env.PATH,
+      HOME: join(directory, "user-home"),
+      XDG_CONFIG_HOME: join(directory, "config"),
+      XDG_DATA_HOME: join(directory, "data"),
       CODEX_HOME: join(directory, "home"),
       FAKE_SERVER_ROOT: directory,
     },
   });
-  const agent = (id: string, role: "orc" | "worker"): RuntimeAgent => ({
+  const agent = (
+    id: string,
+    role: "orc" | "worker" | "researcher",
+  ): RuntimeAgent => ({
     id,
     role,
     token: id,
@@ -37,7 +43,10 @@ async function closeRetry(shutdownFailure: string) {
     deliveries: [],
   });
   const a = agent("root", "orc"),
-    b = agent("worker", "worker");
+    b = agent(
+      "child",
+      shutdownFailure === "TimedOut" ? "researcher" : "worker",
+    );
   const loaded = async (id: string) =>
     JSON.parse(
       await readFile(join(directory, ".fake-app-server-state.json"), "utf8"),
@@ -123,6 +132,11 @@ async function closeRetry(shutdownFailure: string) {
         : Array.from({ length: 2 }, () => ({
             threadId: bh.threadId,
             excludeTurns: true,
+            config: {
+              "agents.enabled": false,
+              "features.multi_agent": false,
+              "features.multi_agent_v2": false,
+            },
           })),
     );
     expect(
