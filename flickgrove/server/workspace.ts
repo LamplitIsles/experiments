@@ -382,6 +382,13 @@ export class Workspace {
   async reconcileSettings(id: string) {
     return this.serialize(id, async () => {
       const a = this.agent(id);
+      // Passive selection/reconnect must not initialize a prefeature Orc.
+      if (
+        a.role === "orc" &&
+        a.orcPromptSnapshot === undefined &&
+        this.options.orcPrompt
+      )
+        return;
       const handle = await this.handle(a, false);
       const value = await handle.readSettings();
       if (this.disposed || a.closed || this.handles.get(id) !== handle) return;

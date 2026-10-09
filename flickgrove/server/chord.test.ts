@@ -79,15 +79,18 @@ function fixture() {
       cleanups.push(() => client.close());
       return client;
     },
-    restart() {
+    restart(orcPrompt?: () => Promise<string>) {
       service.dispose();
       app.dispose();
+      const restoredRuntime = new FakeRuntime();
       app = new Workspace({
         directory,
-        runtime: new FakeRuntime(),
+        orcPrompt,
+        runtime: restoredRuntime,
         projects: async () => fixtureProjects,
       });
       service = new HostService(app, { directory, origin: () => origin });
+      return restoredRuntime;
     },
   };
 }
@@ -491,4 +494,40 @@ test("nullable receipts over real Chord preserve image and answer admission boun
       error: null,
     }).success,
   ).toBe(false);
+});
+
+test("passive Chord select and reconnect preserve prefeature Orc until explicit restoration", async () => {
+  const f = fixture();
+  const a = await f.app.createOrc("alpha");
+  let captures = 0,
+    prompt = "Explicit captured scope";
+  const runtime = f.restart(async () => {
+    captures++;
+    return prompt;
+  });
+  const id = qualify(f.service.identity.id, a.id);
+  const first = await f.client();
+  await first.call("select", { ids: [id] });
+  first.close();
+  const reconnected = await f.client();
+  await reconnected.call("select", { ids: [id] });
+  expect(captures).toBe(0);
+  expect(runtime.agents.has(a.id)).toBe(false);
+  expect(runtime.settingsReads).toEqual([]);
+  await f.app.resumeHistory("alpha", a.threadId!, false);
+  expect(captures).toBe(1);
+  expect(runtime.agents.get(a.id)?.orcPromptSnapshot).toBe(prompt);
+  prompt = "Later configuration";
+  await reconnected.call("select", { ids: [id] });
+  await f.app.resumeHistory("alpha", a.threadId!, false);
+  await reconnected.call("send", {
+    id,
+    text: "Continue explicitly",
+    operationId: "explicit",
+  });
+  expect(captures).toBe(1);
+  expect(runtime.agents.get(a.id)?.orcPromptSnapshot).toBe(
+    "Explicit captured scope",
+  );
+  expect(runtime.settingsReads).toContain(a.id);
 });
