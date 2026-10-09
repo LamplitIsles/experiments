@@ -3,7 +3,7 @@
   import { ChevronLeft, ChevronRight } from "@lucide/svelte";
   import { Textarea } from "$lib/components/ui/textarea/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { storagePrefix } from "./api";
+  import { storagePrefix, readingCache } from "./api";
   import { tick, untrack } from "svelte";
   import type { Answer, Delivery, Question } from "./contracts";
   import * as m from "./paraglide/messages";
@@ -36,8 +36,8 @@
     const editing=e.target instanceof HTMLElement && e.target.closest('textarea,input:not([type=radio]),select,[contenteditable=true]');
     if(!editing && (e.key==='ArrowLeft' || e.key==='ArrowRight')) {e.preventDefault();e.stopPropagation();move(e.key==='ArrowLeft' ? -1 : 1);}
   }
-  function select(id: string) { currentId = id; localStorage.setItem(`${storageKey}/current`, id); }
-  function setDraft(q: Question, d: Draft) { select(q.id); drafts[q.id] = d; localStorage.setItem(storageKey, JSON.stringify(drafts)); }
+  function select(id: string) { currentId = id; readingCache.writeDevice(`${storageKey}/current`, id); }
+  function setDraft(q: Question, d: Draft) { select(q.id); drafts[q.id] = d; readingCache.writeDevice(storageKey, JSON.stringify(drafts)); }
   async function submit() {
     if (!connected || submitting || !pending.length || composing) return;
     const missing=pending.find(q=>!value(q));

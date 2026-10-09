@@ -45,7 +45,7 @@ function qualified<T extends Agent>(host: Host, a: T): T {
     stop: a.stop,
     closeRequest: a.closeRequest,
     historyCursor: a.historyCursor,
-    historyMessageCount: a.historyMessageCount,
+    historyBoundaryId: a.historyBoundaryId,
     hostId: host.id,
     hostName: host.name,
   };

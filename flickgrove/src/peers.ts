@@ -1,11 +1,7 @@
+import { readingCache } from "./api";
 import type { Agent, Detail, Host, Snapshot, Settings } from "./contracts";
 import { openGrove, type GroveClient } from "./chord-client";
-import {
-  settingsSchema,
-  snapshotSchema,
-  type Method,
-  type View,
-} from "./chord-contract";
+import { settingsSchema, type Method, type View } from "./chord-contract";
 import { z } from "zod";
 const identitySchema = z.object({
   id: z
@@ -74,7 +70,7 @@ export const preferences = {
     );
   },
   set treeOrder(value: Record<string, string[]>) {
-    localStorage.setItem(`${prefix}/tree-order`, JSON.stringify(value));
+    readingCache.writeDevice(`${prefix}/tree-order`, JSON.stringify(value));
   },
   get selection() {
     const result = selectionSchema.safeParse(read<unknown>("selection", null));
@@ -90,27 +86,27 @@ export const preferences = {
     };
   },
   set selection(value: { host: string; sessions: Record<string, string> }) {
-    localStorage.setItem(`${prefix}/selection`, JSON.stringify(value));
+    readingCache.writeDevice(`${prefix}/selection`, JSON.stringify(value));
   },
   get models() {
     const result = modelsSchema.safeParse(read<unknown>("models", []));
     return result.success ? result.data : [];
   },
   set models(value: import("./contracts").Model[]) {
-    localStorage.setItem(`${prefix}/models`, JSON.stringify(value));
+    readingCache.writeDevice(`${prefix}/models`, JSON.stringify(value));
   },
   get settings() {
     const value = settingsSchema.safeParse(read<unknown>("preferences", null));
     return value.success ? value.data : null;
   },
   set settings(value: Settings | null) {
-    localStorage.setItem(`${prefix}/preferences`, JSON.stringify(value));
+    readingCache.writeDevice(`${prefix}/preferences`, JSON.stringify(value));
   },
   get host() {
     return localStorage.getItem(`${prefix}/create-host`) ?? "";
   },
   set host(value: string) {
-    localStorage.setItem(`${prefix}/create-host`, value);
+    readingCache.writeDevice(`${prefix}/create-host`, value);
   },
 };
 type Link = {
@@ -179,14 +175,14 @@ export class Peers {
         for (const config of configs)
           if (config.id !== actual.id) this.add(config);
       }
-      localStorage.setItem(`${prefix}/entry`, JSON.stringify(actual));
+      readingCache.writeDevice(`${prefix}/entry`, JSON.stringify(actual));
     } catch (error) {
       if (!local) throw error;
     }
     this.publish();
   }
   private persist() {
-    localStorage.setItem(
+    readingCache.writeDevice(
       `${prefix}/peers`,
       JSON.stringify(
         [...this.links.values()]
@@ -196,19 +192,9 @@ export class Peers {
     );
   }
   private add(config: PeerConnection) {
-    const raw = read<{ agents: Agent[]; lastSeen?: number }>(
-      `peer-cache/${config.id}`,
-      { agents: [] },
-    );
-    const cached = snapshotSchema.safeParse({
-      agents: raw.agents,
-      settings: null,
-      revision: 0,
-    });
+    const raw = readingCache.readPeerSnapshot(config.id);
     const stored = {
-      agents: cached.success
-        ? cached.data.agents.filter((a) => a.hostId === config.id)
-        : [],
+      agents: raw.agents.filter((a) => a.hostId === config.id),
       lastSeen: Number.isFinite(raw.lastSeen) ? raw.lastSeen : undefined,
     };
     const link: Link = {
@@ -261,15 +247,18 @@ export class Peers {
             ...a,
             hostName: link.config.name,
           }));
+          const active = new Set(link.agents.map((a) => a.id));
+          for (const id of Object.keys(this.details))
+            if (id.startsWith(link.config.id + ":") && !active.has(id))
+              delete this.details[id];
           for (const [id, detail] of Object.entries(view.details))
-            this.details[id] = { ...detail, hostName: link.config.name };
+            if (active.has(id))
+              this.details[id] = { ...detail, hostName: link.config.name };
           link.host.lastSeen = Date.now();
-          localStorage.setItem(
-            `${prefix}/peer-cache/${link.config.id}`,
-            JSON.stringify({
-              agents: link.agents,
-              lastSeen: link.host.lastSeen,
-            }),
+          readingCache.savePeerSnapshot(
+            link.config.id,
+            link.agents,
+            link.host.lastSeen,
           );
           this.publish();
         },

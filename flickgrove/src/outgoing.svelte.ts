@@ -1,3 +1,4 @@
+import { readingCache } from "./api";
 import { saveImages, operationKey } from "./image-drafts";
 import { z } from "zod";
 import type { Detail, Answer } from "./contracts";
@@ -8,6 +9,7 @@ import {
   type Receipt,
 } from "./chord-contract";
 const prefix = `flickgrove/${location.origin}/outgoing/`;
+const confirmed = new Set<string>();
 const key = (o: Outgoing) =>
   `${prefix}${encodeURIComponent(o.agentId)}/${encodeURIComponent(o.id)}`;
 const entry = z.object({
@@ -73,10 +75,16 @@ function persist(o: Outgoing) {
   } catch {
     /* A malformed record supplies no receipt. */
   }
-  localStorage.setItem(
-    key(o),
-    JSON.stringify({ ...o, status: journalStatus(o.status) }),
-  );
+  try {
+    readingCache.writeDevice(
+      key(o),
+      JSON.stringify({ ...o, status: journalStatus(o.status) }),
+    );
+  } catch (error) {
+    // A new submission must be durable before sending. An existing journal or
+    // owner-confirmed receipt can still converge in memory when storage is full.
+    if (!raw && o.status !== "accepted") throw error;
+  }
 }
 export function addOutgoing(
   agentId: string,
@@ -119,15 +127,17 @@ export function addOutgoing(
   outgoing.entries.push(o);
 }
 export function receiptAlreadyAccepted(agentId: string, id: string) {
-  return !!localStorage.getItem(
-    `flickgrove/${location.origin}/accepted/${encodeURIComponent(agentId)}/${encodeURIComponent(id)}`,
-  );
+  const key = `flickgrove/${location.origin}/accepted/${encodeURIComponent(agentId)}/${encodeURIComponent(id)}`;
+  return confirmed.has(key) || !!localStorage.getItem(key);
 }
 function rememberAccepted(agentId: string, id: string) {
-  localStorage.setItem(
-    `flickgrove/${location.origin}/accepted/${encodeURIComponent(agentId)}/${encodeURIComponent(id)}`,
-    "true",
-  );
+  const key = `flickgrove/${location.origin}/accepted/${encodeURIComponent(agentId)}/${encodeURIComponent(id)}`;
+  confirmed.add(key);
+  try {
+    readingCache.writeDevice(key, "true");
+  } catch {
+    /* The owner receipt is still authoritative in this page. */
+  }
 }
 export function observeOutgoing(detail: Detail) {
   for (const delivery of detail.deliveries)

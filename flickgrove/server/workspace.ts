@@ -1,3 +1,4 @@
+import { splitMessages } from "../src/conversation-messages";
 import { ImageStore } from "./images";
 import { DirectoryBranches, type BranchReader } from "./directory-branches";
 import type { MessageImage } from "../src/contracts";
@@ -608,10 +609,7 @@ export class Workspace {
       cursor ?? agent.historyCursor,
     );
     const captured = new Map<string, Message[]>();
-    for (const message of agent.messages.slice(
-      0,
-      agent.historyMessageCount ?? 0,
-    )) {
+    for (const message of splitMessages(agent).historical) {
       if (!message.turnId) continue;
       const group = captured.get(message.turnId) ?? [];
       group.push(message);
@@ -711,10 +709,6 @@ export class Workspace {
             agent.serviceTier = handle.serviceTier ?? agent.serviceTier;
             this.state.agents.push(agent);
           }
-          agent.historyCursor = handle.historyCursor;
-          agent.historyMessageCount = handle.historyCursor
-            ? agent.messages.length
-            : undefined;
           agent.closed = false;
           agent.state = "idle";
           agent.error = undefined;
@@ -806,6 +800,10 @@ export class Workspace {
       try {
         handle = await opening;
         a.threadId = handle.threadId;
+        a.historyCursor = handle.historyCursor;
+        a.historyBoundaryId = handle.historyCursor
+          ? a.messages.at(-1)?.id
+          : undefined;
         a.model = handle.model ?? a.model;
         a.effort = handle.effort ?? a.effort;
         a.serviceTier = handle.serviceTier ?? a.serviceTier;

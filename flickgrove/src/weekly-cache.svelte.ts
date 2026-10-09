@@ -1,4 +1,4 @@
-import { api, storagePrefix } from "./api";
+import { api, storagePrefix, readingCache } from "./api";
 import type { WeeklyUsage } from "./contracts";
 export const weeklyCache = $state<Record<string, WeeklyUsage | null>>({});
 const requests = new Map<string, Promise<WeeklyUsage>>();
@@ -32,7 +32,7 @@ export function acceptWeekly(hostId: string | undefined, value?: WeeklyUsage) {
   const key = weeklyKey(hostId);
   if (value && validWeekly(value, hostId)) {
     weeklyCache[key] = value;
-    localStorage.setItem(
+    readingCache.writeDevice(
       `${storagePrefix}/weekly/${key}`,
       JSON.stringify(value),
     );

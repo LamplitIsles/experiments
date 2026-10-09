@@ -1,4 +1,4 @@
-import { storagePrefix } from "./api";
+import { storagePrefix, readingCache } from "./api";
 export const IMAGE_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
 export type ImageDraft = { id: string; file: File };
 type Record = { key: string; images: ImageDraft[]; text: string; at: number };
@@ -94,7 +94,7 @@ export async function restoreImages(
   const newerText = localStorage.getItem(textKey) ?? "";
   const recovered = newerText.trim() ? `${newerText}\n\n${text}` : text;
   await saveImages(draftKey(agent), combined);
-  localStorage.setItem(textKey, recovered);
+  readingCache.writeDevice(textKey, recovered);
   window.dispatchEvent(
     new CustomEvent("grove-image-recovery", { detail: agent }),
   );

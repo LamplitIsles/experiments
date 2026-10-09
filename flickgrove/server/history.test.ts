@@ -210,6 +210,8 @@ test("existing Orc history overlays captured turns across pages and retains exte
   const orc = await app.createOrc("alpha");
   await app.send(orc.id, "Captured in Grove", "grove-request");
   const capturedTurn = app.detail(orc.id).turnId!;
+  await app.send(orc.id, "Second input in the same turn", "grove-steer");
+  expect(app.detail(orc.id).turnId).toBe(capturedTurn);
   runtime.emit(orc.id, {
     type: "item",
     turnId: capturedTurn,
@@ -235,6 +237,13 @@ test("existing Orc history overlays captured turns across pages and retains exte
       at: 1,
     },
     {
+      id: "native-steer",
+      turnId: capturedTurn,
+      role: "user",
+      text: "Second input in the same turn",
+      at: 1,
+    },
+    {
       id: "native-answer",
       turnId: capturedTurn,
       role: "assistant",
@@ -250,14 +259,15 @@ test("existing Orc history overlays captured turns across pages and retains exte
     })),
   ]);
   const resumed = await app.resumeHistory("alpha", orc.threadId!, false);
-  expect(resumed.historyCursor).toBe("31");
-  expect(resumed.historyMessageCount).toBe(2);
+  expect(resumed.historyCursor).toBe("32");
+  expect(resumed.historyBoundaryId).toBe("native-answer");
   const latest = await app.agentHistory(orc.id);
   const earlier = await app.agentHistory(orc.id, latest.nextCursor!);
   // The captured turn spans both pages; every page substitutes the stable Grove IDs.
   expect(latest.messages[0].id).toBe("grove-request");
   expect(earlier.messages.map((m) => m.id)).toEqual([
     "grove-request",
+    "grove-steer",
     "native-answer",
   ]);
   const merged = [
@@ -266,8 +276,16 @@ test("existing Orc history overlays captured turns across pages and retains exte
     ).values(),
   ];
   expect(merged.filter((m) => m.text === "Captured in Grove")).toHaveLength(1);
+  expect(merged.filter((m) => m.id === "grove-steer")).toHaveLength(1);
   expect(merged.map((m) => m.text).slice(-1)).toEqual(["CLI continuation 28"]);
-  expect(app.detail(orc.id).messages).toHaveLength(2);
+  expect(app.detail(orc.id).messages).toHaveLength(3);
+  await app.send(orc.id, "New input after restoration", "after-restore");
+  expect(app.detail(orc.id).historyBoundaryId).toBe("native-answer");
+  expect(
+    (await app.agentHistory(orc.id)).messages.some(
+      (m) => m.id === "after-restore",
+    ),
+  ).toBe(false);
   const db = new Database(join(directory, "workspace.sqlite"), {
     readonly: true,
   });

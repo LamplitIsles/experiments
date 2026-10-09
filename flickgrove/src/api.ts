@@ -1,3 +1,4 @@
+import { ReadingCache } from "./reading-cache";
 import type { Peers } from "./peers";
 import { routeCall } from "./chord-contract";
 let client: Peers | undefined;
@@ -9,6 +10,7 @@ export function peers() {
   return client;
 }
 export const storagePrefix = `flickgrove/${location.origin}`;
+export const readingCache = new ReadingCache(localStorage, storagePrefix);
 export async function api<T>(path: string, body?: unknown): Promise<T> {
   if (!client) throw new Error("Connection offline. Outcome unknown.");
   if (path === "/snapshot") return client.snapshot() as T;

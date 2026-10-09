@@ -4,7 +4,7 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
   import { ImagePlus, X, ArrowUp, Square, Sparkles } from '@lucide/svelte';
-  import { storagePrefix } from './api';
+  import { storagePrefix, readingCache } from './api';
   import { imagePreview, loadImages, saveImages, draftKey, operationKey, intakeError, IMAGE_ACCEPT, type ImageDraft } from './image-drafts';
   import { onMount, tick, untrack } from 'svelte';
   import type { Skill } from './contracts';
@@ -49,7 +49,10 @@
   function paste(e:ClipboardEvent) { const files=Array.from(e.clipboardData?.items ?? []).filter(i=>i.kind==='file' && i.type.startsWith('image/')).map(i=>i.getAsFile()).filter((i):i is File=>!!i);if(files.length){e.preventDefault();void addFiles(files);} }
 
   const skillOpen = $derived(navigation.surfaces.includes("skill")); let insertion = {start:0,end:0};
-  $effect(() => { localStorage.setItem(`${storagePrefix}/composer/${agentId}`, text); });
+  $effect(() => {
+    try { readingCache.writeDevice(`${storagePrefix}/composer/${agentId}`, text); }
+    catch(e) { imageError=(e as Error).message; }
+  });
   export function imageRecoveryError(value:string) {imageError=value;}
   export function recover(value: string) { text = text.trim() ? `${text}\n\n${value}` : value; void tick().then(() => input?.focus()); }
   async function restoreInput() { await tick(); input?.focus(); input?.setSelectionRange(insertion.start,insertion.end); }
@@ -72,7 +75,9 @@
         const stored=await loadImages(draftKey(agentId));
         if(JSON.stringify(stored?.images.map(i=>i.id) ?? [])===JSON.stringify(frozen.map(i=>i.id)))await saveImages(draftKey(agentId),[]);
       }
-      if(localStorage.getItem(`${storagePrefix}/composer/${agentId}`)?.trim()===value)localStorage.setItem(`${storagePrefix}/composer/${agentId}`,'');
+      try {
+        if(localStorage.getItem(`${storagePrefix}/composer/${agentId}`)?.trim()===value)readingCache.writeDevice(`${storagePrefix}/composer/${agentId}`,'');
+      } catch { /* The submission is already journalled; draft cleanup cannot block sending. */ }
       if(active && version===revision){ images=[];text='';revision++; }
       void onsend(agentId,value,id,frozen);
       await tick(); input?.focus();

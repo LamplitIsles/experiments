@@ -17,7 +17,8 @@ test("pending lookup preserves identity and accepted results are monotonic", asy
       .replace(
         '"./chord-contract"',
         JSON.stringify(import.meta.dir + "/../src/chord-contract.ts"),
-      );
+      )
+      .replace('"./api"', JSON.stringify(import.meta.dir + "/../src/api.ts"));
     const compiled = compileModule(source, {
       filename: sourcePath,
       generate: "client",
@@ -42,12 +43,16 @@ test("pending lookup preserves identity and accepted results are monotonic", asy
       `
       import { strict as assert } from "node:assert";
       const records = new Map();
+      let rejectAccepted = false, rejectAll = false;
       const prefix = "flickgrove/http://fixture.invalid/outgoing/peer%3Aorc/";
       const images = [{id:"a".repeat(64),name:"kept.png",width:8,height:8,bytes:80,mediaType:"image/png"}];
       for (const [id,status] of [["held","sending"],["unknown","uncertain"],["confirmed","sent"],["refused","failed"]])
         records.set(prefix+id,JSON.stringify({agentId:"peer:orc",id,text:"kept "+id,at:123,status,images,localImageIds:["local-image"],answers:[{questionId:"original",answer:"kept answer"}]}));
       Object.assign(globalThis, {location: {origin: "http://fixture.invalid"}, window: {addEventListener() {}}, localStorage: new Proxy({
-        getItem: key => records.get(key) ?? null, setItem: (key, value) => records.set(key, value), removeItem: key => records.delete(key)
+        getItem: key => records.get(key) ?? null, setItem: (key, value) => {
+          if(rejectAll || (rejectAccepted && key.includes('/accepted/')))throw new DOMException('full','QuotaExceededError');
+          records.set(key, value);
+        }, removeItem: key => records.delete(key)
       }, {ownKeys:()=>[...records.keys()],getOwnPropertyDescriptor:()=>({enumerable:true,configurable:true})})});
       const {addOutgoing, acceptReceipt, observeOutgoing, outgoing, receiptAlreadyAccepted, withOutgoing, submissionResult} = await import("./outgoing.mjs");
       assert.deepEqual(outgoing.entries.map(o=>[o.id,o.status]),[["held","pending"],["unknown","pending"],["confirmed","accepted"],["refused","rejected"]]);
@@ -120,6 +125,17 @@ test("pending lookup preserves identity and accepted results are monotonic", asy
       mutableImages[0].name = "changed outside";
       assert.equal(outgoing.entries.find(o=>o.id==="image").images[0].name,"kept.png");
       assert.throws(()=>addOutgoing("peer:orc","image","image",undefined,[...mutableImages],["local-image"]),/bound/);
+      // A full device can retain the owner-confirmed result in this page without
+      // pretending that a new unjournalled submission was saved successfully.
+      rejectAccepted = true;
+      addOutgoing('peer:orc','quota confirmation','quota-confirmed');
+      observeOutgoing({id:'peer:orc',messages:[{id:'quota-confirmed',role:'user'}],deliveries:[]});
+      assert.equal(receiptAlreadyAccepted('peer:orc','quota-confirmed'),true);
+      assert.equal(outgoing.entries.some(o=>o.id==='quota-confirmed'),false);
+      assert.equal(localStorage.getItem('flickgrove/http://fixture.invalid/accepted/peer%3Aorc/quota-confirmed'),null);
+      rejectAll = true;
+      assert.throws(()=>addOutgoing('peer:orc','must journal first','quota-new'),/full/);
+      assert.equal(outgoing.entries.some(o=>o.id==='quota-new'),false);
     `,
     );
     const child = Bun.spawn([process.execPath, join(directory, "check.ts")], {

@@ -9,7 +9,8 @@
   import { X, Plus, History, Settings as SettingsIcon } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { navigation, initializeNavigation, resumeFilePreview, openConversation, setSurface, back, validateNavigation } from "./navigation.svelte";
-  import { storagePrefix } from "./api";
+  import { readingCache } from "./api";
+  import { retainTranscriptPositions } from "./transcript-state";
   import { Peers, preferences } from "./peers";
   import { onMount, tick, untrack } from "svelte";
   import type { Answer, Agent, Detail, HistorySession, Model, Project, Settings, Skill, Snapshot } from "./contracts";
@@ -124,7 +125,7 @@
     const seq = ++sequence;
     try {
       const result = await api<Detail>(`/agents/${id}`);
-      if (selectedId === id && seq === sequence) { observeOutgoing(result); detail = result; localStorage.setItem(`${storagePrefix}/detail/${id}`, JSON.stringify(result)); }
+      if (selectedId === id && seq === sequence) { observeOutgoing(result); detail = result; readingCache.saveDetail(result); }
     } catch (e) { if (selectedId === id && seq === sequence && connected) error = e instanceof Error ? e.message : m.load_failure(); }
   }
   function open(id: string, fromDetail = false) { openConversation(id, fromDetail, snapshot.agents.find(a => a.id === id)?.ownerId); }
@@ -134,7 +135,7 @@
     // Unwinding nested history can briefly restore the previous host's owner.
     if (!switchingHost || host === hostFilter) remembered = { ...remembered, [host]: id };
     if (!switchingHost) hostFilter = host;
-    const cached = localStorage.getItem(`${storagePrefix}/detail/${id}`); detail = cached ? JSON.parse(cached) : null; skills = [];
+    if (detail?.id !== id) detail = readingCache.readDetail(id); skills = [];
     if (hosts.find(h=>h.id===id.split(":")[0])?.connected) {
       void client?.call('select', {ids:[id]}).catch(e => { if(selectedId === id) error = e instanceof Error ? e.message : m.load_failure(); });
       if (snapshot.agents.find(a => a.id === id)?.role === "orc" && hosts.find(h => h.id === snapshot.agents.find(a => a.id === id)?.hostId)?.connected) {
@@ -160,7 +161,14 @@
       }
       treeOrder = order;
     }
-    snapshot = value; localStorage.setItem(`${storagePrefix}/snapshot`, JSON.stringify(value));
+    snapshot = value;
+    if (authoritative) for (const host of value.hosts ?? []) {
+      if (!host.connected) continue;
+      const active = new Set(value.agents.filter(a => a.hostId === host.id).map(a => a.id));
+      readingCache.prunePeer(host.id, active);
+      retainTranscriptPositions(host.id, active);
+    }
+    readingCache.saveSnapshot(value);
     historyCache.retain(new Set(value.agents.map(a => a.id)));
     const valid = new Set(value.agents.map(a => a.id));
     for (const id of [...navigation.details, ...Object.values(remembered)]) {
@@ -387,8 +395,8 @@
     else if (event.key === "?") { event.preventDefault(); void show("keys"); }
   }
   onMount(() => {
-    const cached = localStorage.getItem(`${storagePrefix}/snapshot`); if (cached) {const saved=JSON.parse(cached);snapshot={...saved,hosts:saved.hosts?.map((h:import("./contracts").Host)=>({...h,connected:false}))};}
-    const cachedDetail = selectedId && localStorage.getItem(`${storagePrefix}/detail/${selectedId}`); if (cachedDetail) detail = JSON.parse(cachedDetail);
+    const cached = readingCache.readSnapshot(); if (cached) snapshot={...cached,hosts:cached.hosts?.map(h=>({...h,connected:false}))};
+    if (selectedId) detail = readingCache.readDetail(selectedId);
     const cleanupNavigation = initializeNavigation(selectedId);
     navigationReady = true;
     const initialId = navigation.details.at(-1);
@@ -405,7 +413,7 @@
       notifications(before,value.snapshot);
       adopt(value.snapshot,true);const entry=value.snapshot.hosts?.find(h=>h.id===value.snapshot.entryId);loading=!!entry&&!entry.connected&&!entry.error;
       const incoming=selectedId&&value.details[selectedId];
-      if(incoming){observeOutgoing(incoming);detail=incoming;localStorage.setItem(`${storagePrefix}/detail/${incoming.id}`,JSON.stringify(incoming));}
+      if(incoming && value.snapshot.agents.some(a=>a.id===incoming.id)){observeOutgoing(incoming);detail=incoming;readingCache.saveDetail(incoming);}
       void reconcilePending();
       if(selectedId){const id=selectedId.split(":")[0];if(!before.hosts?.find(h=>h.id===id)?.connected&&value.snapshot.hosts?.find(h=>h.id===id)?.connected)void restoreDetail(selectedId);}
       if(!entryWasConnected&&value.snapshot.hosts?.find(h=>h.id===value.snapshot.entryId)?.connected){

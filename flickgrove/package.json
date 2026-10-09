@@ -8,7 +8,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
-    "test": "bun test server tests/skill-search.test.ts tests/history-cache.test.ts tests/message-image-cache.test.ts tests/message-time.test.ts",
+    "test": "bun test server tests/skill-search.test.ts tests/history-cache.test.ts tests/message-image-cache.test.ts tests/message-time.test.ts tests/reading-cache.test.ts",
     "test:browser": "playwright test"
   },
   "dependencies": {

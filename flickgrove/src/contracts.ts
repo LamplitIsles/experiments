@@ -100,7 +100,7 @@ export interface Agent {
   treeFastError?: string;
   directoryBranch?: string;
   historyCursor?: string;
-  historyMessageCount?: number;
+  historyBoundaryId?: string;
   closeRequest?: {
     reason: string;
   };

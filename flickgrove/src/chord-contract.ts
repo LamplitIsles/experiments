@@ -149,7 +149,7 @@ const agent = z.object({
   workingSince: z.number().optional(),
   error: z.string().optional(),
   historyCursor: z.string().optional(),
-  historyMessageCount: z.number().optional(),
+  historyBoundaryId: id.optional(),
   closeRequest: z.object({ reason: z.string() }).optional(),
   stop: z
     .object({
