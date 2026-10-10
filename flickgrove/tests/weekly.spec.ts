@@ -10,40 +10,36 @@ test("page Peer quota cache survives failure, missing data, reload and a differe
   await request.post(origin + "/fixture/change", { data: { usage: 64 } });
   await page.goto(origin);
   const ring = page.locator(".app-header .weekly-button strong");
-  await expect(ring).toHaveText("64%");
-  await page
-    .getByRole("button", { name: "Weekly remaining", exact: true })
-    .click();
+  await expect(ring).toHaveText("36%");
+  await page.getByRole("button", { name: "Weekly usage", exact: true }).click();
   await expect(page.locator(".weekly-source")).toContainText("Resets");
   await request.post(origin + "/fixture/change", {
     data: { quotaFailure: true },
   });
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(ring).toHaveText("64%");
+  await expect(ring).toHaveText("36%");
   await page.reload();
-  await expect(ring).toHaveText("64%");
+  await expect(ring).toHaveText("36%");
   await page.getByRole("button", { name: "Neil’s Mac", exact: true }).click();
   await page
     .getByRole("button", { name: "Open Reader performance Orc" })
     .click();
-  await page
-    .getByRole("button", { name: "Weekly remaining", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Weekly usage", exact: true }).click();
   await request.post(origin + "/fixture/change", {
     data: { quotaFailure: false, usage: null },
   });
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(ring).toHaveText("64%");
+  await expect(ring).toHaveText("36%");
   await request.post(origin + "/fixture/change", {
     data: { usage: 47, quotaResets: null },
   });
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(ring).toHaveText("47%");
+  await expect(ring).toHaveText("53%");
   await expect(page.locator(".weekly-source")).not.toContainText("Resets");
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator(".mobile-back .weekly-button strong")).toHaveText(
-    "47%",
+    "53%",
   );
 });
 
@@ -56,7 +52,7 @@ test("model refresh failure retains available choices and recovery refreshes the
   });
   await page.goto(origin);
   await expect(page.locator(".app-header .weekly-button strong")).toHaveText(
-    "72%",
+    "28%",
   );
   await request.post(origin + "/fixture/change", {
     data: { modelFailure: true },
@@ -93,9 +89,11 @@ for (const width of [1440, 390]) {
     await page.clock.install({ time: instant });
     await page.goto(origin);
     const button = page.locator(".app-header .weekly-button");
-    await expect(button.locator("strong")).toHaveText("30%");
+    await expect(button.locator("strong")).toHaveText("70%");
+    await expect(button).toHaveAccessibleName("Weekly usage");
+    await expect(button.locator("span")).toHaveText("Weekly usage");
     await expect(button).toHaveAccessibleDescription(
-      "Remaining account quota: 30%; Quota used: 70%; Period elapsed: 60%",
+      "Quota used: 70%; Period elapsed: 60%",
     );
     await expect(button.locator(".elapsed-value")).toHaveAttribute(
       "stroke-dasharray",
@@ -106,7 +104,7 @@ for (const width of [1440, 390]) {
       "70 100",
     );
     await page.screenshot({
-      path: `../.scratch/weekly-used-ring/${width}-collapsed.png`,
+      path: `../.scratch/weekly-used-primary/${width}-collapsed.png`,
     });
     await button.click();
     const detail = page.locator(".weekly-popover");
@@ -118,16 +116,25 @@ for (const width of [1440, 390]) {
       "stroke-dasharray",
       "70 100",
     );
-    await expect(detail.locator(".weekly-number strong")).toHaveText("30%");
+    await expect(detail.locator(".weekly-number strong")).toHaveText("70%");
     await expect(detail.locator(".weekly-number")).toHaveAccessibleName(
-      "Remaining account quota: 30%; Quota used: 70%; Period elapsed: 60%",
+      "Quota used: 70%; Period elapsed: 60%",
     );
-    await expect(detail).toContainText("Quota used70%");
+    await expect(detail.locator(".weekly-number span")).toHaveText(
+      "Quota used",
+    );
+    await expect(detail.getByText("Quota used", { exact: true })).toHaveCount(
+      1,
+    );
     await expect(detail).toContainText("Period elapsed60%");
-    await expect(detail).toContainText("Remaining account quota");
+    await expect(detail).not.toContainText("Remaining account quota");
+    await expect(detail).toHaveAccessibleName("Weekly usage");
+    await expect(detail.locator("h2")).toHaveText("Weekly usage");
+    await expect(detail).toContainText("Account");
+    await expect(detail).toContainText("Source");
     await expect(detail).toContainText("Resets");
     await page.screenshot({
-      path: `../.scratch/weekly-used-ring/${width}-expanded.png`,
+      path: `../.scratch/weekly-used-primary/${width}-expanded.png`,
     });
     if (width === 390) {
       await page.keyboard.press("Escape");
@@ -135,15 +142,21 @@ for (const width of [1440, 390]) {
         .getByRole("button", { name: "Open Streaming voice input Orc" })
         .click();
       const mobile = page.locator(".mobile-back .weekly-button");
+      await expect(mobile).toHaveAccessibleName("Weekly usage");
+      await expect(mobile.locator("strong")).toHaveText("70%");
       await expect(mobile).toHaveAccessibleDescription(
-        "Remaining account quota: 30%; Quota used: 70%; Period elapsed: 60%",
+        "Quota used: 70%; Period elapsed: 60%",
       );
       await page.screenshot({
-        path: "../.scratch/weekly-used-ring/390-conversation-collapsed.png",
+        path: "../.scratch/weekly-used-primary/390-conversation-collapsed.png",
       });
       await mobile.click();
+      await expect(detail.locator(".weekly-number strong")).toHaveText("70%");
+      await expect(detail.locator(".weekly-number span")).toHaveText(
+        "Quota used",
+      );
       await page.screenshot({
-        path: "../.scratch/weekly-used-ring/390-conversation-expanded.png",
+        path: "../.scratch/weekly-used-primary/390-conversation-expanded.png",
       });
       await page.keyboard.press("Escape");
       await page.keyboard.press("Escape");
@@ -154,14 +167,14 @@ for (const width of [1440, 390]) {
     });
     await page.clock.fastForward(week * 0.1);
     await expect(button).toHaveAccessibleDescription(
-      "Remaining account quota: 30%; Quota used: 70%; Period elapsed: 70%",
+      "Quota used: 70%; Period elapsed: 70%",
     );
     await page.clock.fastForward(week);
     await expect(button.locator(".elapsed-value")).toHaveAttribute(
       "stroke-dasharray",
       "100 100",
     );
-    await expect(button.locator("strong")).toHaveText("30%");
+    await expect(button.locator("strong")).toHaveText("70%");
     await request.post(origin + "/fixture/change", {
       data: {
         quotaFailure: false,
@@ -170,7 +183,7 @@ for (const width of [1440, 390]) {
       },
     });
     await detail.getByRole("button", { name: "Refresh", exact: true }).click();
-    await expect(button.locator("strong")).toHaveText("15%");
+    await expect(button.locator("strong")).toHaveText("85%");
     await expect(button.locator(".elapsed-value")).toHaveAttribute(
       "stroke-dasharray",
       "0 100",
@@ -193,10 +206,10 @@ for (const width of [1440, 390]) {
     });
     await detail.getByRole("button", { name: "Refresh", exact: true }).click();
     await expect(button).toHaveAccessibleDescription(
-      "Remaining account quota: 15%; Quota used: 85%; Period elapsed: 60%",
+      "Quota used: 85%; Period elapsed: 60%",
     );
     await page.screenshot({
-      path: `../.scratch/weekly-used-ring/${width}-low-quota.png`,
+      path: `../.scratch/weekly-used-primary/${width}-low-quota.png`,
     });
     for (const remaining of [100, 0, 21, 20]) {
       await request.post(origin + "/fixture/change", {
@@ -205,12 +218,14 @@ for (const width of [1440, 390]) {
       await detail
         .getByRole("button", { name: "Refresh", exact: true })
         .click();
-      await expect(button.locator("strong")).toHaveText(`${remaining}%`);
+      await expect(button.locator("strong")).toHaveText(`${100 - remaining}%`);
       await expect(button.locator(".ring-value")).toHaveAttribute(
         "stroke-dasharray",
         `${100 - remaining} 100`,
       );
-      await expect(detail).toContainText(`Quota used${100 - remaining}%`);
+      await expect(detail.locator(".weekly-number strong")).toHaveText(
+        `${100 - remaining}%`,
+      );
       if (remaining <= 20)
         await expect(button.locator("svg")).toHaveClass(/low/);
       else await expect(button.locator("svg")).not.toHaveClass(/low/);
@@ -251,14 +266,14 @@ test("unknown quota and tab return keep time semantics", async ({
   await button.click();
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(button).toHaveAccessibleDescription(
-    "Remaining account quota: 30%; Quota used: 70%; Period elapsed: 60%",
+    "Quota used: 70%; Period elapsed: 60%",
   );
   await page.clock.setSystemTime(instant + week * 0.1);
   await page.evaluate(() =>
     document.dispatchEvent(new Event("visibilitychange")),
   );
   await expect(button).toHaveAccessibleDescription(
-    "Remaining account quota: 30%; Quota used: 70%; Period elapsed: 70%",
+    "Quota used: 70%; Period elapsed: 70%",
   );
 });
 
@@ -281,7 +296,7 @@ test("initially unknown quota retains supplied reset without replacing later num
     "0 100",
   );
   await expect(button).toHaveAccessibleDescription(
-    "Remaining account quota: Weekly usage unavailable; Period elapsed: 60%",
+    "Quota used: Weekly usage unavailable; Period elapsed: 60%",
   );
   await button.click();
   const detail = page.locator(".weekly-popover");
@@ -294,6 +309,10 @@ test("initially unknown quota retains supplied reset without replacing later num
       resetAt,
     ),
   );
+  await expect(detail.locator(".weekly-number strong")).toHaveText("—");
+  await expect(detail.locator(".weekly-number span")).toHaveText(
+    "Weekly usage unavailable",
+  );
   await expect(detail).not.toContainText("Quota used");
   await expect(detail).toContainText("Period elapsed60%");
   await request.post(origin + "/fixture/change", {
@@ -305,6 +324,10 @@ test("initially unknown quota retains supplied reset without replacing later num
     "stroke-dasharray",
     "0 100",
   );
+  await expect(detail.locator(".weekly-number strong")).toHaveText("—");
+  await expect(detail.locator(".weekly-number span")).toHaveText(
+    "Weekly usage unavailable",
+  );
   await expect(detail).not.toContainText("Quota used");
   await expect(detail).toContainText("Period elapsed60%");
   await expect(resetRow).toBeVisible();
@@ -312,13 +335,13 @@ test("initially unknown quota retains supplied reset without replacing later num
     data: { quotaFailure: false, usage: 30 },
   });
   await detail.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(button.locator("strong")).toHaveText("30%");
+  await expect(button.locator("strong")).toHaveText("70%");
   await request.post(origin + "/fixture/change", {
     data: { usage: null, quotaResets: resetAt + week / 1000 },
   });
   await detail.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(button).toHaveAccessibleDescription(
-    "Remaining account quota: 30%; Quota used: 70%; Period elapsed: 60%",
+    "Quota used: 70%; Period elapsed: 60%",
   );
   await expect(resetRow.locator("dd")).toHaveText(
     await page.evaluate(

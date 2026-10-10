@@ -39,12 +39,19 @@ for (const surface of [
           .click();
       } else await page.locator(".session-open").first().click();
       await expect(page.locator(".agent-detail")).toBeVisible();
-      if (surface === "skill")
+      if (surface === "skill") {
+        await expect(
+          page.getByRole("button", { name: "Add images", exact: true }),
+        ).toBeEnabled();
         await page
           .getByRole("textbox", { name: "Message Orc", exact: true })
           .press("Alt+KeyS");
+      }
       if (surface === "weekly")
-        await page.locator(".mobile-back .weekly-button").click();
+        await page
+          .locator(".mobile-back")
+          .getByRole("button", { name: "Weekly usage", exact: true })
+          .click();
       if (surface === "title")
         await page
           .getByRole("button", { name: "Edit title", exact: true })

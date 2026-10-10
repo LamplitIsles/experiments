@@ -15,7 +15,7 @@ async function selected(page: import("@playwright/test").Page) {
 }
 async function capture(page: import("@playwright/test").Page, file: string) {
   await page.evaluate(() => document.fonts.ready);
-  // Visibility assertions do not wait for daisyUI's dialog opacity transition.
+  // Finish dialog transitions before capturing their rendered state.
   await page.evaluate(async () => {
     await new Promise<void>((resolve) =>
       requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
@@ -38,7 +38,6 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await request.post("/fixture/reset", { data: {} });
   await selected(page);
   await page.getByRole("button", { name: "Expand Workers" }).first().click();
-  await page.getByRole("button", { name: "Expand Workers" }).click();
   await capture(page, "multi-01");
   await expect(
     page
@@ -47,10 +46,10 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   ).toHaveAttribute("aria-pressed", "true");
   await capture(page, "multi-02");
   const info = await (await request.get("/fixture/info")).json();
-  await page
-    .getByRole("group", { name: "Host filter" })
-    .getByRole("button", { name: "NUC", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Neil’s Mac", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Open Reader performance Orc" }),
+  ).toBeVisible();
   await capture(page, "multi-10");
   await page
     .getByRole("group", { name: "Host filter" })
@@ -114,6 +113,7 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await request.post("/fixture/reset", { data: {} });
   await page.evaluate(() => localStorage.clear());
   await selected(page);
+  await page.getByRole("button", { name: "Neil’s Mac", exact: true }).click();
   await page
     .getByRole("button", { name: "Open Reader performance Orc" })
     .click();
@@ -138,6 +138,8 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
       .locator("..")
       .locator(".worker-disclosure"),
   ).toHaveAttribute("title", "2 open Workers · 1 working");
+  await page.getByRole("button", { name: "Neil’s Mac", exact: true }).click();
+  await page.getByRole("button", { name: "‹ Sessions", exact: true }).click();
   await expect(
     page
       .getByRole("button", { name: "Open Reader performance Orc" })
@@ -145,13 +147,14 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
       .locator(".worker-disclosure"),
   ).toHaveAttribute("title", "1 open Workers · 1 working");
   await capture(page, "multi-13");
+  await page.getByRole("button", { name: "NUC", exact: true }).click();
+  await page.getByRole("button", { name: "‹ Sessions", exact: true }).click();
   await page
     .getByRole("button", { name: "Open Streaming voice input Orc" })
     .click();
   await capture(page, "multi-14");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("button", { name: "Expand Workers" }).first().click();
-  await page.getByRole("button", { name: "Expand Workers" }).click();
   await capture(page, "controls-01");
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("");
@@ -180,24 +183,20 @@ test("all 29 mapped design states use the real UI with isolated Hub fixtures", a
   await page.evaluate(() => localStorage.clear());
   await selected(page);
   await page.getByRole("button", { name: "Expand Workers" }).first().click();
-  await page.getByRole("button", { name: "Expand Workers" }).click();
-  await page
-    .getByRole("button", { name: "Weekly remaining", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Weekly usage", exact: true }).click();
   await capture(page, "controls-09");
   await request.post("/fixture/change", { data: { usage: 12 } });
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(page.locator(".weekly-number strong")).toHaveText("12%");
+  await expect(page.locator(".weekly-number strong")).toHaveText("88%");
   await capture(page, "controls-10");
   await request.post("/fixture/change", { data: { usage: null } });
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(page.locator(".weekly-number strong")).toHaveText("12%");
+  await expect(page.locator(".weekly-number strong")).toHaveText("88%");
   await capture(page, "controls-11");
   await request.post("/fixture/reset", { data: {} });
   await page.evaluate(() => localStorage.clear());
   await selected(page);
   await page.getByRole("button", { name: "Expand Workers" }).first().click();
-  await page.getByRole("button", { name: "Expand Workers" }).click();
   await request.post("/fixture/change", { data: { stopMode: "unknown" } });
   await page.getByRole("button", { name: "Stop Orc", exact: true }).click();
   await expect(page.getByText(/Stop outcome unknown/)).toBeVisible();
@@ -279,8 +278,8 @@ test("two access devices keep independent view/drafts while answers and outages 
         .getByRole("button", { name: "Send all answers", exact: true })
         .click(),
     ]);
-    await expect(left.getByText("All 1 answers sent")).toBeVisible();
-    await expect(right.getByText("All 1 answers sent")).toBeVisible();
+    await expect(left.locator(".question-panel")).toHaveCount(0);
+    await expect(right.locator(".question-panel")).toHaveCount(0);
     await expect(
       left.getByRole("textbox", { name: "Message Orc" }),
     ).toHaveValue("Desktop draft");
@@ -300,11 +299,9 @@ test("two access devices keep independent view/drafts while answers and outages 
         m.text.includes("Answer: Recommended choice"),
       ),
     ).toHaveLength(1);
-    await right.locator(".question-panel-heading button").click();
-    await expect(right.locator(".question-panel")).toHaveCount(0);
     await right.getByRole("button", { name: "‹ Sessions" }).click();
     await right
-      .getByRole("button", { name: "Open Reader performance Orc" })
+      .getByRole("button", { name: "Neil’s Mac", exact: true })
       .click();
     await expect(
       right.getByRole("heading", { name: "Reader performance", exact: true }),
@@ -392,9 +389,7 @@ test("mobile supplementary forms, Stop and quota stay operable within 390 pixels
   await expect(
     page.getByRole("textbox", { name: "Message Orc" }),
   ).toBeFocused();
-  await page
-    .getByRole("button", { name: "Weekly remaining", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Weekly usage", exact: true }).click();
   await expect(
     page
       .locator(".weekly-source dd")
@@ -405,12 +400,11 @@ test("mobile supplementary forms, Stop and quota stay operable within 390 pixels
     .getByRole("button", { name: "Close", exact: true })
     .click();
   await page.getByRole("button", { name: "‹ Sessions" }).click();
-  await page
-    .getByRole("button", { name: "Open Streaming voice input Orc" })
-    .click();
-  await page
-    .getByRole("button", { name: "Weekly remaining", exact: true })
-    .click();
+  await page.getByRole("button", { name: "NUC", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Streaming voice input", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Weekly usage", exact: true }).click();
   await expect(
     page
       .locator(".weekly-source dd")
