@@ -23,14 +23,25 @@ export function loadWeekly(hostId?: string) {
 function validWeekly(value: WeeklyUsage, hostId?: string) {
   return (
     value.hostId === hostId &&
-    typeof value.remaining === "number" &&
-    Number.isFinite(value.remaining) &&
+    ((typeof value.remaining === "number" &&
+      Number.isFinite(value.remaining)) ||
+      (value.remaining === null &&
+        typeof value.resetsAt === "number" &&
+        Number.isFinite(value.resetsAt) &&
+        value.resetsAt > 0)) &&
     Number.isFinite(value.fetchedAt)
   );
 }
 export function acceptWeekly(hostId: string | undefined, value?: WeeklyUsage) {
   const key = weeklyKey(hostId);
-  if (value && validWeekly(value, hostId)) {
+  loadWeekly(hostId);
+  // Reset-only metadata is useful before quota is known, but cannot replace
+  // the last successful numeric quota and its matching window.
+  if (
+    value &&
+    validWeekly(value, hostId) &&
+    (value.remaining !== null || weeklyCache[key]?.remaining == null)
+  ) {
     weeklyCache[key] = value;
     readingCache.writeDevice(
       `${storagePrefix}/weekly/${key}`,

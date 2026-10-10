@@ -152,9 +152,7 @@ function unit(
       remaining: usage,
       fetchedAt: Date.now(),
       accountId: name === "NUC" ? "fixture-nuc-account" : "fixture-mac-account",
-      ...(usage === null || quotaResets === undefined
-        ? {}
-        : { resetsAt: quotaResets }),
+      ...(quotaResets === undefined ? {} : { resetsAt: quotaResets }),
     };
   };
   runtime.sendOverride = async (_id, _text, turnId) => {
