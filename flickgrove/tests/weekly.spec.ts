@@ -202,7 +202,9 @@ test("unknown quota and tab return keep time semantics", async ({
   await request.post(origin + "/fixture/reset", {
     data: { mode: "no-workers" },
   });
-  await request.post(origin + "/fixture/change", { data: { usage: null } });
+  await request.post(origin + "/fixture/change", {
+    data: { usage: null, quotaResets: null },
+  });
   await page.clock.install({ time: instant });
   await page.goto(origin);
   const button = page.locator(".app-header .weekly-button");
@@ -222,5 +224,61 @@ test("unknown quota and tab return keep time semantics", async ({
   );
   await expect(button).toHaveAccessibleDescription(
     "Remaining account quota: 30%; Period elapsed: 70%",
+  );
+});
+
+test("initially unknown quota retains supplied reset without replacing later numeric quota", async ({
+  page,
+  request,
+}) => {
+  await request.post(origin + "/fixture/reset", {
+    data: { mode: "no-workers" },
+  });
+  await request.post(origin + "/fixture/change", {
+    data: { usage: null, quotaResets: resetAt },
+  });
+  await page.clock.install({ time: instant });
+  await page.goto(origin);
+  const button = page.locator(".app-header .weekly-button");
+  await expect(button.locator("strong")).toHaveText("—");
+  await expect(button).toHaveAccessibleDescription(
+    "Remaining account quota: Weekly usage unavailable; Period elapsed: 60%",
+  );
+  await button.click();
+  const detail = page.locator(".weekly-popover");
+  const resetRow = detail
+    .locator(".weekly-source > div")
+    .filter({ has: page.getByText("Resets", { exact: true }) });
+  await expect(resetRow.locator("dd")).toHaveText(
+    await page.evaluate(
+      (reset) => new Date(reset * 1000).toLocaleString(),
+      resetAt,
+    ),
+  );
+  await expect(detail).toContainText("Period elapsed60%");
+  await request.post(origin + "/fixture/change", {
+    data: { quotaFailure: true },
+  });
+  await page.reload();
+  await expect(button.locator("strong")).toHaveText("—");
+  await expect(detail).toContainText("Period elapsed60%");
+  await expect(resetRow).toBeVisible();
+  await request.post(origin + "/fixture/change", {
+    data: { quotaFailure: false, usage: 30 },
+  });
+  await detail.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(button.locator("strong")).toHaveText("30%");
+  await request.post(origin + "/fixture/change", {
+    data: { usage: null, quotaResets: resetAt + week / 1000 },
+  });
+  await detail.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(button).toHaveAccessibleDescription(
+    "Remaining account quota: 30%; Period elapsed: 60%",
+  );
+  await expect(resetRow.locator("dd")).toHaveText(
+    await page.evaluate(
+      (reset) => new Date(reset * 1000).toLocaleString(),
+      resetAt,
+    ),
   );
 });
