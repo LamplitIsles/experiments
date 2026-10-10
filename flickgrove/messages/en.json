@@ -115,6 +115,7 @@
   "stop_completed": "The observed turn finished without a confirmed user interruption.",
   "weekly": "Weekly",
   "weekly_remaining": "Weekly remaining",
+  "quota_used": "Quota used",
   "period_elapsed": "Period elapsed",
   "remaining_label": "Remaining account quota",
   "weekly_unknown": "Weekly usage unavailable",
