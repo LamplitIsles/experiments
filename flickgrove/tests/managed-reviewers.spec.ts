@@ -17,6 +17,49 @@ for (const width of [1440, 390])
       .click();
     const input = page.getByRole("textbox", { name: "Message Orc" });
     const tools = page.locator(".workflow-tools");
+    const diagnose = tools.getByRole("button", {
+      name: "Diagnose",
+      exact: true,
+    });
+    await expect(tools.getByRole("button")).toHaveText([
+      "Discuss",
+      "Implement",
+      "Diagnose",
+      "Review",
+      "Re-review",
+      "Research",
+    ]);
+    for (const [draft, start, end, expected, caret] of [
+      ["leftright", 4, 4, "left $grove-diagnosing-bugs right", 28],
+      [
+        "before replace after",
+        7,
+        14,
+        "before $grove-diagnosing-bugs after",
+        29,
+      ],
+      ["", 0, 0, "$grove-diagnosing-bugs ", 23],
+    ] as const) {
+      await input.fill(draft);
+      await input.evaluate(
+        (el, range) => (el as HTMLTextAreaElement).setSelectionRange(...range),
+        [start, end] as [number, number],
+      );
+      await diagnose.click();
+      await expect(input).toHaveValue(expected);
+      await expect(input).toBeFocused();
+      expect(
+        await input.evaluate(
+          (el) => (el as HTMLTextAreaElement).selectionStart,
+        ),
+      ).toBe(caret);
+    }
+    const diagnosticDraft = await input.inputValue();
+    await input.dispatchEvent("compositionstart");
+    await diagnose.click();
+    await expect(input).toHaveValue(diagnosticDraft);
+    await expect(input).toBeFocused();
+    await input.dispatchEvent("compositionend");
     await input.fill("leftright");
     await input.evaluate((el) =>
       (el as HTMLTextAreaElement).setSelectionRange(4, 4),
@@ -67,7 +110,7 @@ for (const width of [1440, 390])
         .toBuffer(),
     });
     await expect(page.locator(".image-draft")).toHaveCount(1);
-    await tools.getByRole("button", { name: "Discuss", exact: true }).click();
+    await diagnose.click();
     await expect(page.locator(".image-draft")).toHaveCount(1);
     await expect(input).toBeFocused();
     await input.press("Alt+KeyS");
@@ -78,17 +121,67 @@ for (const width of [1440, 390])
       .getByRole("combobox", { name: "Search skills…" })
       .press("Escape");
     await expect(input).toBeFocused();
+    // Foreground surface blocks even a programmatic click on the underlying action.
+    await input.press("Alt+KeyS");
+    const foregroundDraft = await input.inputValue();
+    await diagnose.evaluate((el) => (el as HTMLButtonElement).click());
+    await expect(input).toHaveValue(foregroundDraft);
+    await expect(
+      page.getByRole("combobox", { name: "Search skills…" }),
+    ).toBeFocused();
+    await page
+      .getByRole("combobox", { name: "Search skills…" })
+      .press("Escape");
+    const geometry = await page.evaluate(() => {
+      const first = document
+        .querySelector(".composer-bottom")!
+        .getBoundingClientRect();
+      const second = document.querySelector(".workflow-tools")!;
+      const send = document
+        .querySelector('.composer-actions button[type="submit"]')!
+        .getBoundingClientRect();
+      const stop = document
+        .querySelector('.composer-actions button[type="button"]')!
+        .getBoundingClientRect();
+      return {
+        firstBottom: first.bottom,
+        secondTop: second.getBoundingClientRect().top,
+        sendRight: send.right,
+        stopRight: stop.right,
+        scroll: second.scrollWidth > second.clientWidth,
+        pageWidth: document.documentElement.scrollWidth,
+      };
+    });
+    console.log("Diagnose geometry", width, geometry);
+    expect(geometry.secondTop).toBeGreaterThanOrEqual(geometry.firstBottom);
+    expect(geometry.sendRight).toBeLessThanOrEqual(width);
+    expect(geometry.stopRight).toBeLessThanOrEqual(width);
+    expect(geometry.pageWidth).toBeLessThanOrEqual(width);
     if (width === 390) {
       expect(
         await page
-          .locator(".composer-tools")
+          .locator(".workflow-tools")
           .evaluate((el) => el.scrollWidth > el.clientWidth),
       ).toBe(true);
       await page
-        .locator(".composer-tools")
+        .locator(".workflow-tools")
         .evaluate((el) => (el.scrollLeft = 0));
     }
-    await page.screenshot({ path: `${shots}/${width}-composer.png` });
+    await page.screenshot({
+      path: `../.scratch/diagnose-and-converged-handoff/screenshots/${width}-composer.png`,
+    });
+    if (width === 390) {
+      await tools.evaluate((el) => (el.scrollLeft = el.scrollWidth));
+      await expect(
+        page.getByRole("button", { name: "Send message", exact: true }),
+      ).toBeInViewport();
+      await expect(
+        page.getByRole("button", { name: "Stop Orc", exact: true }),
+      ).toBeInViewport();
+      await page.screenshot({
+        path: `../.scratch/diagnose-and-converged-handoff/screenshots/${width}-scrolled.png`,
+      });
+    }
     const state = await (await request.get(`${origin}/fixture/info`)).json();
     expect(
       state.inputs.filter((i: { text: string }) => i.text.includes("$grove-")),
@@ -111,7 +204,14 @@ for (const width of [1440, 390])
     );
     await page.screenshot({ path: `${shots}/${width}-reviewer-report.png` });
     await page.getByRole("button", { name: "Stop Orc", exact: true }).click();
-    for (const label of ["Discuss", "Implement", "Review", "Re-review"])
+    for (const label of [
+      "Discuss",
+      "Implement",
+      "Diagnose",
+      "Review",
+      "Re-review",
+      "Research",
+    ])
       await expect(
         tools.getByRole("button", { name: label, exact: true }),
       ).toBeDisabled();

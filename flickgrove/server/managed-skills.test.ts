@@ -92,6 +92,9 @@ test("installed native discovers version-owned grove skills across projects with
     expect(await readFile(join(codexHome, "config.toml"), "utf8")).toBe(
       globalConfig,
     );
+    expect(await readFile(join(old, "SKILL.md"), "utf8")).toBe(
+      "---\nname: code-review\ndescription: Old global review\n---\nOld skill\n",
+    );
     for (const entry of response.data) {
       expect(entry.errors).toEqual([]);
       expect(
@@ -101,6 +104,7 @@ test("installed native discovers version-owned grove skills across projects with
           .sort(),
       ).toEqual([
         "grove-code-review",
+        "grove-diagnosing-bugs",
         "grove-domain-modeling",
         "grove-grill-with-docs",
         "grove-grilling",
@@ -116,10 +120,10 @@ test("installed native discovers version-owned grove skills across projects with
         entry.skills.some((s) => s.name === "code-review" && s.enabled),
       ).toBe(true);
       expect(
-        entry.skills.find((s) => s.name === "grove-code-review")!.path,
+        entry.skills.find((s) => s.name === "grove-diagnosing-bugs")!.path,
       ).toBe(
         fileURLToPath(
-          new URL("../skills/grove-code-review/SKILL.md", import.meta.url),
+          new URL("../skills/grove-diagnosing-bugs/SKILL.md", import.meta.url),
         ),
       );
     }
