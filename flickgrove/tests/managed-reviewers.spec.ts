@@ -24,10 +24,10 @@ for (const width of [1440, 390])
     await expect(tools.getByRole("button")).toHaveText([
       "Discuss",
       "Implement",
-      "Diagnose",
       "Review",
       "Re-review",
       "Research",
+      "Diagnose",
     ]);
     for (const [draft, start, end, expected, caret] of [
       ["leftright", 4, 4, "left $grove-diagnosing-bugs right", 28],
@@ -168,10 +168,11 @@ for (const width of [1440, 390])
         .evaluate((el) => (el.scrollLeft = 0));
     }
     await page.screenshot({
-      path: `../.scratch/diagnose-and-converged-handoff/screenshots/${width}-composer.png`,
+      path: `../.scratch/diagnose-last-usage/screenshots/${width}-composer.png`,
     });
     if (width === 390) {
       await tools.evaluate((el) => (el.scrollLeft = el.scrollWidth));
+      await expect(diagnose).toBeInViewport();
       await expect(
         page.getByRole("button", { name: "Send message", exact: true }),
       ).toBeInViewport();
@@ -179,7 +180,7 @@ for (const width of [1440, 390])
         page.getByRole("button", { name: "Stop Orc", exact: true }),
       ).toBeInViewport();
       await page.screenshot({
-        path: `../.scratch/diagnose-and-converged-handoff/screenshots/${width}-scrolled.png`,
+        path: `../.scratch/diagnose-last-usage/screenshots/${width}-scrolled.png`,
       });
     }
     const state = await (await request.get(`${origin}/fixture/info`)).json();
@@ -207,10 +208,10 @@ for (const width of [1440, 390])
     for (const label of [
       "Discuss",
       "Implement",
-      "Diagnose",
       "Review",
       "Re-review",
       "Research",
+      "Diagnose",
     ])
       await expect(
         tools.getByRole("button", { name: label, exact: true }),

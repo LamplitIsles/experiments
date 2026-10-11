@@ -21,10 +21,10 @@ for (const width of [1440, 390])
     await expect(tools.getByRole("button")).toHaveText([
       "Discuss",
       "Implement",
-      "Diagnose",
       "Review",
       "Re-review",
       "Research",
+      "Diagnose",
     ]);
     await input.fill("leftright");
     await input.evaluate((el) =>

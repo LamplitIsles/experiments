@@ -273,10 +273,10 @@ for (const width of [1440, 390])
     ).toEqual([
       "Discuss",
       "Implement",
-      "Diagnose",
       "Review",
       "Re-review",
       "Research",
+      "Diagnose",
     ]);
     if (width === 390) {
       expect(geometry.scroll).toBe(true);
