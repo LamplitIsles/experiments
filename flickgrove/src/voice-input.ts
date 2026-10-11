@@ -62,6 +62,14 @@ interface Take {
   source?: MediaStreamAudioSourceNode;
   node?: AudioWorkletNode;
   socket?: WebSocket;
+  remoteReady: boolean;
+  queue: ArrayBuffer[];
+  queuedBytes: number;
+  flushed: boolean;
+  finishSent: boolean;
+  drainTimer?: ReturnType<typeof setTimeout>;
+  deliveryTimer?: ReturnType<typeof setTimeout>;
+  startupTimer?: ReturnType<typeof setTimeout>;
   startedAt: number;
   bytes: number;
   finishing: boolean;
@@ -75,7 +83,7 @@ interface Take {
   resolve: (value: VoiceTranscription) => void;
   reject: (error: unknown) => void;
 }
-/** Owns one bounded capture/transport lifecycle; keeps no whole-take audio buffer. */
+/** Owns one capture/transport lifecycle with at most five seconds of startup PCM. */
 export class VoiceRecordingController {
   private take?: Take;
   private disposed = false;
@@ -131,6 +139,9 @@ export class VoiceRecordingController {
     if (take.terminal) return;
     take.terminal = true;
     take.timers.forEach(clearTimeout);
+    clearTimeout(take.drainTimer);
+    take.queue = [];
+    take.queuedBytes = 0;
     this.releaseCapture(take);
     try {
       take.socket?.close(1000);
@@ -176,6 +187,11 @@ export class VoiceRecordingController {
     void ready.catch(() => undefined);
     void result.catch(() => undefined);
     const take: Take = {
+      remoteReady: false,
+      queue: [],
+      queuedBytes: 0,
+      flushed: false,
+      finishSent: false,
       startedAt: 0,
       bytes: 0,
       terminal: false,
@@ -190,12 +206,13 @@ export class VoiceRecordingController {
     };
     this.take = take;
     this.setStatus("starting");
-    take.timers.push(
-      setTimeout(
-        () => this.end(take, new VoiceRecordingError("timeout")),
-        15_000,
-      ),
+    take.startupTimer = setTimeout(
+      () => this.end(take, new VoiceRecordingError("timeout")),
+      15_000,
     );
+    take.timers.push(take.startupTimer);
+    // Attach transport handlers independently of permission and Worklet preparation.
+    void this.connect(take, connect, peerId);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, sampleRate: VOICE_SAMPLE_RATE },
@@ -221,23 +238,26 @@ export class VoiceRecordingController {
       take.source = context.createMediaStreamSource(stream);
       node.onprocessorerror = () =>
         this.end(take, new VoiceRecordingError("capture-failed"));
-      const socket = await connect();
-      if (take.terminal) {
-        socket.close();
-        return ready;
-      }
-      take.socket = socket;
-      socket.binaryType = "arraybuffer";
       node.port.onmessage = (event) => {
         if (take.terminal) return;
         try {
           if (event.data instanceof ArrayBuffer) {
             const frame = event.data;
-            if (
-              socket.readyState !== WebSocket.OPEN ||
-              socket.bufferedAmount + frame.byteLength > MAX_VOICE_QUEUE_BYTES
-            )
-              throw new VoiceRecordingError("size-limit");
+            if (!take.startedAt) {
+              take.startedAt = Date.now();
+              if (take.remoteReady) clearTimeout(take.startupTimer);
+              this.setStatus("recording");
+              take.resolveReady(true);
+              take.timers.push(
+                setTimeout(() => {
+                  if (!take.finishing && !take.terminal) {
+                    this.options.onDurationLimit?.();
+                    if (!take.finishing)
+                      void this.stopAndGet().catch(() => undefined);
+                  }
+                }, MAX_VOICE_DURATION_MS),
+              );
+            }
             try {
               take.bytes = validateVoiceFrameBytes(
                 frame.byteLength,
@@ -246,23 +266,31 @@ export class VoiceRecordingController {
             } catch {
               throw new VoiceRecordingError("size-limit");
             }
-            socket.send(frame);
+            if (
+              take.queuedBytes + frame.byteLength > 160_000 ||
+              take.queuedBytes +
+                frame.byteLength +
+                (take.socket?.bufferedAmount ?? 0) >
+                MAX_VOICE_QUEUE_BYTES
+            )
+              throw new VoiceRecordingError("size-limit");
+            take.queue.push(frame);
+            take.queuedBytes += frame.byteLength;
+            this.drain(take);
           } else if (event.data?.type === "duration-limit" && !take.finishing) {
             this.options.onDurationLimit?.();
             if (!take.finishing) void this.stopAndGet().catch(() => undefined);
           } else if (event.data?.type === "flushed" && take.finishing) {
             clearTimeout(take.flushTimer);
             this.releaseCapture(take);
-            if (socket.bufferedAmount + 17 > MAX_VOICE_QUEUE_BYTES)
-              throw new VoiceRecordingError("size-limit");
-            socket.send(JSON.stringify({ type: "finish" }));
-            this.setStatus("transcribing");
-            take.timers.push(
-              setTimeout(
-                () => this.end(take, new VoiceRecordingError("timeout")),
-                20_000,
-              ),
+            take.flushed = true;
+            take.deliveryTimer = setTimeout(
+              () => this.end(take, new VoiceRecordingError("timeout")),
+              20_000,
             );
+            take.timers.push(take.deliveryTimer);
+            this.setStatus("transcribing");
+            this.drain(take);
           }
         } catch (error) {
           this.end(
@@ -273,6 +301,35 @@ export class VoiceRecordingController {
           );
         }
       };
+      take.source.connect(node);
+      node.connect(context.destination);
+    } catch (error) {
+      this.end(
+        take,
+        error instanceof VoiceRecordingError
+          ? error
+          : new VoiceRecordingError(
+              error instanceof Error && error.name === "NotAllowedError"
+                ? "permission-denied"
+                : "capture-failed",
+            ),
+      );
+    }
+    return ready;
+  }
+  private async connect(
+    take: Take,
+    connect: () => Promise<WebSocket>,
+    peerId: string,
+  ) {
+    try {
+      const socket = await connect();
+      if (take.terminal) {
+        socket.close();
+        return;
+      }
+      take.socket = socket;
+      socket.binaryType = "arraybuffer";
       socket.onmessage = (event) => {
         if (take.terminal) return;
         try {
@@ -281,27 +338,15 @@ export class VoiceRecordingController {
           const data = parseVoiceServerEvent(event.data);
           if (
             data.type === "ready" &&
-            !take.startedAt &&
+            !take.remoteReady &&
             data.peerId === peerId
           ) {
-            clearTimeout(take.timers[0]);
-            take.startedAt = Date.now();
-            take.source!.connect(node);
-            node.connect(context.destination);
-            this.setStatus("recording");
-            take.resolveReady(true);
-            take.timers.push(
-              setTimeout(() => {
-                if (!take.finishing && !take.terminal) {
-                  this.options.onDurationLimit?.();
-                  if (!take.finishing)
-                    void this.stopAndGet().catch(() => undefined);
-                }
-              }, MAX_VOICE_DURATION_MS),
-            );
+            take.remoteReady = true;
+            if (take.startedAt) clearTimeout(take.startupTimer);
+            this.drain(take);
           } else if (
             data.type === "result" &&
-            take.finishing &&
+            take.finishSent &&
             this.statusValue === "transcribing"
           )
             this.end(take, undefined, normalizeVoiceTranscription(data));
@@ -321,19 +366,52 @@ export class VoiceRecordingController {
         if (!take.terminal)
           this.end(take, new VoiceRecordingError("upstream_error"));
       };
+    } catch {
+      this.end(take, new VoiceRecordingError("upstream_error"));
+    }
+  }
+  private drain(take: Take) {
+    if (take.terminal || !take.remoteReady || take.drainTimer) return;
+    const socket = take.socket!;
+    try {
+      if (socket.readyState !== WebSocket.OPEN)
+        throw new VoiceRecordingError("upstream_error");
+      while (take.queue.length) {
+        const frame = take.queue[0];
+        if (socket.bufferedAmount + frame.byteLength > MAX_VOICE_QUEUE_BYTES)
+          break;
+        socket.send(frame);
+        take.queue.shift();
+        take.queuedBytes -= frame.byteLength;
+      }
+      if (
+        take.queue.length ||
+        (take.flushed && socket.bufferedAmount + 17 > MAX_VOICE_QUEUE_BYTES)
+      ) {
+        take.drainTimer = setTimeout(() => {
+          take.drainTimer = undefined;
+          this.drain(take);
+        }, 10);
+      } else if (take.flushed) {
+        take.flushed = false;
+        clearTimeout(take.deliveryTimer);
+        socket.send(JSON.stringify({ type: "finish" }));
+        take.finishSent = true;
+        take.timers.push(
+          setTimeout(
+            () => this.end(take, new VoiceRecordingError("timeout")),
+            20_000,
+          ),
+        );
+      }
     } catch (error) {
       this.end(
         take,
         error instanceof VoiceRecordingError
           ? error
-          : new VoiceRecordingError(
-              error instanceof Error && error.name === "NotAllowedError"
-                ? "permission-denied"
-                : "capture-failed",
-            ),
+          : new VoiceRecordingError("upstream_error"),
       );
     }
-    return ready;
   }
   async stopAndGet(): Promise<VoiceTranscription | undefined> {
     const take = this.take;

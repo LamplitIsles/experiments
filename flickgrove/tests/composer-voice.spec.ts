@@ -37,6 +37,14 @@ async function setup(
       construct(target, args) {
         const context = Reflect.construct(target, args) as AudioContext;
         state.capture.audioContexts++;
+        const addModule = context.audioWorklet.addModule.bind(
+          context.audioWorklet,
+        );
+        context.audioWorklet.addModule = async (...args) => {
+          if (state.capture.failWorklet)
+            throw new Error("Synthetic Worklet failure");
+          return addModule(...args);
+        };
         const close = context.close.bind(context);
         let closed = false;
         context.close = async () => {
@@ -65,6 +73,11 @@ async function setup(
       const oscillator = context.createOscillator(),
         destination = context.createMediaStreamDestination();
       oscillator.frequency.value = 440;
+      if (state.capture.pattern)
+        oscillator.frequency.linearRampToValueAtTime(
+          880,
+          context.currentTime + 10,
+        );
       oscillator.connect(destination);
       oscillator.start();
       await context.resume();
@@ -82,6 +95,74 @@ async function setup(
       };
       return destination.stream;
     };
+    state.pcm = [];
+    state.remoteReady = 0;
+    const OriginalSocket = window.WebSocket;
+    window.WebSocket = new Proxy(OriginalSocket, {
+      construct(target, args) {
+        const socket = Reflect.construct(target, args) as WebSocket;
+        if (String(args[0]).includes("/api/voice/stream")) {
+          const buffered = Object.getOwnPropertyDescriptor(
+            OriginalSocket.prototype,
+            "bufferedAmount",
+          )!.get!;
+          Object.defineProperty(socket, "bufferedAmount", {
+            get: () =>
+              state.capture.backpressure ? 256 * 1024 : buffered.call(socket),
+          });
+          const onmessage = Object.getOwnPropertyDescriptor(
+            OriginalSocket.prototype,
+            "onmessage",
+          )!;
+          Object.defineProperty(socket, "onmessage", {
+            set(handler) {
+              if (!handler) {
+                onmessage.set!.call(socket, handler);
+                return;
+              }
+              onmessage.set!.call(socket, (event: MessageEvent) => {
+                if (
+                  state.capture.wrongPeer &&
+                  typeof event.data === "string" &&
+                  JSON.parse(event.data).type === "ready"
+                )
+                  event = new MessageEvent("message", {
+                    data: JSON.stringify({
+                      type: "ready",
+                      peerId: "unrelated",
+                    }),
+                  });
+                handler.call(socket, event);
+              });
+            },
+          });
+        }
+        socket.addEventListener("message", (event) => {
+          if (typeof event.data === "string") {
+            try {
+              if (JSON.parse(event.data).type === "ready")
+                state.remoteReady = Date.now();
+            } catch {}
+          }
+        });
+        return socket;
+      },
+    });
+    state.firstPCM = 0;
+    const OriginalNode = window.AudioWorkletNode;
+    window.AudioWorkletNode = new Proxy(OriginalNode, {
+      construct(target, args) {
+        const node = Reflect.construct(target, args) as AudioWorkletNode;
+        node.port.addEventListener("message", (event) => {
+          if (event.data instanceof ArrayBuffer) {
+            state.firstPCM ||= Date.now();
+            state.pcm.push(Array.from(new Uint8Array(event.data)));
+          }
+        });
+        node.port.start();
+        return node;
+      },
+    });
     state.sends = [];
     const send = WebSocket.prototype.send;
     WebSocket.prototype.send = function (data) {
@@ -119,6 +200,16 @@ async function record(page: Page, request: APIRequestContext) {
         (await (await request.get(origin + "/fixture/voice")).json()).bytes,
     )
     .toBeGreaterThan(stats.bytes);
+}
+async function providerReady(request: APIRequestContext, runs: number) {
+  await expect
+    .poll(
+      async () =>
+        (await (await request.get(origin + "/fixture/voice")).json()).runs
+          .length,
+    )
+    .toBeGreaterThan(runs);
+  await request.post(origin + "/fixture/voice", { data: { ready: true } });
 }
 async function released(page: Page, request: APIRequestContext) {
   await expect
@@ -725,3 +816,398 @@ for (const width of [1440, 390])
     await expect(input(page)).toHaveValue("protected draft你好世界");
     await released(page, request);
   });
+
+for (const width of [1440, 390])
+  test(`delayed ready captures locally and short Stop delivers exact PCM at ${width}`, async ({
+    page,
+    request,
+  }) => {
+    await setup(page, request, width, "hold-start");
+    await page.evaluate(() => ((window as any).capture.pattern = true));
+    await input(page).fill("before old after");
+    await input(page).evaluate((el: HTMLTextAreaElement) =>
+      el.setSelectionRange(7, 10),
+    );
+    const baseline = await page.locator(".composer-bottom").boundingBox();
+    const before = await (await request.get(origin + "/fixture/voice")).json();
+    const click = Date.now();
+    await page
+      .getByRole("button", { name: "Start voice input", exact: true })
+      .click();
+    await expect(page.locator(".voice-status")).toHaveText(/Recording/);
+    expect(
+      await page.evaluate(() => (window as any).pcm.length),
+    ).toBeGreaterThan(0);
+    expect(
+      (await (await request.get(origin + "/fixture/voice")).json()).frames,
+    ).toBe(before.frames);
+    expect(await page.locator(".composer-bottom").boundingBox()).toEqual(
+      baseline,
+    );
+    await expect(
+      page.getByRole("button", { name: "Send message", exact: true }),
+    ).toBeInViewport();
+    await expect(
+      page.getByRole("button", { name: "Stop Orc", exact: true }),
+    ).toBeInViewport();
+    await page.screenshot({
+      path: `../.scratch/fast-voice-start/screenshots/${width}-early-recording.png`,
+    });
+    await page
+      .getByRole("button", { name: "Stop recording", exact: true })
+      .click();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).capture.tracks))
+      .toBe(0);
+    const pcm = await page.evaluate(() => (window as any).pcm);
+    expect(pcm.length).toBeGreaterThan(0);
+    expect(
+      (await (await request.get(origin + "/fixture/voice")).json()).finishes,
+    ).toBe(before.finishes);
+    const readyReleaseAttempt = Date.now();
+    await providerReady(request, before.runs.length);
+    await expect(input(page)).toHaveValue("before 你好世界 after");
+    await released(page, request);
+    const after = await (await request.get(origin + "/fixture/voice")).json();
+    expect(pcm[0]).not.toEqual(pcm[1]);
+    expect(after.pcm.slice(before.pcm.length)).toEqual(pcm);
+    expect(after.events.slice(before.events.length)).toEqual([
+      "ready",
+      ...pcm.map(() => "pcm"),
+      "finish",
+    ]);
+    expect(await page.evaluate(() => (window as any).sends.length)).toBe(0);
+    console.log(
+      JSON.stringify({
+        width,
+        clickToFirstPCM: await page.evaluate(
+          (click) => (window as any).firstPCM - click,
+          click,
+        ),
+        clickToRemoteReady: await page.evaluate(
+          (click) => (window as any).remoteReady - click,
+          click,
+        ),
+        clickToReadyReleaseAttempt: readyReleaseAttempt - click,
+        frames: pcm.length,
+        bytes: pcm.flat().length,
+      }),
+    );
+    await page.screenshot({
+      path: `../.scratch/fast-voice-start/screenshots/${width}-idle.png`,
+    });
+    await page
+      .getByRole("button", { name: "Send message", exact: true })
+      .click();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).sends.length))
+      .toBe(1);
+  });
+
+test("delayed ready drains then streams without PCM gaps or duplicates", async ({
+  page,
+  request,
+}) => {
+  await setup(page, request, 1440, "hold-start");
+  await page.evaluate(() => ((window as any).capture.pattern = true));
+  const before = await (await request.get(origin + "/fixture/voice")).json();
+  await page
+    .getByRole("button", { name: "Start voice input", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).pcm.length))
+    .toBeGreaterThanOrEqual(3);
+  expect(
+    (await (await request.get(origin + "/fixture/voice")).json()).frames,
+  ).toBe(before.frames);
+  await providerReady(request, before.runs.length);
+  await expect
+    .poll(
+      async () =>
+        (await (await request.get(origin + "/fixture/voice")).json()).frames -
+        before.frames,
+    )
+    .toBeGreaterThanOrEqual(6);
+  await page
+    .getByRole("button", { name: "Stop recording", exact: true })
+    .click();
+  await expect(input(page)).toHaveValue("你好世界");
+  await released(page, request);
+  const after = await (await request.get(origin + "/fixture/voice")).json();
+  const pcm = await page.evaluate(() => (window as any).pcm);
+  expect(pcm[0]).not.toEqual(pcm[1]);
+  expect(after.pcm.slice(before.pcm.length)).toEqual(pcm);
+  expect(after.events.slice(before.events.length)).toEqual([
+    "ready",
+    ...pcm.map(() => "pcm"),
+    "finish",
+  ]);
+});
+
+test("startup queue overflow releases capture and next take works", async ({
+  page,
+  request,
+}) => {
+  await setup(page, request, 1440, "hold-start");
+  await input(page).fill("keep ");
+  const before = await (await request.get(origin + "/fixture/voice")).json();
+  await page
+    .getByRole("button", { name: "Start voice input", exact: true })
+    .click();
+  await expect(page.locator(".voice-status")).toHaveText(/Recording/);
+  await expect(page.getByRole("alert")).toContainText("Voice input failed", {
+    timeout: 10_000,
+  });
+  await released(page, request);
+  expect(
+    (await (await request.get(origin + "/fixture/voice")).json()).frames,
+  ).toBe(before.frames);
+  expect(
+    await page.evaluate(() =>
+      (window as any).pcm.reduce(
+        (sum: number, frame: number[]) => sum + frame.length,
+        0,
+      ),
+    ),
+  ).toBe(163200);
+  await expect(input(page)).toHaveValue("keep ");
+  await request.post(origin + "/fixture/voice", { data: { ready: true } });
+  await record(page, request);
+  await page
+    .getByRole("button", { name: "Stop recording", exact: true })
+    .click();
+  await expect(input(page)).toHaveValue("keep 你好世界");
+  await released(page, request);
+});
+
+test("early local Recording does not remove remote startup timeout", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(40_000);
+  await setup(page, request, 1440, "hold-start");
+  await input(page).fill("protected");
+  await page
+    .getByRole("button", { name: "Start voice input", exact: true })
+    .click();
+  await expect(page.locator(".voice-status")).toHaveText(/Recording/);
+  await page
+    .getByRole("button", { name: "Stop recording", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).capture.tracks))
+    .toBe(0);
+  await expect(page.getByRole("alert")).toContainText("Voice input failed", {
+    timeout: 18_000,
+  });
+  await released(page, request);
+  await expect(input(page)).toHaveValue("protected");
+});
+
+test("cancel while capability is pending closes late socket and discards PCM", async ({
+  page,
+  request,
+}) => {
+  await setup(page, request);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/voice/capability", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await input(page).fill("protected");
+  await page
+    .getByRole("button", { name: "Start voice input", exact: true })
+    .click();
+  await expect(page.locator(".voice-status")).toHaveText(/Recording/);
+  await page.getByRole("button", { name: "Cancel voice input" }).click();
+  release();
+  await released(page, request);
+  await page.waitForTimeout(200);
+  await expect(input(page)).toHaveValue("protected");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await record(page, request);
+  await page
+    .getByRole("button", { name: "Stop recording", exact: true })
+    .click();
+  await expect(input(page)).toHaveValue("protected你好世界");
+  await released(page, request);
+});
+
+test("ready during permission wait never labels Recording before PCM", async ({
+  page,
+  request,
+}) => {
+  await setup(page, request);
+  await page.evaluate(() => ((window as any).capture.hold = true));
+  await page
+    .getByRole("button", { name: "Start voice input", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).remoteReady))
+    .toBeGreaterThan(0);
+  await expect(page.locator(".voice-status")).toHaveText(
+    "Starting microphone…",
+  );
+  expect(await page.evaluate(() => (window as any).pcm.length)).toBe(0);
+  await page.evaluate(() => (window as any).capture.release());
+  await expect(page.locator(".voice-status")).toHaveText(/Recording/);
+  await page
+    .getByRole("button", { name: "Stop recording", exact: true })
+    .click();
+  await expect(input(page)).toHaveValue("你好世界");
+  await released(page, request);
+});
+
+test("wrong owning-Peer ready rejects buffered speech and next take recovers", async ({
+  page,
+  request,
+}) => {
+  await setup(page, request, 1440, "hold-start");
+  await page.evaluate(() => ((window as any).capture.wrongPeer = true));
+  await input(page).fill("keep");
+  const before = await (await request.get(origin + "/fixture/voice")).json();
+  await page
+    .getByRole("button", { name: "Start voice input", exact: true })
+    .click();
+  await expect(page.locator(".voice-status")).toHaveText(/Recording/);
+  await providerReady(request, before.runs.length);
+  await expect(page.getByRole("alert")).toContainText("Voice input failed");
+  await released(page, request);
+  expect(
+    (await (await request.get(origin + "/fixture/voice")).json()).frames,
+  ).toBe(before.frames);
+  await expect(input(page)).toHaveValue("keep");
+  await page.evaluate(() => ((window as any).capture.wrongPeer = false));
+  await record(page, request);
+  await page
+    .getByRole("button", { name: "Stop recording", exact: true })
+    .click();
+  await expect(input(page)).toHaveValue("keep你好世界");
+  await released(page, request);
+});
+
+test("Worklet setup failure and Cancel before PCM release both concurrent branches", async ({
+  page,
+  request,
+}) => {
+  await setup(page, request);
+  await input(page).fill("keep");
+  await page.evaluate(() => ((window as any).capture.failWorklet = true));
+  await page
+    .getByRole("button", { name: "Start voice input", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText("Voice input failed");
+  await released(page, request);
+  await page.evaluate(() => {
+    (window as any).capture.failWorklet = false;
+    (window as any).capture.hold = true;
+  });
+  await page
+    .getByRole("button", { name: "Start voice input", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).remoteReady))
+    .toBeGreaterThan(0);
+  await expect(page.locator(".voice-status")).toHaveText(
+    "Starting microphone…",
+  );
+  await expect(
+    page.getByRole("button", { name: "Stop recording", exact: true }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "Cancel voice input" }).click();
+  await page.evaluate(() => (window as any).capture.release());
+  await released(page, request);
+  await expect(input(page)).toHaveValue("keep");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.evaluate(() => ((window as any).capture.hold = false));
+  await record(page, request);
+  await page
+    .getByRole("button", { name: "Stop recording", exact: true })
+    .click();
+  await expect(input(page)).toHaveValue("keep你好世界");
+  await released(page, request);
+});
+
+test("bounded drain respects socket backpressure and cancellation", async ({
+  page,
+  request,
+}) => {
+  await setup(page, request, 1440, "hold-start");
+  await page.evaluate(() => ((window as any).capture.pattern = true));
+  await input(page).fill("keep");
+  for (const cancel of [true, false]) {
+    await request.post(origin + "/fixture/voice", {
+      data: { mode: "hold-start" },
+    });
+    await page.evaluate(() => {
+      (window as any).pcm = [];
+      (window as any).capture.backpressure = false;
+    });
+    const before = await (await request.get(origin + "/fixture/voice")).json();
+    await page
+      .getByRole("button", { name: "Start voice input", exact: true })
+      .click();
+    await expect(page.locator(".voice-status")).toHaveText(/Recording/);
+    await page
+      .getByRole("button", { name: "Stop recording", exact: true })
+      .click();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).capture.tracks))
+      .toBe(0);
+    const pcm = await page.evaluate(() => (window as any).pcm);
+    await page.evaluate(() => ((window as any).capture.backpressure = true));
+    await providerReady(request, before.runs.length);
+    await page.waitForTimeout(100);
+    const blocked = await (await request.get(origin + "/fixture/voice")).json();
+    expect(blocked.frames).toBe(before.frames);
+    expect(blocked.finishes).toBe(before.finishes);
+    if (cancel)
+      await page.getByRole("button", { name: "Cancel voice input" }).click();
+    await page.evaluate(() => ((window as any).capture.backpressure = false));
+    if (!cancel) {
+      await expect(input(page)).toHaveValue("keep你好世界");
+      const after = await (await request.get(origin + "/fixture/voice")).json();
+      expect(pcm[0]).not.toEqual(pcm[1]);
+      expect(after.pcm.slice(before.pcm.length)).toEqual(pcm);
+      expect(after.events.slice(before.events.length)).toEqual([
+        "ready",
+        ...pcm.map(() => "pcm"),
+        "finish",
+      ]);
+    } else await expect(input(page)).toHaveValue("keep");
+    await released(page, request);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  }
+});
+
+test("capability failure after local PCM preserves draft and permits retry", async ({
+  page,
+  request,
+}) => {
+  await setup(page, request);
+  let fail = true;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/voice/capability", async (route) => {
+    if (!fail) return route.continue();
+    await held;
+    await route.fulfill({ status: 503, body: "Test unavailable" });
+  });
+  await input(page).fill("keep");
+  await page
+    .getByRole("button", { name: "Start voice input", exact: true })
+    .click();
+  await expect(page.locator(".voice-status")).toHaveText(/Recording/);
+  release();
+  await expect(page.getByRole("alert")).toContainText("Voice input failed");
+  await released(page, request);
+  await expect(input(page)).toHaveValue("keep");
+  fail = false;
+  await record(page, request);
+  await page
+    .getByRole("button", { name: "Stop recording", exact: true })
+    .click();
+  await expect(input(page)).toHaveValue("keep你好世界");
+  await released(page, request);
+});

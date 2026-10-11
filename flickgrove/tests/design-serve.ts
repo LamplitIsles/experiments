@@ -606,6 +606,7 @@ const server = Bun.serve({
         const body = await request.json();
         voiceProvider.mode(body.mode ?? "success");
         if (body.release) voiceProvider.release();
+        if (body.ready) voiceProvider.ready();
         for (const u of units)
           writeFileSync(
             u.voice.configPath,

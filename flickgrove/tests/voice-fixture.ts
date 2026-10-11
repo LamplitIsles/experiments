@@ -7,6 +7,8 @@ export function fakeVoiceProvider() {
   const stats = {
     authorization: [] as string[],
     runs: [] as any[],
+    pcm: [] as number[][],
+    events: [] as string[],
     frames: 0,
     bytes: 0,
     nonzero: false,
@@ -63,6 +65,8 @@ export function fakeVoiceProvider() {
       },
       message(ws, raw) {
         if (typeof raw !== "string") {
+          stats.pcm.push(Array.from(raw));
+          stats.events.push("pcm");
           stats.frames++;
           stats.bytes += raw.byteLength;
           stats.nonzero ||= raw.some((value) => value !== 0);
@@ -101,6 +105,7 @@ export function fakeVoiceProvider() {
             },
           });
         } else if (frame.header.action === "finish-task") {
+          stats.events.push("finish");
           stats.finishes++;
           if (mode !== "hold-finish") result(ws);
         }
@@ -122,6 +127,12 @@ export function fakeVoiceProvider() {
       }),
     mode(value: string) {
       mode = value;
+    },
+    ready() {
+      for (const ws of sockets) {
+        stats.events.push("ready");
+        emit(ws, "task-started");
+      }
     },
     release() {
       for (const ws of sockets) result(ws);
