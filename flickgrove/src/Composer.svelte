@@ -162,7 +162,6 @@
     {#if imageError}<p class="inline-error" role="alert">{imageError}</p>{/if}
     {#if preparing}<p role="status">Preparing images…</p>{/if}
     <Textarea onpaste={paste} bind:ref={input} bind:value={text} aria-label={m.message_orc()} placeholder={m.message_placeholder()} readonly={voiceBusy} disabled={stopping || preparing} rows={2} oncompositionstart={() => { composing = true; }} oncompositionend={() => { composing = false; }} onkeydown={keydown} />
-    {#if voiceBusy}<p class="voice-status" role="status" aria-live="polite">{voiceStatus === "starting" ? "Starting microphone…" : voiceStatus === "recording" ? `Recording ${Math.floor(voiceSeconds/60)}:${String(voiceSeconds%60).padStart(2,"0")}` : "Recognizing…"}</p>{/if}
     {#if voiceError}<p class="inline-error" role="alert">{voiceError}</p>{/if}
     <div class="composer-bottom">
       <div class="composer-tools">
@@ -172,7 +171,10 @@
           {#if voiceStatus === "recording"}<Square />{:else if voiceBusy}<LoaderCircle class="voice-spinner" />{:else}<Mic />{/if}
         </Button>
         <span id="composer-voice-reason" class="sr-only">{voiceBusy ? "Stop recording and recognize" : voiceReason}</span>
-        <Button variant="ghost" size="icon-sm" aria-label={m.search_skills()} title={m.search_skills()} disabled={voiceBusy || preparing || stopping || !connected} onclick={openSkills}><Sparkles /></Button>
+        {#if voiceBusy}<span class="voice-status" role="status" aria-live="polite">{voiceStatus === "starting" ? "Starting microphone…" : voiceStatus === "recording" ? `Recording ${Math.floor(voiceSeconds/60)}:${String(voiceSeconds%60).padStart(2,"0")}` : "Recognizing…"}</span>
+        {:else}
+          <Button variant="ghost" size="icon-sm" aria-label={m.search_skills()} title={m.search_skills()} disabled={preparing || stopping || !connected} onclick={openSkills}><Sparkles /></Button>
+        {/if}
       </div>
       <div class="composer-actions">
         {#if working || stopping}<Button variant="secondary" class="round-action" size="icon-sm" title={m.stop_orc()} aria-label={m.stop_orc()} disabled={!connected || stopping} onclick={onstop}><Square /></Button>{/if}
