@@ -201,7 +201,7 @@ for (const width of [1440, 390])
     ).toBeDisabled();
     await expect(
       page.getByRole("button", { name: "Search skills…", exact: true }),
-    ).toBeDisabled();
+    ).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Discuss", exact: true }),
     ).toBeDisabled();
@@ -634,3 +634,94 @@ test("capability checks are silent and bounded across detail refresh and unavail
     .poll(() => page.evaluate(() => (window as any).sends.length))
     .toBe(1);
 });
+
+for (const width of [1440, 390])
+  test(`inline live voice status keeps toolbar geometry at ${width}`, async ({
+    page,
+    request,
+  }) => {
+    await setup(page, request, width, "hold-finish");
+    await input(page).fill("protected draft");
+    const skills = page.getByRole("button", {
+      name: "Search skills…",
+      exact: true,
+    });
+    const status = page.locator(".voice-status");
+    const geometry = () =>
+      page.evaluate(() =>
+        [".composer", ".composer-bottom", ".workflow-tools"].map((selector) => {
+          const box = document.querySelector(selector)!.getBoundingClientRect();
+          return { y: box.y, height: box.height };
+        }),
+      );
+    const baseline = await geometry();
+    const check = async (phase: string) => {
+      expect(await geometry()).toEqual(baseline);
+      await expect(
+        page.getByRole("button", { name: "Send message", exact: true }),
+      ).toBeInViewport();
+      await expect(
+        page.getByRole("button", { name: "Stop Orc", exact: true }),
+      ).toBeInViewport();
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(width);
+      if (phase !== "idle") {
+        await expect(skills).toHaveCount(0);
+        await expect(status).toHaveAttribute("role", "status");
+        await expect(status).toHaveAttribute("aria-live", "polite");
+        const mic = await page
+          .getByRole("button", { name: "Stop recording", exact: true })
+          .boundingBox();
+        const box = await status.boundingBox();
+        expect(box!.x).toBeGreaterThanOrEqual(mic!.x + mic!.width);
+        expect(box!.y).toBeGreaterThanOrEqual(mic!.y);
+        expect(box!.y + box!.height).toBeLessThanOrEqual(mic!.y + mic!.height);
+      } else {
+        await expect(skills).toBeEnabled();
+        await expect(status).toHaveCount(0);
+      }
+      await page.screenshot({
+        path: `../.scratch/inline-voice-status/screenshots/${width}-${phase}.png`,
+      });
+    };
+    await check("idle");
+    await page.evaluate(() => ((window as any).capture.hold = true));
+    await page
+      .getByRole("button", { name: "Start voice input", exact: true })
+      .click();
+    await expect(status).toHaveText("Starting microphone…");
+    await check("starting");
+    await expect
+      .poll(() => page.evaluate(() => typeof (window as any).capture.release))
+      .toBe("function");
+    await page.evaluate(() => (window as any).capture.release());
+    await expect(status).toHaveText(/Recording 0:0[1-9]/);
+    await check("recording");
+    await page
+      .getByRole("button", { name: "Stop recording", exact: true })
+      .click();
+    await expect(status).toHaveText("Recognizing…");
+    await check("recognizing");
+    await request.post(origin + "/fixture/voice", { data: { release: true } });
+    await expect(input(page)).toHaveValue("protected draft你好世界");
+    await check("idle");
+    await released(page, request);
+    await page.evaluate(() => ((window as any).capture.hold = false));
+    await record(page, request);
+    await page.getByRole("button", { name: "Cancel voice input" }).click();
+    await check("idle");
+    await released(page, request);
+    await request.post(origin + "/fixture/voice", {
+      data: { mode: "failure" },
+    });
+    await record(page, request);
+    await page
+      .getByRole("button", { name: "Stop recording", exact: true })
+      .click();
+    await expect(page.getByRole("alert")).toContainText("Voice input failed");
+    await expect(skills).toBeEnabled();
+    await expect(status).toHaveCount(0);
+    await expect(input(page)).toHaveValue("protected draft你好世界");
+    await released(page, request);
+  });
