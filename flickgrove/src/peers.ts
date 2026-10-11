@@ -3,6 +3,7 @@ import type { Agent, Detail, Host, Snapshot, Settings } from "./contracts";
 import { openGrove, type GroveClient } from "./chord-client";
 import { settingsSchema, type Method, type View } from "./chord-contract";
 import { z } from "zod";
+import { voiceCapability } from "./voice-contract";
 const identitySchema = z.object({
   id: z
     .string()
@@ -442,6 +443,46 @@ export class Peers {
     if (response.headers.get("X-Grove-Peer") !== peer)
       throw new Error("Peer identity changed");
     return response;
+  }
+  async voiceCapability(agent: string, signal?: AbortSignal) {
+    const id = agent.split(":")[0];
+    const link = this.links.get(id);
+    if (!link?.host.connected) throw new Error("Execution Peer is offline");
+    const response = await fetch(
+      new URL("/api/voice/capability", link.config.url),
+      {
+        headers: {
+          "X-Grove-Peer": id,
+          ...(link.config.credential
+            ? { Authorization: `Bearer ${link.config.credential}` }
+            : {}),
+        },
+        credentials: "omit",
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(8000)])
+          : AbortSignal.timeout(8000),
+      },
+    );
+    if (!response.ok || response.headers.get("X-Grove-Peer") !== id)
+      throw new Error("Voice Peer unavailable");
+    return voiceCapability.parse(await response.json());
+  }
+  async voiceSocket(agent: string) {
+    const capability = await this.voiceCapability(agent);
+    if (!capability.available)
+      throw new Error("Voice unavailable on this Peer");
+    const id = agent.split(":")[0];
+    const link = this.links.get(id);
+    if (!link?.host.connected) throw new Error("Execution Peer is offline");
+    const url = new URL("/api/voice/stream", link.config.url);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    return new WebSocket(url, [
+      "grove-voice.v1",
+      `grove-peer.${id}`,
+      ...(link.config.credential
+        ? [`grove-auth.${link.config.credential}`]
+        : []),
+    ]);
   }
   private stop(link: Link) {
     link.generation++;

@@ -9,7 +9,13 @@ import { temporaryGit, fixtureGit } from "../server/branch-testing";
 import { readDirectoryBranch } from "../server/directory-branches";
 import type { ServerWebSocket } from "bun";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, mkdirSync, rmSync, readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Workspace } from "../server/workspace";
@@ -17,9 +23,12 @@ import { HostService } from "../server/hosts";
 import { createHandler, createUpgrade } from "../server/http";
 import { groveWebsocket, type SocketData } from "../server/chord-socket";
 import { type RuntimeEvent, DeliveryRejected } from "../server/runtime";
+import { voiceHttp } from "../server/voice-http";
+import { fakeVoiceProvider } from "./voice-fixture";
 import { FakeRuntime } from "../server/testing";
 import type { Detail, WeeklyUsage } from "../src/contracts";
 const directory = mkdtempSync(join(tmpdir(), "grove-design-preview-"));
+const voiceProvider = fakeVoiceProvider();
 const projects = [
   {
     alias: "codex-for-love",
@@ -208,7 +217,14 @@ function unit(
     }
     return originalDetail(id);
   };
+  const configPath = join(stateDirectory, "config.toml");
+  writeFileSync(configPath, "");
+  writeFileSync(join(stateDirectory, "voice-key"), "synthetic-browser-key", {
+    mode: 0o600,
+  });
+  const voice = { configPath, connect: voiceProvider.connect };
   const handler = createHandler(app, {
+    voice,
     service,
     origin,
     assets: resolve(
@@ -221,6 +237,7 @@ function unit(
     service,
     handler,
     stateDirectory,
+    voice,
     server: undefined as ReturnType<typeof Bun.serve> | undefined,
   };
 }
@@ -412,9 +429,17 @@ async function reset(mode = "working") {
     hostname: "127.0.0.1",
     port: 0,
     websocket: groveWebsocket,
-    fetch: (req, server) => {
+    fetch: async (req, server) => {
       if (peerDrop)
         return new Response("Synthetic host outage", { status: 503 });
+      const v = await voiceHttp(
+        req,
+        peer.service,
+        [peerOriginForFixture()],
+        peer.voice,
+        server,
+      );
+      if (v) return v === true ? undefined : v;
       const result = createUpgrade(peer.app, {
         service: peer.service,
         origin: () => peerOrigin,
@@ -429,7 +454,7 @@ async function reset(mode = "working") {
     hostname: "127.0.0.1",
     port: 0,
     websocket: groveWebsocket,
-    fetch: (req, server) => {
+    fetch: async (req, server) => {
       const result = createUpgrade(empty.app, {
         service: empty.service,
         origin: () => emptyOrigin,
@@ -567,7 +592,31 @@ const server = Bun.serve({
       origin: () => "http://127.0.0.1:14319",
     })(request, server);
     if (upgraded) return upgraded === true ? undefined : upgraded;
+    const v = await voiceHttp(
+      request,
+      current.service,
+      ["http://127.0.0.1:14319"],
+      current.voice,
+      server,
+    );
+    if (v) return v === true ? undefined : v;
     const url = new URL(request.url);
+    if (url.pathname === "/fixture/voice") {
+      if (request.method === "POST") {
+        const body = await request.json();
+        voiceProvider.mode(body.mode ?? "success");
+        if (body.release) voiceProvider.release();
+        for (const u of units)
+          writeFileSync(
+            u.voice.configPath,
+            body.disabled ? "" : '[voice]\napi_key_file="voice-key"\n',
+          );
+      }
+      return Response.json({
+        ...voiceProvider.stats,
+        active: voiceProvider.active,
+      });
+    }
     if (url.pathname === "/fixture/reset" && request.method === "POST") {
       const body = (await request.json()) as { mode?: string };
       await reset(body.mode);
@@ -722,7 +771,15 @@ const server = Bun.serve({
             hostname: "127.0.0.1",
             port: Number(new URL(peerOriginForFixture()).port),
             websocket: groveWebsocket,
-            fetch: (req, server) => {
+            fetch: async (req, server) => {
+              const v = await voiceHttp(
+                req,
+                peer.service,
+                [peerOriginForFixture()],
+                peer.voice,
+                server,
+              );
+              if (v) return v === true ? undefined : v;
               const result = createUpgrade(peer.app, {
                 service: peer.service,
                 origin: () => peerOriginForFixture(),
@@ -833,6 +890,7 @@ const server = Bun.serve({
   },
 });
 function cleanup() {
+  voiceProvider.stop();
   server.stop(true);
   for (const unit of units) {
     unit.service.dispose();

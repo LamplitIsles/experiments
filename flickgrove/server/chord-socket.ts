@@ -21,9 +21,11 @@ import {
 import { decodeFrame, MAX_FRAME } from "../src/chord-client";
 import { invoke } from "./chord-methods";
 import type { HostService } from "./hosts";
+import { voiceRelay, type VoiceSocketData } from "./voice";
 
 type Channel = ReturnType<typeof connect>;
 export type SocketData = {
+  voice?: VoiceSocketData;
   app: HostService;
   service: HostService;
   channel?: Channel;
@@ -226,6 +228,10 @@ export const groveWebsocket = {
   idleTimeout: 0,
   sendPings: false,
   open(socket: ServerWebSocket<SocketData>) {
+    if (socket.data.voice) {
+      socket.data.voice.relay = voiceRelay(socket, socket.data.voice);
+      return;
+    }
     socket.data.channel = connect(socket);
     socket.data.heartbeat = setInterval(() => {
       if (socket.data.ping) return;
@@ -240,6 +246,10 @@ export const groveWebsocket = {
     }, 15_000);
   },
   message(socket: ServerWebSocket<SocketData>, message: string | Buffer) {
+    if (socket.data.voice) {
+      socket.data.voice.relay?.receive(message);
+      return;
+    }
     if (typeof message !== "string") {
       socket.close(1002, "Text frames required");
       return;
@@ -252,6 +262,10 @@ export const groveWebsocket = {
     socket.data.ping = undefined;
   },
   close(socket: ServerWebSocket<SocketData>) {
+    if (socket.data.voice) {
+      socket.data.voice.relay?.dispose();
+      return;
+    }
     clearInterval(socket.data.heartbeat);
     clearTimeout(socket.data.deadline);
     socket.data.channel?.dispose();

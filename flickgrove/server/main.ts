@@ -60,6 +60,7 @@ const service = new HostService(app, {
   origin: () => origin,
 });
 const httpOptions = {
+  voice: { configPath },
   origin: () => origin,
   localOrigin: () => localOrigin,
   service,

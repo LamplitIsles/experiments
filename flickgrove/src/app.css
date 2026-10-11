@@ -472,9 +472,7 @@ pre {
   display: flex;
   align-items: center;
   min-width: 0;
-  overflow-x: auto;
   gap: 4px;
-  scrollbar-width: none;
 }
 .composer-tools > button,
 .workflow-tools > button {
@@ -484,7 +482,10 @@ pre {
   display: flex;
   align-items: center;
   gap: 2px;
-  margin-left: 8px;
+  overflow-x: auto;
+  min-width: 0;
+  padding: 0 16px 10px;
+  scrollbar-width: thin;
 }
 .review-target {
   margin: 0;
@@ -1720,9 +1721,6 @@ pre {
   }
 }
 
-.mobile-skill {
-  display: none;
-}
 .execution-feedback {
   display: inline-flex;
   align-items: center;
@@ -1743,11 +1741,6 @@ pre {
   font-size: 12px;
   line-height: 1.5;
   color: var(--muted-foreground);
-}
-@media (max-width: 700px) {
-  .mobile-skill {
-    display: inline-flex;
-  }
 }
 
 .question-hidden,
@@ -1991,4 +1984,24 @@ pre {
 .report-heading .message-time {
   margin-left: auto;
   flex-shrink: 0;
+}
+
+.voice-status {
+  margin: 0;
+  padding: 0 16px 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.voice-spinner {
+  animation: voice-spin 1s linear infinite;
+}
+@keyframes voice-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-spinner {
+    animation: none;
+  }
 }

@@ -56,6 +56,13 @@ export function initializeNavigation(selected: string | null) {
     if (selected) write({ details: [selected], surfaces: [] });
   }
   const pop = () => {
+    // Capture the layer before route effects run; a foreground Back must not
+    // cancel the conversation composer’s active recording.
+    window.dispatchEvent(
+      new CustomEvent("grove-navigation-pop", {
+        detail: { foreground: navigation.surfaces.length > 0 },
+      }),
+    );
     const next = history.state?.grove ?? { details: [], surfaces: [] };
     if (retiringQuestionDrawer) {
       const retained = retiringQuestionDrawer;

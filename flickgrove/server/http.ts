@@ -1,4 +1,6 @@
 import { filePreview } from "./file-preview";
+import { voiceHttp } from "./voice-http";
+import type { VoiceOptions } from "./voice";
 import { imageHttp } from "./image-http";
 import { IMAGE_UPLOAD_BYTES } from "./images";
 import { resolve, sep } from "node:path";
@@ -10,6 +12,7 @@ import { groveWebsocket, type SocketData } from "./chord-socket";
 const json = (value: unknown, status = 200) =>
   Response.json(value, { status, headers: { "Cache-Control": "no-store" } });
 type Options = {
+  voice?: VoiceOptions;
   origin: () => string;
   localOrigin?: () => string;
   assets?: string;
@@ -77,6 +80,13 @@ export function createHandler(workspace: Workspace, options: Options) {
           (value): value is string => !!value,
         );
     const file = await preview(request, origins);
+    const voice = await voiceHttp(
+      request,
+      options.service,
+      origins,
+      options.voice,
+    );
+    if (voice && voice !== true) return voice;
     if (file) return file;
     const media = await imageHttp(request, options.service, origins);
     if (media) return media;
@@ -159,7 +169,17 @@ export function servePeer(
     idleTimeout: 0,
     maxRequestBodySize: IMAGE_UPLOAD_BYTES,
     websocket: groveWebsocket,
-    fetch(request, server) {
+    async fetch(request, server) {
+      const voice = await voiceHttp(
+        request,
+        options.service,
+        [options.origin(), options.localOrigin?.()].filter(
+          (v): v is string => !!v,
+        ),
+        options.voice,
+        server,
+      );
+      if (voice) return voice === true ? undefined : voice;
       const result = upgrade(request, server);
       return result === true ? undefined : (result ?? handler(request));
     },

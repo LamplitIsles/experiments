@@ -12,6 +12,29 @@ bun run --cwd flickgrove start --name NUC
 
 The default address is **http://127.0.0.1:4318**. Each execution machine needs an authenticated `codex` executable and its own `og` project registry. Orc and Worker threads use the full-access local Codex policy; Reviewer and Researcher threads use the native read-only sandbox on creation and restoration, including settings readback and close retry. Fixed role instructions keep all implementation and repairs with Workers and prohibit Reviewer verification. Responsibility instructions and native filesystem sandbox are separate from Grove's role-authorized MCP tools and server guards. Grove never rewrites the user's Codex configuration.
 
+## Composer and voice input
+
+Spec **#3685**, discussion **#3683**: below the draft, the first row has Add images, voice and Skill search on desktop and mobile; Stop Orc and Send stay at the right. The second row contains Discuss, Implement, Review, Re-review and Research. On mobile only that second row scrolls horizontally. Skills prepare the invocation at the saved caret; sending still requires an explicit action.
+
+Each Peer that needs voice must independently configure its server-side key file in the existing runtime configuration (`~/.config/flickgrove/config.toml`, or `--config PATH`):
+
+```toml
+[voice]
+api_key_file = "voice-api-key"
+```
+
+Relative paths resolve against the config file's directory; absolute paths also work. `voice-api-key` contains a single UTF-8 API key, optionally followed by a newline. Keep it private (`chmod 600 voice-api-key`); files readable/writable/executable by group or others, empty/invalid keys, files larger than 1 KiB and missing/unreadable paths disable voice. The application never creates this key file. Do not put the key into the TOML, repository, browser host credentials or agent MCP configuration. Config/key are read afresh on capability checks and every new voice connection; an active take retains its captured key. No restart is needed for voice-only changes: reopening the conversation, reconnecting or reloading refreshes availability, and starting a take checks again. Existing mandatory Orc/Reviewer/Researcher startup validation remains unchanged.
+
+Use HTTPS or localhost and a browser supporting microphone access, AudioContext at actual 16 kHz and AudioWorklet. Unsupported capture or missing/unavailable configuration leaves text and images usable. Click the microphone to start; click Stop recording at the same position to recognize. From microphone permission/startup through recognition, the draft is read-only, Send/Skill/image changes are disabled, and Add images becomes Cancel. Stop Orc remains a separate execution action. Only the final text replaces the original selection or inserts at the captured caret; it never sends automatically or shows intermediate results. Failures/empty results preserve the draft. Cancel/Escape, hidden page, navigation, conversation/Peer changes, recovery and disconnection invalidate the take and release capture/transport resources; Escape preserves the existing foreground surface hierarchy.
+
+The browser connects directly to the current Orc's owning Peer: authenticated `GET /api/voice/capability` and a separate WebSocket `/api/voice/stream`. Cross-origin queries use that Peer's browser credential and identity, with authenticated CORS rules; WebSocket credentials/identity use subprotocols, never query strings. Agent MCP tokens cannot authorize voice. A page on one Peer cannot use that Peer's key for an Orc on another Peer. The key and raw provider frames never reach public state or the browser.
+
+The relay fixes DashScope `wss://dashscope.aliyuncs.com/api-ws/v1/inference` and `qwen-audio-3.1-asr-flash-streaming`, following [the official client protocol](https://help.aliyun.com/zh/model-studio/qwen-audio-asr-streaming-client-events). Capture streams mono PCM16 little-endian at 16 kHz in approximately 100 ms frames without buffering a whole recording or adding a resampling fallback. Limits: five minutes/9,600,000 PCM bytes, nonempty even frames up to 16 KiB, 256 KiB send queue, 128 KiB upstream events and 20,000 Unicode codepoints of final text; startup 15 s, finish 20 s, absolute relay lifetime 320 s from ready. Sentence finals are deduplicated and sorted by ID; invalid/unfinished/abnormal termination produces no draft change.
+
+The relay does not persist or log audio or transcripts. The resulting draft uses the existing browser-local draft storage, and only an explicit Send creates a normal message. Cancel closes connections but cannot retract audio already streamed to DashScope or guarantee cancellation of provider processing/billing. No audio messages, service deployment or provider settings UI are added.
+
+Isolation verification: `bun test server/voice.test.ts` and `bun run test:browser tests/composer-voice.spec.ts` exercise synthetic private keys, fake upstreams and an actual AudioWorklet with synthetic microphone audio. Desktop 1440/mobile 390 screenshots are saved under `.scratch/composer-voice-two-rows/screenshots/`. Physical-phone microphone capture and real provider latency/billing are not verified by these tests.
+
 ## Managed workflows, Reviewers and Researchers
 
 Spec **#3573**, originating discussion **#3540**, adds managed review to existing Peer, Workspace, MCP and Chord lifecycle. Orc coordinates, investigates and discusses; all code development and repairs go to the sole implementation Worker for each repository/spec/PR, with no small-fix exception. Reviewers read actual code, the fixed diff, full FlickNote spec, standards and existing logs/screenshots; they do not run tests, builds or browsers. Missing verification goes back to the original Worker. There is no ticket requirement: the default workflow is settled discussion → self-reviewed spec → one Worker; existing tickets are read and new tickets are created only on explicit request.
@@ -51,7 +74,7 @@ Isolated real Peer/Chord, strict native wire, stdio MCP and installed-native dis
 
 ## Connections and browser preferences
 
-Use `--listen`, `--port` and `--origin` for an existing HTTP(S) proxy/tunnel. This application does not provision tunnels. The configured origin has no path, query or embedded credentials. Proxies preserve Host and WebSocket upgrades on `/api/socket`, including `Sec-WebSocket-Protocol`. Local agent MCP calls use `http://127.0.0.1:PORT` and separate per-agent tokens, independently of the advertised browser origin.
+Use `--listen`, `--port` and `--origin` for an existing HTTP(S) proxy/tunnel. This application does not provision tunnels. The configured origin has no path, query or embedded credentials. Proxies preserve Host and WebSocket upgrades on `/api/socket` and `/api/voice/stream`, including `Origin` and `Sec-WebSocket-Protocol`. For `/api/voice/capability`, preserve `Authorization`, `X-Grove-Peer`, CORS preflight and response identity headers. Local agent MCP calls use `http://127.0.0.1:PORT` and separate per-agent tokens, independently of the advertised browser origin.
 
 `--state DIRECTORY` selects durable state (default `~/.local/share/flickgrove`); `--codex PATH` selects the executable. `workspace.sqlite` owns conversations and each tree's captured execution settings. Private mode-0600 `hosts.json` stores only the stable Peer identity and access credential. Read the remote credential locally and enter it under **Settings → Hosts → Add host**. The browser stores host addresses and credentials in origin-scoped local storage; another browser, device or page origin has independent configuration. There is no configuration synchronization or backend host directory.
 
