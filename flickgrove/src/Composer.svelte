@@ -22,6 +22,7 @@
   let voiceAvailable = $state(false); let voiceReason = $state("Checking voice availability…");
   let voiceError = $state(""); let voiceSeconds = $state(0);
   const voiceBusy = $derived(voiceStatus !== "idle");
+  const voiceTarget = $derived(connected ? agentId : "");
   let takeDraft: {text:string;start:number;end:number} | undefined;
   const voice = new VoiceRecordingController({
     onStatus: status => { voiceStatus=status; },
@@ -44,7 +45,7 @@
   function stopVoice() { void voice.stopAndGet().catch(()=>{}); }
   $effect(()=>{ const value=text; untrack(()=>{if(takeDraft && value!==takeDraft.text)cancelVoice();}); });
   $effect(()=>{
-    const online=connected; const id=agentId;
+    const id=voiceTarget; const online=!!id;
     const abort=new AbortController();voiceAvailable=false;voiceReason="Checking voice availability…";
     if(!online){cancelVoice();voiceReason="Execution Peer is offline";return;}
     if(!canCaptureVoice()){voiceReason="Voice requires HTTPS or localhost and a supported browser";return;}
@@ -161,7 +162,7 @@
     {#if imageError}<p class="inline-error" role="alert">{imageError}</p>{/if}
     {#if preparing}<p role="status">Preparing images…</p>{/if}
     <Textarea onpaste={paste} bind:ref={input} bind:value={text} aria-label={m.message_orc()} placeholder={m.message_placeholder()} readonly={voiceBusy} disabled={stopping || preparing} rows={2} oncompositionstart={() => { composing = true; }} oncompositionend={() => { composing = false; }} onkeydown={keydown} />
-    {#if voiceBusy}<p class="voice-status" role="status" aria-live="polite">{voiceStatus === "starting" ? "Starting microphone…" : voiceStatus === "recording" ? `Recording ${Math.floor(voiceSeconds/60)}:${String(voiceSeconds%60).padStart(2,"0")}` : "Recognizing…"}</p>{:else if !voiceAvailable}<p class="voice-status" role="status">{voiceReason}</p>{/if}
+    {#if voiceBusy}<p class="voice-status" role="status" aria-live="polite">{voiceStatus === "starting" ? "Starting microphone…" : voiceStatus === "recording" ? `Recording ${Math.floor(voiceSeconds/60)}:${String(voiceSeconds%60).padStart(2,"0")}` : "Recognizing…"}</p>{/if}
     {#if voiceError}<p class="inline-error" role="alert">{voiceError}</p>{/if}
     <div class="composer-bottom">
       <div class="composer-tools">

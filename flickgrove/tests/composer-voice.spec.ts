@@ -424,7 +424,7 @@ test("missing config and denied microphone allow text and retry", async ({
     page
       .getByRole("status")
       .filter({ hasText: "Voice is not configured on this Peer" }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await input(page).fill("still editable");
   await expect(
     page.getByRole("button", { name: "Send message", exact: true }),
@@ -453,7 +453,7 @@ test("missing config and denied microphone allow text and retry", async ({
     page.getByRole("status").filter({
       hasText: "Voice requires HTTPS or localhost and a supported browser",
     }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await input(page).fill("unsupported capture still sends");
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
@@ -541,4 +541,96 @@ test("startup transport cancellation, session switch with pending final and remo
   await request.post(origin + "/fixture/change", { data: { outage: true } });
   await released(page, request);
   await expect(input(page)).not.toHaveAttribute("readonly", "");
+});
+
+test("empty final during startup keeps actual capture recording until explicit Finish", async ({
+  page,
+  request,
+}) => {
+  await setup(page, request, 1440, "empty-start");
+  await input(page).fill("preserved ");
+  await record(page, request);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Cancel voice input", exact: true })
+    .click();
+  await released(page, request);
+  await expect(input(page)).toHaveValue("preserved ");
+  await record(page, request);
+  await page
+    .getByRole("button", { name: "Stop recording", exact: true })
+    .click();
+  await expect(input(page)).toHaveValue("preserved 你好世界");
+  await released(page, request);
+});
+
+test("capability checks are silent and bounded across detail refresh and unavailable reload", async ({
+  page,
+  request,
+}) => {
+  let calls = 0;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/voice/capability", async (route) => {
+    calls++;
+    await held;
+    await route.continue();
+  });
+  // Existing setup waits for enabled microphone: release after first check so we can inspect startup.
+  const starting = setup(page, request, 390);
+  await expect.poll(() => calls).toBeGreaterThan(0);
+  await expect(input(page)).toBeVisible();
+  const microphone = page.getByRole("button", {
+    name: "Start voice input",
+    exact: true,
+  });
+  await expect(microphone).toBeDisabled();
+  await expect(page.locator(".voice-status")).toHaveCount(0);
+  const rect = await page.locator(".composer-bottom").boundingBox();
+  await page.screenshot({
+    path: "../.scratch/voice-immediate-failure/screenshots/390-checking.png",
+  });
+  release();
+  await starting;
+  expect(await page.locator(".composer-bottom").boundingBox()).toEqual(rect);
+  const initial = calls;
+  await request.post(origin + "/fixture/change", {
+    data: {
+      append: { agentId: "orc", text: "refresh without changing connection" },
+    },
+  });
+  await expect(
+    page.getByText("refresh without changing connection", { exact: true }),
+  ).toBeVisible();
+  await page.waitForTimeout(300);
+  expect(calls).toBe(initial);
+  await request.post(origin + "/fixture/voice", { data: { disabled: true } });
+  await page.reload();
+  await expect(microphone).toHaveAttribute("title", /not configured/);
+  await expect(microphone).toBeDisabled();
+  await expect(page.locator(".voice-status")).toHaveCount(0);
+  await input(page).fill("silent availability still sends");
+  await expect(
+    page.getByRole("button", { name: "Send message", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "Add images", exact: true }),
+  ).toBeEnabled();
+  await page.getByLabel("Choose message images").setInputFiles({
+    name: "silent.png",
+    mimeType: "image/png",
+    buffer: await sharp({
+      create: { width: 16, height: 16, channels: 4, background: "#408080" },
+    })
+      .png()
+      .toBuffer(),
+  });
+  await expect(page.locator(".image-draft")).toHaveCount(1);
+  await page.screenshot({
+    path: "../.scratch/voice-immediate-failure/screenshots/390-unavailable.png",
+  });
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).sends.length))
+    .toBe(1);
 });

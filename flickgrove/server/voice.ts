@@ -212,8 +212,9 @@ export function voiceRelay(
                 fail("transcript_invalid");
               return;
             }
-            if (!sentence.text.trim()) return fail("transcript_invalid");
             unfinished.delete(sentence.sentence_id);
+            // A valid empty final closes its interim segment without ending capture.
+            if (!sentence.text.trim()) return;
             chars +=
               Array.from(sentence.text).length -
               Array.from(sentences.get(sentence.sentence_id) ?? "").length;

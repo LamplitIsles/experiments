@@ -78,6 +78,18 @@ export function fakeVoiceProvider() {
             return;
           }
           emit(ws, "task-started");
+          if (mode === "empty-start") {
+            emit(ws, "result-generated", {
+              output: {
+                sentence: { sentence_id: 3, sentence_end: false, text: "" },
+              },
+            });
+            emit(ws, "result-generated", {
+              output: {
+                sentence: { sentence_id: 3, sentence_end: true, text: "  " },
+              },
+            });
+          }
           // Intermediate text must never enter the browser's draft.
           emit(ws, "result-generated", {
             output: {
