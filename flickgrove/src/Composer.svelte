@@ -3,7 +3,7 @@
   import { navigation, setSurface } from "./navigation.svelte";
   import { Button } from '$lib/components/ui/button/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
-  import { Plus, MessagesSquare, Hammer, ClipboardCheck, RotateCcw, Telescope, X, ArrowUp, Square, Sparkles } from '@lucide/svelte';
+  import { Plus, MessagesSquare, Hammer, Bug, ClipboardCheck, RotateCcw, Telescope, X, ArrowUp, Square, Sparkles } from '@lucide/svelte';
   import { storagePrefix, readingCache, peers } from './api';
   import { Mic, LoaderCircle } from '@lucide/svelte';
   import { canCaptureVoice, VoiceRecordingController, type VoiceRecordingStatus } from './voice-input';
@@ -182,7 +182,7 @@
       </div>
     </div>
     <div class="workflow-tools" aria-label="Built-in Skills">
-      {#each [{name:"grove-grill-with-docs",label:"Discuss",icon:MessagesSquare},{name:"grove-to-orc-impl",label:"Implement",icon:Hammer},{name:"grove-code-review",label:"Review",icon:ClipboardCheck},{name:"grove-review-again",label:"Re-review",icon:RotateCcw},{name:"grove-research",label:"Research",icon:Telescope}] as action}
+      {#each [{name:"grove-grill-with-docs",label:"Discuss",icon:MessagesSquare},{name:"grove-to-orc-impl",label:"Implement",icon:Hammer},{name:"grove-diagnosing-bugs",label:"Diagnose",icon:Bug},{name:"grove-code-review",label:"Review",icon:ClipboardCheck},{name:"grove-review-again",label:"Re-review",icon:RotateCcw},{name:"grove-research",label:"Research",icon:Telescope}] as action}
         <Button variant="ghost" size="sm" disabled={voiceBusy || preparing || stopping || !connected} onpointerdown={e => { if(composing)e.preventDefault(); }} onclick={() => workflow(action.name)}><action.icon />{action.label}</Button>
       {/each}
     </div>

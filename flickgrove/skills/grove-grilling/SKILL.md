@@ -27,4 +27,4 @@ Sort eligible questions by ascending confidence and ask at most five per round. 
 
 After each answer, recompute the open decisions. Continue with another round whenever the answer reveals a new qualifying user-facing decision; there is no fixed round limit. Stop when no question qualifies, then present the assumptions you selected.
 
-Finish with a concise shared-understanding summary: user decisions, agent-owned assumptions, and any explicitly deferred point. Do not begin implementation unless the user asked the session to continue into implementation.
+Finish with a concise shared-understanding summary: user decisions, agent-owned assumptions, and any explicitly deferred point. Standalone discussion ends here unless the user requests continuation. When a calling workflow defines the next step, follow that continuation policy after convergence; explicit discussion-only instructions still govern.

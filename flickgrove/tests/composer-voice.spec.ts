@@ -270,7 +270,14 @@ for (const width of [1440, 390])
     expect(geometry.pageWidth).toBeLessThanOrEqual(width);
     expect(
       await page.locator(".workflow-tools button").allTextContents(),
-    ).toEqual(["Discuss", "Implement", "Review", "Re-review", "Research"]);
+    ).toEqual([
+      "Discuss",
+      "Implement",
+      "Diagnose",
+      "Review",
+      "Re-review",
+      "Research",
+    ]);
     if (width === 390) {
       expect(geometry.scroll).toBe(true);
       await page
@@ -294,7 +301,7 @@ for (const width of [1440, 390])
       page.getByRole("button", { name: "Search skills…", exact: true }),
     ).toHaveCount(0);
     await expect(
-      page.getByRole("button", { name: "Discuss", exact: true }),
+      page.getByRole("button", { name: "Diagnose", exact: true }),
     ).toBeDisabled();
     await expect(
       page.getByRole("button", { name: "Remove image 1" }),

@@ -21,6 +21,7 @@ for (const width of [1440, 390])
     await expect(tools.getByRole("button")).toHaveText([
       "Discuss",
       "Implement",
+      "Diagnose",
       "Review",
       "Re-review",
       "Research",
@@ -66,7 +67,7 @@ for (const width of [1440, 390])
     if (width === 390) {
       expect(
         await page
-          .locator(".composer-tools")
+          .locator(".workflow-tools")
           .evaluate((el) => el.scrollWidth > el.clientWidth),
       ).toBe(true);
       await research.scrollIntoViewIfNeeded();
