@@ -194,5 +194,10 @@
   "diagram_invalid": "Unable to render diagram. Source is shown below.",
   "read_full_message": "Read full message",
   "loading_message": "Loading message…",
-  "earlier_submissions": "Earlier submissions"
+  "earlier_submissions": "Earlier submissions",
+  "abandon_close_title": "Abandon unconfirmed submissions and close",
+  "abandon_close_help": "Reception of these submissions is still unknown. Closing stops tracking them on this device. No message will be resent, and native history will be kept.",
+  "abandon_close_submissions": "Unconfirmed submissions ({count})",
+  "abandon_close_check": "Check close status",
+  "abandon_close_recovery": "Finish session close"
 }

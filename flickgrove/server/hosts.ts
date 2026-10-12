@@ -320,8 +320,11 @@ export class HostService {
       await this.workspace.rename(this.raw(id), title),
     );
   }
-  closeTree(id: string) {
-    return this.workspace.closeTree(this.raw(id));
+  abandonCloseCandidate(id: string) {
+    return this.workspace.abandonCloseCandidate(this.raw(id));
+  }
+  closeTree(id: string, abandonUnknownOperationIds?: string[]) {
+    return this.workspace.closeTree(this.raw(id), abandonUnknownOperationIds);
   }
   async answerBatch(id: string, answers: Answer[], operationId: string) {
     return qualified(

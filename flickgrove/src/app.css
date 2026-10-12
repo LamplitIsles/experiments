@@ -2004,3 +2004,24 @@ button.question-option {
     animation: none;
   }
 }
+
+.close-recovery-layout {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+.close-recovery-layout > main {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+.close-recovery-layout .agent-detail {
+  height: 100%;
+}
+.close-recovery {
+  flex-shrink: 0;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--card);
+  font-size: 12px;
+}

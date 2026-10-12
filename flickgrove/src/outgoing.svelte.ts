@@ -355,3 +355,71 @@ export function deleteRejectedOutgoing(agentId: string, id: string) {
     (o) => o.agentId !== agentId || o.id !== id,
   );
 }
+
+// Only call after the owning Peer confirms this explicitly abandoned session closed.
+export function clearClosedPending(agentId: string) {
+  const scope = `${prefix}${encodeURIComponent(agentId)}/`;
+  for (const storageKey of Object.keys(localStorage)) {
+    if (!storageKey.startsWith(scope)) continue;
+    const raw = localStorage.getItem(storageKey);
+    let parsed;
+    try {
+      parsed = raw ? entry.safeParse(JSON.parse(raw)) : null;
+    } catch {
+      continue;
+    }
+    if (
+      !parsed?.success ||
+      parsed.data.agentId !== agentId ||
+      !["sending", "uncertain"].includes(parsed.data.status)
+    )
+      continue;
+    localStorage.removeItem(storageKey);
+    void saveImages(operationKey(agentId, parsed.data.id), []).catch(() => {});
+  }
+  outgoing.entries = outgoing.entries.filter(
+    (o) => o.agentId !== agentId || o.status !== "pending",
+  );
+}
+
+// A device-owned close intent contains identities only, never another submission ledger.
+const closePrefix = `flickgrove/${location.origin}/abandon-close/`;
+const closeIntent = z.object({
+  agentId: z.string().min(1),
+  unknownOperationIds: z.array(z.string().min(1)).min(1),
+});
+const savedCloses: z.infer<typeof closeIntent>[] = [];
+for (const storageKey of Object.keys(localStorage)) {
+  if (!storageKey.startsWith(closePrefix)) continue;
+  try {
+    const intent = closeIntent.parse(
+      JSON.parse(localStorage.getItem(storageKey)!),
+    );
+    if (storageKey === closePrefix + encodeURIComponent(intent.agentId))
+      savedCloses.push(intent);
+  } catch {
+    /* Invalid device data cannot authorize a close or cleanup. */
+  }
+}
+export const closeRecovery = $state({ entries: savedCloses });
+export function rememberCloseRecovery(
+  agentId: string,
+  unknownOperationIds: string[],
+) {
+  const intent = closeIntent.parse({ agentId, unknownOperationIds });
+  // Failure must prevent the close mutation: recovery has to survive a reload first.
+  readingCache.writeDevice(
+    closePrefix + encodeURIComponent(agentId),
+    JSON.stringify(intent),
+  );
+  closeRecovery.entries = [
+    ...closeRecovery.entries.filter((i) => i.agentId !== agentId),
+    intent,
+  ];
+}
+export function forgetCloseRecovery(agentId: string) {
+  localStorage.removeItem(closePrefix + encodeURIComponent(agentId));
+  closeRecovery.entries = closeRecovery.entries.filter(
+    (i) => i.agentId !== agentId,
+  );
+}

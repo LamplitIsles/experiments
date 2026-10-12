@@ -1,4 +1,5 @@
 export type Surface =
+  | "abandon-close"
   | "new"
   | "history"
   | "history-preview"

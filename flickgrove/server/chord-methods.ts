@@ -79,8 +79,12 @@ export async function invoke(app: HostService, member: Method, input: unknown) {
       const p = parse(member);
       return await app.rename(p.id, p.title);
     }
-    case "closeTree":
-      return await app.closeTree(parse(member).id);
+    case "abandonCloseCandidate":
+      return await app.abandonCloseCandidate(parse(member).id);
+    case "closeTree": {
+      const p = parse(member);
+      return await app.closeTree(p.id, p.abandonUnknownOperationIds);
+    }
     default:
       throw new Error("Invalid method");
   }

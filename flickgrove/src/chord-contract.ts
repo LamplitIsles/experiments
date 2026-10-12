@@ -88,8 +88,21 @@ export const inputs = {
     .object({ id, fast: z.boolean(), retry: z.boolean().optional() })
     .strict(),
   rename: z.object({ id, title: z.string().max(1000) }),
-  closeTree: z.object({ id }),
+  abandonCloseCandidate: z.object({ id }).strict(),
+  closeTree: z
+    .object({ id, abandonUnknownOperationIds: z.array(id).min(1).optional() })
+    .strict(),
 };
+export const abandonCloseSchema = z.discriminatedUnion("closed", [
+  z.object({
+    closed: z.literal(true),
+    unknownOperationIds: z.array(id).length(0),
+  }),
+  z.object({
+    closed: z.literal(false),
+    unknownOperationIds: z.array(id).min(1),
+  }),
+]);
 export type Method = keyof typeof inputs;
 type Methods = {
   [K in Method]: (input: JsonValue, context: Context) => Promise<JsonValue>;
@@ -253,7 +266,7 @@ export function routeCall(
   };
   let route = simple[url.pathname];
   const match =
-    /^\/agents\/([^/]+)(?:\/(messages|lookup|answers|skills|stop|title|close|settings|tree-fast))?$/.exec(
+    /^\/agents\/([^/]+)(?:\/(messages|lookup|answers|skills|stop|title|close|abandon-close-candidate|settings|tree-fast))?$/.exec(
       url.pathname,
     );
   if (match) {
@@ -268,6 +281,7 @@ export function routeCall(
       settings: "updateSettings",
       "tree-fast": "updateTreeFast",
       close: "closeTree",
+      "abandon-close-candidate": "abandonCloseCandidate",
     } as const;
     const member = match[2]
       ? members[match[2] as keyof typeof members]

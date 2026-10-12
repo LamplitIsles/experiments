@@ -1442,7 +1442,46 @@ export class Workspace {
       return this.deliver(a, text, requestId, "user", [], undefined, images);
     });
   }
-  closeTree(id: string) {
+  abandonCloseCandidate(id: string) {
+    return this.serialize(id, async () => {
+      const a = this.state.agents.find((a) => a.id === id);
+      if (!a || a.role !== "orc") throw new Error("Orc session not found");
+      return a.closed
+        ? { closed: true as const, unknownOperationIds: [] }
+        : {
+            closed: false as const,
+            unknownOperationIds: this.abandonUnknownIds(a),
+          };
+    });
+  }
+  private abandonUnknownIds(a: RuntimeAgent): string[] {
+    if (
+      a.closed ||
+      a.role !== "orc" ||
+      !["idle", "error"].includes(a.state) ||
+      a.turnId ||
+      this.opening.has(a.id) ||
+      this.treeActions.has(a.id) ||
+      this.state.agents.some((w) => w.ownerId === a.id && !w.closed) ||
+      a.questions.some((q) => q.state !== "answered") ||
+      a.deliveries.some(
+        (d) =>
+          d.status === "queued" ||
+          d.status === "sending" ||
+          (d.status === "uncertain" && d.source !== "user"),
+      )
+    )
+      throw new Error(
+        "This session cannot abandon unconfirmed submissions while work, questions or owned agents remain",
+      );
+    const ids = a.deliveries
+      .filter((d) => d.status === "uncertain" && d.source === "user")
+      .map((d) => d.id);
+    if (!ids.length)
+      throw new Error("No unconfirmed user submissions to abandon");
+    return ids;
+  }
+  closeTree(id: string, abandonUnknownOperationIds?: string[]) {
     return this.serialize(id, async () => {
       const a = this.agent(id);
       if (a.role !== "orc")
@@ -1456,10 +1495,25 @@ export class Workspace {
         throw new Error(
           `Ask Orc to close its Workers, Reviewers and Researchers first: ${workers.map((w) => w.title).join(", ")}`,
         );
-      this.assertIdle(a);
+      const validate = () => {
+        if (abandonUnknownOperationIds === undefined) this.assertIdle(a);
+        else {
+          const actual = this.abandonUnknownIds(a);
+          if (
+            actual.length !== abandonUnknownOperationIds.length ||
+            new Set(abandonUnknownOperationIds).size !== actual.length ||
+            actual.some((id) => !abandonUnknownOperationIds.includes(id))
+          )
+            throw new Error(
+              "Unconfirmed submissions changed. Read the session and confirm again.",
+            );
+        }
+      };
+      validate();
       const handle = this.handles.get(id);
       await handle?.close();
       this.handles.delete(id);
+      validate();
       a.closed = true;
       this.save();
       return { closed: true as const, id };

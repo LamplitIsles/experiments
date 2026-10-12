@@ -16,11 +16,11 @@
   import type { Answer, Agent, Detail, HistorySession, Model, Project, Settings, Skill, Snapshot } from "./contracts";
   import { api, editable, setClient } from "./api";
   import { RequestRejected } from "./chord-client";
-  import { lookupSchema, type Receipt } from "./chord-contract";
+  import { lookupSchema, abandonCloseSchema, type Receipt } from "./chord-contract";
   import { addOutgoing, observeOutgoing, outgoing, withOutgoing, acceptReceipt, unknownOutgoing, submissionResult } from "./outgoing.svelte";
   import { imageSchema } from "./chord-contract";
   import { restoreImages, type ImageDraft } from "./image-drafts";
-  import { receiptAlreadyAccepted, setOutgoingImages, deleteRejectedOutgoing } from "./outgoing.svelte";
+  import { receiptAlreadyAccepted, setOutgoingImages, deleteRejectedOutgoing, clearClosedPending, closeRecovery, rememberCloseRecovery, forgetCloseRecovery } from "./outgoing.svelte";
   import { observeQuestions, questionPanels, setQuestionPanel } from "./question-state.svelte";
   import HostFilter from "./HostFilter.svelte";
   import Hosts from "./Hosts.svelte";
@@ -48,7 +48,7 @@
   let projects = $state<Project[]>([]); let models = $state<Model[]>(preferences.models);
   let connected = $state(false); let loading = $state(true); let error = $state("");
   let now = $state(Date.now()); let sessionList: { visibleIds(): string[]; keydown(event: KeyboardEvent): Promise<void>; expandFocused(): void; reveal(id: string): Promise<void>; closeTarget(): string | null; navigate(offset: number, index?: number): Promise<string | null> };
-  let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | "hosts" | null>(null);
+  let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | "hosts" | "abandon-close" | null>(null);
   let search = $state(""); let projectId = $state(""); let saving = $state(false);
   let settings = $state<Settings | null>(null); let sequence = 0; let focusCreatedId = $state<string | null>(null);
   let install = $state<(Event & { prompt: () => Promise<void> }) | null>(null);
@@ -118,7 +118,7 @@
     if (id !== selectedId) { ++sequence; selectedId = id; detail = null; skills = []; error = ""; if (id) void restoreDetail(id); else { void client?.call("select", {ids:[]}).catch(() => {}); } }
   });
   $effect(() => {
-    const kind = navigation.surfaces.find(s => s === "new" || s === "settings" || s === "keys" || s === "hosts") ?? null;
+    const kind = navigation.surfaces.find(s => s === "new" || s === "settings" || s === "keys" || s === "hosts" || s === "abandon-close") ?? null;
     if (kind !== modal) { modal = kind; modalOpen = !!kind; if (kind) void prepareModal(kind); }
   });
   async function refreshDetail(id: string) {
@@ -204,8 +204,14 @@
   }
   let hostsReturnFocus: HTMLElement | null = null;
   function show(kind: "new" | "settings" | "keys" | "hosts") { if (kind === "hosts") hostsReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null; setSurface(kind, true); }
-  async function prepareModal(kind: "new" | "settings" | "keys" | "hosts") {
+  async function prepareModal(kind: "new" | "settings" | "keys" | "hosts" | "abandon-close") {
     error = "";
+    if (kind === "abandon-close" && !abandon) {
+      const intent = closeRecovery.entries.find(i => i.agentId === selectedId);
+      if (!intent) { await closeModal(); return; }
+      abandon = { id: intent.agentId, title: snapshot.agents.find(a => a.id === intent.agentId)?.title ?? "Orc", unknownOperationIds: intent.unknownOperationIds };
+      closeUnknown = true;
+    }
     if (kind === "new") { search = ""; void chooseHost(hostFilter || preferences.host || snapshot.entryId || ""); }
     if (kind === "settings") {
       const saved=preferences.settings;
@@ -331,16 +337,87 @@
   }
   let closingId = $state<string | null>(null);
   let closeError = $state<{ id: string; reason: string } | null>(null);
+  let abandon = $state<{ id: string; title: string; unknownOperationIds: string[] } | null>(null);
+  let closeUnknown = $state(false);
+  let abandonError = $state("");
+  let closeRecoveryErrors = $state<Record<string, string>>({});
+  let checkingCloses = $state<string[]>([]);
+  async function checkPendingClose(id: string, showConfirmation = false) {
+    if (closingId === id || checkingCloses.includes(id) || !hosts.some(h => id.startsWith(h.id + ":") && h.connected)) return;
+    checkingCloses = [...checkingCloses, id];
+    const visit = selectedId; const device = hostFilter; const generation = sequence;
+    try {
+      const state = await readAbandon(id);
+      if (state.closed) await finishAbandon(id);
+      else if (showConfirmation && selectedId === visit && hostFilter === device && sequence === generation && !navigation.surfaces.length) {
+        abandon = { id, title: snapshot.agents.find(a => a.id === id)?.title ?? "Orc", unknownOperationIds: state.unknownOperationIds };
+        closeUnknown = false; abandonError = ""; setSurface("abandon-close", true);
+      }
+    } catch(e) { closeRecoveryErrors = { ...closeRecoveryErrors, [id]: e instanceof Error ? e.message : m.load_failure() }; }
+    finally { checkingCloses = checkingCloses.filter(target => target !== id); }
+  }
+  async function readAbandon(id: string) {
+    return abandonCloseSchema.parse(await api(`/agents/${id}/abandon-close-candidate`, {}));
+  }
+  async function finishAbandon(id: string) {
+    clearClosedPending(id);
+    forgetCloseRecovery(id);
+    const errors = { ...closeRecoveryErrors }; delete errors[id]; closeRecoveryErrors = errors;
+    if (modal === "abandon-close" && abandon?.id === id) await closeModal();
+    if (abandon?.id === id) { abandon = null; closeUnknown = false; abandonError = ""; }
+    if (closeError?.id === id) closeError = null;
+    toast.success(m.tree_closed(), { duration: 3000 });
+    adopt(await api<Snapshot>("/snapshot"), true);
+  }
+  async function confirmAbandon() {
+    if (!abandon || closingId) return;
+    const target = $state.snapshot(abandon);
+    closingId = target.id; abandonError = "";
+    try {
+      if (closeUnknown) {
+        const state = await readAbandon(target.id);
+        if (state.closed) await finishAbandon(target.id);
+        else { abandon = { ...target, unknownOperationIds: state.unknownOperationIds }; closeUnknown = false; }
+        return;
+      }
+      // Remember an unknown close until a read confirms its result; never blindly replay.
+      rememberCloseRecovery(target.id, target.unknownOperationIds);
+      closeUnknown = true;
+      await api(`/agents/${target.id}/close`, { abandonUnknownOperationIds: target.unknownOperationIds });
+      await finishAbandon(target.id);
+    } catch(e) {
+      abandonError = e instanceof Error ? e.message : m.load_failure();
+      try {
+        const state = await readAbandon(target.id);
+        if (state.closed) await finishAbandon(target.id);
+        else if (e instanceof RequestRejected) {
+          abandon = { ...target, unknownOperationIds: state.unknownOperationIds }; closeUnknown = false;
+        }
+      } catch(readError) {
+        closeRecoveryErrors = { ...closeRecoveryErrors, [target.id]: readError instanceof Error ? readError.message : abandonError };
+      }
+    } finally { closingId = null; }
+  }
   async function closeTree(id: string) {
     if (closingId) return;
     closeError = null;
     if (!connected || hosts.find(h => h.id === snapshot.agents.find(a => a.id === id)?.hostId)?.connected === false) { closeError = { id, reason: m.host_offline() }; return; }
     closingId = id;
+    const visit = selectedId; const device = hostFilter; const generation = sequence;
     try {
       await api(`/agents/${id}/close`, {});
       toast.success(m.tree_closed(), { duration: 3000 });
       adopt(await api<Snapshot>("/snapshot"));
-    } catch(e) { closeError = { id, reason: e instanceof Error ? e.message : m.load_failure() }; }
+    } catch(e) {
+      closeError = { id, reason: e instanceof Error ? e.message : m.load_failure() };
+      try {
+        const state = await readAbandon(id);
+        if (!state.closed && selectedId === visit && hostFilter === device && sequence === generation && !navigation.surfaces.length) {
+          abandon = { id, title: snapshot.agents.find(a => a.id === id)?.title ?? "Orc", unknownOperationIds: state.unknownOperationIds };
+          closeUnknown = false; abandonError = ""; setSurface("abandon-close", true);
+        }
+      } catch { /* Ordinary close errors retain their existing inline feedback. */ }
+    }
     finally { closingId = null; }
   }
   async function rename(title: string) {
@@ -439,6 +516,10 @@
       const incoming=selectedId&&value.details[selectedId];
       if(incoming && value.snapshot.agents.some(a=>a.id===incoming.id)){observeOutgoing(incoming);detail=incoming;readingCache.saveDetail(incoming);}
       void reconcilePending();
+      for (const intent of closeRecovery.entries) {
+        const peer = intent.agentId.split(":")[0];
+        if (!before.hosts?.some(h => h.id === peer && h.connected) && value.snapshot.hosts?.some(h => h.id === peer && h.connected)) void checkPendingClose(intent.agentId);
+      }
       if(selectedId){const id=selectedId.split(":")[0];if(!before.hosts?.find(h=>h.id===id)?.connected&&value.snapshot.hosts?.find(h=>h.id===id)?.connected)void restoreDetail(selectedId);}
       if(!entryWasConnected&&value.snapshot.hosts?.find(h=>h.id===value.snapshot.entryId)?.connected){
         void load();
@@ -468,6 +549,7 @@
   <HostFilter {hosts} {unansweredHosts} value={hostFilter} onselect={selectHost} onmanage={() => show("hosts")} />
   <div class="header-actions"><Weekly hostId={snapshot.entryId} connected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} /><Button variant="ghost" size="icon-sm" aria-label={m.settings()} onclick={() => show("settings")}><SettingsIcon /></Button></div>
 </header>
+<div class:close-recovery-layout={closeRecovery.entries.some(i => modal !== "abandon-close" || abandon?.id !== i.agentId)}>
 <main class:with-detail={!!selectedId}>
   <SessionList bind:this={sessionList} agents={visibleAgents} rootOrder={treeOrder[hostFilter] ?? []} onreorder={ids => treeOrder = { ...treeOrder, [hostFilter]: ids }} {hosts} {selectedId} {loading} {connected} {closingId} closeError={selectedId === closeError?.id ? null : closeError} onclosetree={closeTree} onopen={open} onnew={() => show("new")} />
   {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !shownDetail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
@@ -476,9 +558,22 @@
   {#if shownDetail && selectedId}{#key selectedId}<AgentDetail detail={shownDetail!} ready={!!detail} tree={shownDetail!.role === "orc" ? target : owner} {owner} {skills} {now} connected={hostConnected} mediaConnected={connected && hostConnected} entryId={snapshot.entryId} entryConnected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} onstop={stop} onupdate={result => { if (selectedId === result.id) detail = result; snapshot = { ...snapshot, agents: snapshot.agents.map(a => a.id === result.id ? { ...a, model: result.model, effort: result.effort, serviceTier: result.serviceTier } : a) }; }} onrename={rename} onrefresh={load} onrecovered={recovered} ondeletefailed={deleteFailedSubmission} actionError={error || (recoveryFailure?.agentId===selectedId ? recoveryFailure.message : "")} closeError={closeError?.id === shownDetail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} />{/key}{/if}
 </main>
 
+{#if closeRecovery.entries.some(i => modal !== "abandon-close" || abandon?.id !== i.agentId)}
+  <div class="close-recovery flex-col items-start" role="status" aria-label={m.abandon_close_recovery()}>
+    {#each closeRecovery.entries.filter(i => modal !== "abandon-close" || abandon?.id !== i.agentId) as intent (intent.agentId)}<div class="flex flex-wrap items-center gap-2 min-w-0"><div class="min-w-0"><strong>{m.abandon_close_recovery()}</strong><p class="break-all text-xs">{intent.agentId}</p>{#if closeRecoveryErrors[intent.agentId]}<p role="alert" class="break-words">{closeRecoveryErrors[intent.agentId]}</p>{/if}</div><Button variant="ghost" size="sm" disabled={closingId === intent.agentId || checkingCloses.includes(intent.agentId) || !hosts.some(h => intent.agentId.startsWith(h.id + ":") && h.connected)} onclick={() => checkPendingClose(intent.agentId, true)}>{m.abandon_close_check()}</Button></div>{/each}
+  </div>
+{/if}
+</div>
 <Dialog.Root open={modalOpen} onOpenChange={value => { if (!value && modal) void closeModal(); }}>
   <Dialog.Content showCloseButton={false} class={`grove-dialog ${modal === "new" ? "new-modal" : modal === "settings" ? "settings-modal" : ""}`} onOpenAutoFocus={e => { e.preventDefault(); if (modal === "new") projectSearch?.focus(); }} onCloseAutoFocus={e => { e.preventDefault(); if (hostsReturnFocus?.isConnected) hostsReturnFocus.focus(); hostsReturnFocus = null; }}><Button class="modal-close" variant="ghost" size="icon-sm" aria-label={m.close()} onclick={closeModal}><X /></Button>
-    {#if modal === "new"}
+    {#if modal === "abandon-close" && abandon}
+      <Dialog.Title>{m.abandon_close_title()}</Dialog.Title>
+      <Dialog.Description>{m.abandon_close_help()}</Dialog.Description>
+      <p class="break-words font-medium">{abandon.title}</p>
+      <details open><summary>{m.abandon_close_submissions({ count: abandon.unknownOperationIds.length })}</summary><ul class="max-h-32 overflow-y-auto text-xs break-all">{#each abandon.unknownOperationIds as id}<li>{id}</li>{/each}</ul></details>
+      {#if abandonError}<p class="inline-error" role="alert">{abandonError}</p>{/if}
+      <div class="flex flex-wrap justify-end gap-2"><Button variant="ghost" size="sm" disabled={!!closingId} onclick={closeModal}>{m.cancel()}</Button><Button variant="destructive" size="sm" disabled={!!closingId || !hosts.find(h => abandon?.id.startsWith(h.id + ":"))?.connected} onclick={confirmAbandon}>{closingId ? m.sending() : closeUnknown ? m.abandon_close_check() : m.abandon_close_title()}</Button></div>
+    {:else if modal === "new"}
       <Dialog.Title>{navigation.surfaces.includes("history") ? m.open_session() : m.new_session()}</Dialog.Title>
       {#if navigation.surfaces.includes("history") && projects.find(p => p.alias === projectId)}
         {#key createHost + ":" + projectId}<SessionHistory hostId={createHost} hostName={hosts.find(h => h.id === createHost)?.name ?? ""} project={projects.find(p => p.alias === projectId)!} connected={connected && !!hosts.find(h => h.id === createHost)?.connected} onresume={resumeHistory} />{/key}
