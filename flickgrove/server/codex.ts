@@ -612,14 +612,6 @@ export class CodexRuntime implements Runtime {
         typeof response.itemsBackwardsCursor === "string"
       )
         historyCursor = response.itemsBackwardsCursor;
-      if (agent.threadId && !historyCursor) {
-        const latest = await client.call("thread/items/list", {
-          threadId,
-          sortDirection: "desc",
-          limit: 1,
-        });
-        historyCursor = latest.backwardsCursor ?? undefined;
-      }
       resumedSettings = {
         model: response.model,
         effort:

@@ -13,7 +13,7 @@ const directory = await mkdtemp(
 const controlPath = join(directory, ".fake-app-server-control.json");
 await writeFile(controlPath, JSON.stringify({ emptyItemsUnsupported: true }));
 let origin = "";
-const runtime = new CodexRuntime({
+const runtimeOptions = {
   cwd: directory,
   origin: () => origin,
   codexPath: resolve("tests/fake-codex.mjs"),
@@ -23,26 +23,49 @@ const runtime = new CodexRuntime({
     CODEX_HOME: join(directory, "codex-home"),
     FAKE_SERVER_ROOT: directory,
   },
-});
-const app = new Workspace({
+};
+const inputs: { operation?: string }[] = [];
+const nativeInputs: { id: string; clientId?: string }[] = [];
+class FixtureRuntime extends CodexRuntime {
+  override async open(...args: Parameters<CodexRuntime["open"]>) {
+    const handle = await super.open(args[0], (event) => {
+      if (event.type === "item" && event.item.type === "userMessage")
+        nativeInputs.push({ id: event.item.id, clientId: event.item.clientId });
+      args[1](event);
+    });
+    const send = handle.send;
+    handle.send = (...args) => {
+      inputs.push({ operation: args[3] });
+      return send(...args);
+    };
+    return handle;
+  }
+}
+let runtime = new FixtureRuntime(runtimeOptions);
+const workspaceOptions = {
   directory: join(directory, "state"),
   runtime,
   projects: async () => [
     { alias: "fixture", name: "Fixture", path: directory },
   ],
   branches: { read: async () => null },
-});
-const service = new HostService(app, {
+};
+let app = new Workspace(workspaceOptions);
+const serviceOptions = {
   directory: join(directory, "state"),
   name: "Empty fixture",
   origin: () => origin,
-});
+};
+let service = new HostService(app, serviceOptions);
 const options = {
   service,
   origin: () => origin,
-  assets: resolve("../.scratch/flickgrove-browser/assets"),
+  assets: resolve(
+    process.env.FLICKGROVE_TEST_ASSETS ??
+      "../.scratch/flickgrove-browser/assets",
+  ),
 };
-const handler = createHandler(app, options),
+let handler = createHandler(app, options),
   upgrade = createUpgrade(app, options);
 const server = Bun.serve({
   hostname: "127.0.0.1",
@@ -52,6 +75,21 @@ const server = Bun.serve({
     const up = upgrade(request, server);
     if (up) return up === true ? undefined : up;
     const url = new URL(request.url);
+    if (url.pathname === "/fixture/restart" && request.method === "POST") {
+      service.dispose();
+      app.dispose();
+      await runtime.close();
+      runtime = new FixtureRuntime(runtimeOptions);
+      app = new Workspace({ ...workspaceOptions, runtime });
+      service = new HostService(app, serviceOptions);
+      options.service = service;
+      handler = createHandler(app, options);
+      upgrade = createUpgrade(app, options);
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/fixture/inputs") return Response.json(inputs);
+    if (url.pathname === "/fixture/native-inputs")
+      return Response.json(nativeInputs);
     if (url.pathname === "/fixture/control" && request.method === "POST") {
       await writeFile(controlPath, JSON.stringify(await request.json()));
       return Response.json({ ok: true });
@@ -70,6 +108,8 @@ const server = Bun.serve({
             const request = JSON.parse(line);
             return {
               method: request.method,
+              operation: request.params?.clientUserMessageId,
+              ephemeral: request.params?.ephemeral,
               threadId: request.params?.threadId,
             };
           }),

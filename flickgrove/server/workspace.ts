@@ -1243,7 +1243,16 @@ export class Workspace {
       } catch (error) {
         throw new DeliveryRejected((error as Error).message);
       }
-      const handle = await this.handle(a);
+      let handle: RuntimeHandle;
+      try {
+        handle = await this.handle(a);
+      } catch (error) {
+        // No input has crossed the send seam. Opening/resuming a thread cannot
+        // admit this operation; only failures after handle.send may be unknown.
+        throw new DeliveryRejected(
+          error instanceof Error ? error.message : "Session unavailable",
+        );
+      }
       const activeTurn = !a.turnEnded ? a.turnId : undefined;
       a.turnEnded = false;
       if (!activeTurn && !a.error) {

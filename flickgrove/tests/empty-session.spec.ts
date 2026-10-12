@@ -66,7 +66,7 @@ test("a new unsent native session opens without unsupported history errors and r
   expect(starts).toBe(1);
   const closeQuestions = page
     .locator(".question-panel-heading")
-    .getByRole("button", { name: "Close", exact: true });
+    .getByRole("button", { name: "Collapse questions", exact: true });
   if (await closeQuestions.isVisible()) await closeQuestions.click();
   await input.fill("Keep draft through read Retry");
   await page.request.post(origin + "/fixture/control", {
@@ -76,6 +76,7 @@ test("a new unsent native session opens without unsupported history errors and r
   await expect(page.locator(".history-controls [role=alert]")).toHaveText(
     "JSON-RPC error -32601: thread/items/list is not supported yet",
   );
+  if (await closeQuestions.isVisible()) await closeQuestions.click();
   await expect(input).toHaveValue("Keep draft through read Retry");
   await expect(
     page.getByRole("button", { name: "Send message", exact: true }),
