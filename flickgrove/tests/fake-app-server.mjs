@@ -1084,6 +1084,8 @@ async function handle(request) {
         method: "thread/name/updated",
         params: { threadId: p.threadId, threadName: p.name },
       });
+      for (const notification of control().notificationsOnRename ?? [])
+        send(notification);
       return {};
     case "thread/unsubscribe": {
       if (control().failUnsubscribeThreads?.includes(p.threadId))
@@ -1153,6 +1155,13 @@ async function handle(request) {
       return page(turns, p);
     }
     case "thread/items/list": {
+      if (
+        control().itemsUnsupported ||
+        (control().emptyItemsUnsupported &&
+          !(control().historyItems ?? state.turns.flatMap((turn) => turn.items))
+            .length)
+      )
+        rpcError(-32601, "thread/items/list is not supported yet");
       if (control().historyItems) return page(control().historyItems, p);
       const turns = p.turnId
         ? state.turns.filter((turn) => turn.id === p.turnId)
@@ -1163,6 +1172,8 @@ async function handle(request) {
       return page(items, p);
     }
     case "turn/start": {
+      while (control().holdTurnAdmission)
+        await new Promise((resolve) => setTimeout(resolve, 5));
       if (p.threadId === state.titleThreadId) {
         const turn = {
           id: `title-turn-${state.next++}`,

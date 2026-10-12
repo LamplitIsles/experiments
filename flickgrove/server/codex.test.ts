@@ -723,6 +723,8 @@ test("isolated app-server wire reads a multi-megabyte native page and oversized 
       orc: { model: "fixture-model", effort: "medium" },
       worker: { model: "fixture-model", effort: "medium" },
     });
+    // Populate only after the first native input; thread/start itself is empty.
+    await app.send(a.id, "Establish native history", "wire-initial-input");
     const texts = Array.from(
       { length: 42 },
       (_, i) =>

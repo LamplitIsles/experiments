@@ -9,17 +9,21 @@
   import * as m from "./paraglide/messages";
   let { syncRevision = 0, agentId, boundary, live, ready, connected, renderMessage, header, footer, onfollow, reports, pinned }: {
     agentId: string; boundary?: string; syncRevision?: number; live: Message[]; ready: boolean; connected: boolean;
-    renderMessage: Snippet<[Message]>; header: Snippet; footer: Snippet; onfollow: (follow: boolean) => void; reports: Set<string>; pinned?: string;
+    renderMessage: Snippet<[Message]>; header: Snippet; footer: Snippet<[boolean]>; onfollow: (follow: boolean) => void; reports: Set<string>; pinned?: string;
   } = $props();
   const id = untrack(() => agentId);
   const initiallyReady = untrack(() => ready);
   const saved = untrack(() => transcriptPositions.get(id));
   let history = $state.raw<LoadedHistory | null>(untrack(() => boundary ? historyCache.get(id, boundary) : null));
+  let historyLoaded = $state(untrack(() => !!history?.loaded));
   let historical = $state.raw(untrack(() => history?.messages ?? []));
   let cursor = $state(untrack(() => history?.cursor ?? null)), error = $state(untrack(() => history?.error ?? "")), loading = $state(false);
   const request = new AbortController();
   let active = true, attempted: LoadedHistory | null = null;
   let retained = $state.raw<Message[]>([]);
+  // Server recovery metadata can refer to native items outside the recent
+  // window. Check the first page before presenting those as pending rows.
+  const readingSettled = $derived(!boundary || historyLoaded || !!error || !connected);
   $effect.pre(() => {
     const current = live, revision = syncRevision;
     untrack(() => {
@@ -34,7 +38,7 @@
   const messages = $derived.by(() => {
     const rows = [...historical, ...retained, ...live];
     const clients = new Set(rows.filter(m => !m.provisional && m.clientId).map(m => m.clientId));
-    return [...new Map(rows.filter(m => !m.provisional || !clients.has(m.clientId)).map(m => [m.id, m])).values()];
+    return [...new Map(rows.filter(m => (!m.provisional || !clients.has(m.clientId)) && (readingSettled || !m.provisional || !m.delivery?.recoveryRef || m.delivery.status === "sent")).map(m => [m.id, m])).values()];
   });
   let transcript = $state<HTMLDivElement>();
   let tail: HTMLDivElement;
@@ -131,12 +135,16 @@
     committedSize = size;
     untrack(() => {
       $virtualizer.setOptions({ onChange: virtualChanged });
-      // Prepend anchoring eagerly computes the library offset, but the adapter
-      // can write it against the old sizer. Sync that same offset after commit.
+      // Prepend anchoring can write against the old sizer. After commit,
+      // retain a leading message by index: an absolute estimated offset would
+      // be retried after short preceding rows are measured, losing the anchor.
       if (prependCommit && active && transcript?.isConnected) {
         prependCommit = false;
         const item = leadingMessageAnchor && $virtualizer.takeSnapshot().find(item => item.key === leadingMessageAnchor!.key);
-        $virtualizer.scrollToOffset(item ? item.start + leadingMessageAnchor!.offset : ($virtualizer.scrollOffset ?? 0));
+        if (item) {
+          $virtualizer.setOptions({ onChange: virtualChanged, scrollPaddingStart: -leadingMessageAnchor!.offset });
+          $virtualizer.scrollToIndex(item.index, { align: "start" });
+        } else $virtualizer.scrollToOffset($virtualizer.scrollOffset ?? 0);
         leadingMessageAnchor = undefined;
       }
     });
@@ -145,6 +153,7 @@
     const b = boundary;
     if (b !== history?.boundary) untrack(() => {
       history = b ? historyCache.get(id, b) : null;
+      historyLoaded = !!history?.loaded;
       historical = history?.messages ?? []; cursor = history?.cursor ?? null; error = history?.error ?? "";
     });
   });
@@ -162,7 +171,7 @@
     if (entry.loaded && entry.synchronized !== revision) await historyCache.refresh(id, entry, revision, () => fetchPage());
     else { await historyCache.load(id, entry, fetchPage); if (!entry.error) entry.synchronized = revision; }
     if (!active || entry !== history) return;
-    historical = entry.messages; cursor = entry.cursor; error = entry.error; loading = false;
+    historical = entry.messages; cursor = entry.cursor; error = entry.error; loading = false; historyLoaded = entry.loaded;
     if (initial && (!saved || saved.follow)) { await tick(); if (active) $virtualizer.scrollToEnd(); }
   }
   $effect(() => {
@@ -216,7 +225,7 @@
       {#if boundary}<div class="history-controls">
         {#if error}<span class="inline-error" role="alert">{error}</span><Button variant="ghost" size="sm" disabled={!connected || loading} onclick={load}>{m.retry()}</Button>
         {:else}{#if cursor}<Button variant="ghost" size="sm" disabled={loading || !connected} onclick={load}>{m.earlier_messages()}</Button>{/if}
-        {#if loading}<span role="status">{m.loading_history()}</span>{/if}{/if}
+        {#if loading && readingSettled}<span role="status">{m.loading_history()}</span>{/if}{/if}
       </div>{/if}
     </div>
     {#each $virtualizer.getVirtualItems() as row (row.key)}
@@ -224,7 +233,7 @@
         {@render renderMessage(messages[row.index - 1])}
       </div>{/if}
     {/each}
-    <div class="timeline-footer" bind:this={tail} style:top={`${$virtualizer.getTotalSize() - footerHeight - 24}px`}>{@render footer()}</div>
+    <div class="timeline-footer" bind:this={tail} style:top={`${$virtualizer.getTotalSize() - footerHeight - 24}px`}>{#if !readingSettled}<span role="status">{m.loading_history()}</span>{/if}{@render footer(readingSettled)}</div>
   </div>
 </div>
 <style>

@@ -79,6 +79,8 @@ export class CodexRuntime implements Runtime {
     { threadId: string; content: v2.UserInput }
   >();
   private readonly threads = new Map<string, CodexAppServerClient>();
+  // thread/start proves emptiness only until a send attempt or native event.
+  private readonly emptyThreads = new Set<string>();
   private readonly openingThreads = new Set<string>();
   private catalogModels?: Model[];
   constructor(
@@ -123,7 +125,10 @@ export class CodexRuntime implements Runtime {
       if (!(error instanceof AppServerConnectionClosedError)) return;
       if (this.managed === connecting) this.managed = undefined;
       for (const [id, owner] of this.threads)
-        if (owner === client) this.threads.delete(id);
+        if (owner === client) {
+          this.threads.delete(id);
+          this.emptyThreads.delete(id);
+        }
     });
     client.onServerRequest((request) => {
       const params = request.params;
@@ -264,6 +269,8 @@ export class CodexRuntime implements Runtime {
     threadId: string,
     cursor?: string,
   ): Promise<HistoryMessages> {
+    if (this.emptyThreads.has(threadId))
+      return { messages: [], nextCursor: null };
     const response = await (
       await this.getCatalog()
     ).call("thread/items/list", {
@@ -430,6 +437,7 @@ export class CodexRuntime implements Runtime {
     let threadName: string | null = null;
     let titleGeneration: AbortController | undefined;
     const dispatch = (event: RuntimeEvent) => {
+      if (threadId) this.emptyThreads.delete(threadId);
       if (!closed) notify({ ...event, threadId });
     };
     const off = [
@@ -597,6 +605,7 @@ export class CodexRuntime implements Runtime {
           });
       threadId = response.thread.id;
       this.threads.set(threadId, client);
+      if (!agent.threadId) this.emptyThreads.add(threadId);
       threadName = response.thread.name;
       if (
         "itemsBackwardsCursor" in response &&
@@ -625,6 +634,7 @@ export class CodexRuntime implements Runtime {
       off.forEach((f) => f());
       if (threadId && this.threads.get(threadId) === client) {
         this.threads.delete(threadId);
+        this.emptyThreads.delete(threadId);
         await client.call("thread/unsubscribe", { threadId }).catch(() => {});
       }
       if (
@@ -734,6 +744,8 @@ export class CodexRuntime implements Runtime {
         await client.call("thread/name/set", { threadId: id, name });
       },
       send: async (text, activeTurn, images = [], clientUserMessageId) => {
+        // An unknown send outcome is not evidence that the thread is still empty.
+        this.emptyThreads.delete(id);
         const input: v2.UserInput[] = [
           ...(text ? [{ type: "text" as const, text, text_elements: [] }] : []),
           ...images.map((path) => ({ type: "localImage" as const, path })),
@@ -882,7 +894,10 @@ export class CodexRuntime implements Runtime {
             releaseWaiter = undefined;
           }
         }
-        if (this.threads.get(id) === client) this.threads.delete(id);
+        if (this.threads.get(id) === client) {
+          this.threads.delete(id);
+          this.emptyThreads.delete(id);
+        }
         closed = true;
         off.forEach((f) => f());
       },
@@ -892,6 +907,7 @@ export class CodexRuntime implements Runtime {
     const managed = this.managed;
     this.managed = undefined;
     this.threads.clear();
+    this.emptyThreads.clear();
     if (managed) await managed.then((client) => client.close()).catch(() => {});
   }
 }

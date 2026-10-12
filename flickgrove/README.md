@@ -92,6 +92,10 @@ Changes use native `thread/settings/update` on original shared app-server thread
 
 First opening a known agent immediately displays its target identity and stable Composer, while only the transcript loads. Draft typing is available; Send, Stop, title and settings mutations wait for authoritative detail. Arrival preserves Composer focus, caret and draft. Failure retains the frame with localized Retry. Cached history and reading positions retain their existing bounded browser-memory contract.
 
+The native recent window and device-local pending messages are readable immediately. On a first visit, server recovery records wait for the first HTTP history check, with a localized loading status beside the recent content. Successful native identity matches retire temporary recovery rows; a failed read keeps unresolved records accessible and permits Retry without inferring that the Peer is offline or replaying submissions. Cached native reading remains immediate.
+
+A freshly started native thread is known empty until a send is attempted or a native event arrives. During that interval Grove serves an empty reading page without invoking native item listing, so a new unsent session shows its first-input state. This knowledge ends on release or connection replacement; resumed threads and uncertain sends still use normal native reads and expose genuine errors with Retry.
+
 ## Independent connections and recovery
 
 Each browser-to-Peer connection independently reconnects and retains its last-known read-only cache. Remote failure disables only that Peer's writes; reachable Peers remain usable. Standard WebSocket Ping/Pong on each server checks the browser connection. The browser also uses a lightweight identity probe to detect a stalled path because browser WebSocket has no Ping API. Business request deadlines reject individual requests without closing the socket. No quota or model query acts as a heartbeat.

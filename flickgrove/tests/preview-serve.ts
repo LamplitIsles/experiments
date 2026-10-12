@@ -249,6 +249,58 @@ const server = Bun.serve({
     })(request, server);
     if (upgraded) return upgraded === true ? undefined : upgraded;
     const url = new URL(request.url);
+    if (
+      url.pathname === "/fixture/reading-transition" &&
+      request.method === "POST"
+    ) {
+      const body = await request.json();
+      const agent = await local.app.createOrc("fixture", defaults);
+      await local.app.rename(agent.id, "First reading transition");
+      const owner = local.runtime.agents.get(agent.id)!;
+      const worker = (await local.app.tool(owner.token, "worker_start", {
+        project: "fixture",
+        title: "Transition reporter",
+        spec: "fixture",
+        message: "Fixture only",
+      })) as { id: string };
+      const reporter = local.runtime.agents.get(worker.id)!;
+      const send = local.runtime.sendOverride;
+      local.runtime.sendOverride = async (id, text, turn) => {
+        if (id === agent.id) throw new Error("Fixture unconfirmed submission");
+        return send ? send(id, text, turn) : (turn ?? "fixture-turn");
+      };
+      try {
+        for (let i = 0; i < 3; i++) {
+          if (body.source === "user")
+            await local.app.send(
+              agent.id,
+              `Submission ${i}`,
+              `transition-${i}`,
+            );
+          else
+            await local.app.tool(reporter.token, "worker_report", {
+              message: `Report ${i}`,
+            });
+        }
+      } finally {
+        local.runtime.sendOverride = send;
+      }
+      const deliveries = local.app.detail(agent.id).deliveries;
+      local.runtime.historyItems.set(
+        local.app.detail(agent.id).threadId!,
+        deliveries.map((d, i) => ({
+          id: `transition-native-${i}`,
+          clientId: body.unlinked ? undefined : d.id,
+          role: "user" as const,
+          text: `Native report ${i}\n\n` + "body ".repeat(20000),
+          at: i + 1,
+        })),
+      );
+      return Response.json({
+        id: local.service.identity.id + ":" + agent.id,
+        provisional: deliveries[0].id,
+      });
+    }
     if (url.pathname === "/fixture/reset" && request.method === "POST") {
       peerServer.stop(true);
       for (const unit of [local, remote]) {

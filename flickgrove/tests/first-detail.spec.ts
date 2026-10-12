@@ -3,6 +3,12 @@ const origin = "http://127.0.0.1:14319";
 const change = (page: Page, data: object) =>
   page.request.post(origin + "/fixture/change", { data });
 async function choose(page: Page, title: string) {
+  const host = page.getByRole("button", {
+    name: title === "Streaming voice input" ? "NUC" : "Neil’s Mac",
+    exact: true,
+  });
+  if (!(await host.isVisible())) await page.keyboard.press("Escape");
+  await host.click();
   const row = page.getByRole("button", {
     name: `Open ${title} Orc`,
     exact: true,
