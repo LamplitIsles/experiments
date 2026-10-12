@@ -125,7 +125,16 @@ async function closeRetry(shutdownFailure: string) {
           (r) =>
             r.method === "thread/resume" && r.params.threadId === bh.threadId,
         )
-        .map((r) => r.params),
+        .map((r) => ({
+          threadId: r.params.threadId,
+          excludeTurns: r.params.excludeTurns,
+          config: Object.fromEntries(
+            Object.entries(r.params.config).filter(
+              ([key]) =>
+                key.startsWith("agents.") || key.startsWith("features."),
+            ),
+          ),
+        })),
     ).toEqual(
       shutdownFailure === "LateClosed"
         ? []

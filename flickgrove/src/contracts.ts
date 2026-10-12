@@ -44,6 +44,10 @@ export interface MessageImage {
   availability?: "missing";
 }
 export interface Message {
+  provisional?: boolean;
+  clientId?: string;
+  delivery?: Delivery;
+  bodyRef?: string;
   localImageIds?: string[];
   images?: MessageImage[];
   id: string;
@@ -90,9 +94,11 @@ export interface Question {
   state: "unanswered" | "delegated" | "answered";
   answer?: string;
   at: number;
+  recoveryRef?: boolean;
 }
 export type Answer = { questionId: string; answer: string };
 export interface Delivery {
+  recoveryRef?: boolean;
   images?: MessageImage[];
   answers?: Answer[];
   turnId?: string;
@@ -116,8 +122,8 @@ export interface Agent {
   treeFastBusy?: boolean;
   treeFastError?: string;
   directoryBranch?: string;
+  readingRevision?: number;
   historyCursor?: string;
-  historyBoundaryId?: string;
   closeRequest?: {
     reason: string;
   };
@@ -143,6 +149,8 @@ export interface Agent {
   error?: string;
   closed: boolean;
   questions: Question[];
+  unansweredCount?: number;
+  recoveryCount?: number;
 }
 export interface Detail extends Agent {
   messages: Message[];

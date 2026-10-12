@@ -62,6 +62,7 @@ export class FakeRuntime implements Runtime {
     text: string;
     turnId?: string;
     images?: string[];
+    clientId?: string;
   }[] = [];
   sendOverride?: (
     agentId: string,
@@ -156,11 +157,28 @@ export class FakeRuntime implements Runtime {
         await this.renameOverride?.(id, title);
         this.names.set(id, title);
       },
-      send: async (text, turnId, images) => {
-        this.inputs.push({ agentId: agent.id, text, turnId, images });
-        return this.sendOverride
-          ? this.sendOverride(agent.id, text, turnId)
+      send: async (text, turnId, images, clientId) => {
+        this.inputs.push({ agentId: agent.id, text, turnId, images, clientId });
+        const result = this.sendOverride
+          ? await this.sendOverride(agent.id, text, turnId)
           : (turnId ?? `turn-${this.inputs.length}`);
+        const message: Message = {
+          id: `native-${clientId}`,
+          clientId,
+          turnId: result,
+          role: "user",
+          text,
+          at: Date.now(),
+        };
+        const items = this.historyItems.get(threadId) ?? [];
+        items.push(message);
+        this.historyItems.set(threadId, items);
+        notify({
+          type: "item",
+          turnId: result,
+          item: { type: "userMessage", id: message.id, clientId, text },
+        });
+        return result;
       },
       interrupt: async (turnId) => {
         this.interruptions.push({ agentId: agent.id, turnId });
@@ -174,7 +192,40 @@ export class FakeRuntime implements Runtime {
       },
     };
   }
+  private pendingNative = new Map<string, Message[]>();
   emit(id: string, event: RuntimeEvent) {
+    const thread = this.agents.get(id)?.threadId ?? `thread-${id}`;
+    if (
+      event.type === "item" &&
+      event.item.type === "agentMessage" &&
+      event.item.text &&
+      event.item.phase !== "commentary"
+    ) {
+      const m: Message = {
+        id: event.item.id,
+        turnId: event.turnId,
+        role: "assistant",
+        text: event.item.text,
+        at: Date.now(),
+      };
+      if (event.item.delivery === "async") {
+        const items = this.historyItems.get(thread) ?? [];
+        if (!items.some((v) => v.id === m.id)) items.push(m);
+        this.historyItems.set(thread, items);
+      } else {
+        const items = this.pendingNative.get(id) ?? [];
+        items.push(m);
+        this.pendingNative.set(id, items);
+      }
+    }
+    if (event.type === "completed") {
+      const items = this.historyItems.get(thread) ?? [];
+      for (const m of this.pendingNative.get(id) ?? [])
+        if (m.turnId === event.turnId && !items.some((v) => v.id === m.id))
+          items.push(m);
+      this.historyItems.set(thread, items);
+      this.pendingNative.delete(id);
+    }
     this.listeners.get(id)?.(event);
   }
   async close() {

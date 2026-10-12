@@ -70,7 +70,10 @@ for (const mobile of [false, true]) {
     const detail = await (
       await page.request.get(`/fixture/agents/${encodeURIComponent(agent.id)}`)
     ).json();
-    expect(detail.messages).toEqual([]);
+    expect(detail.messages.map((m: { id: string }) => m.id)).toEqual([
+      "history-reader-user",
+      "history-reader-assistant",
+    ]);
     await page.keyboard.press("Alt+x");
     await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
   });

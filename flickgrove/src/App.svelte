@@ -95,7 +95,7 @@
   // Snapshot identity is display-only; detail remains the write authority.
   const shownDetail = $derived(detail ? withOutgoing(detail) : target ? { ...target, messages: [], deliveries: [] } : null);
   const hosts = $derived(snapshot.hosts ?? []);
-  const unansweredHosts = $derived(new Set(snapshot.agents.filter(a => a.questions.some(q => q.state === "unanswered")).map(a => a.hostId).filter((id): id is string => !!id)));
+  const unansweredHosts = $derived(new Set(snapshot.agents.filter(a => (a.unansweredCount ?? a.questions.filter(q => q.state === "unanswered").length) > 0).map(a => a.hostId).filter((id): id is string => !!id)));
   const selectedHost = $derived(hosts.find(h => h.id === shownDetail?.hostId));
   const hostConnected = $derived(!!selectedHost?.connected);
   const visibleAgents = $derived(snapshot.agents.filter(a => a.hostId === hostFilter));
@@ -315,12 +315,15 @@
       const result=await connection.call<Detail>('send',{id,text,operationId,...(refs ? {images:refs} : {})});
       const delivery=result.deliveries.find(d=>d.id===operationId);
       observeOutgoing(result);
-      if(images.length && delivery && submissionResult(delivery)==='rejected' && !receiptAlreadyAccepted(id,operationId) && !detail?.messages.some(m=>m.id===operationId))try{await recoverImageRejection(id,operationId,text,images.length);}catch(e){recoveryFailed(id,operationId,e);}
+      if(images.length && delivery && submissionResult(delivery)==='rejected' && !receiptAlreadyAccepted(id,operationId) && !detail?.messages.some(m=>m.id===operationId || m.clientId===operationId)) {
+        try { await recoverImageRejection(id,operationId,text,images.length); if(selectedId===id)error=delivery.error ?? m.load_failure(); }
+        catch(e){recoveryFailed(id,operationId,e);}
+      }
       if(!result.deliveries.some(d=>d.id===operationId))unknownOutgoing(id,operationId,m.sending());
     }catch(e){
       if((!submitted || e instanceof RequestRejected) && !receiptAlreadyAccepted(id,operationId)){
         acceptReceipt(id,{operationId,state:"rejected",turnId:null,error:e instanceof Error?e.message:m.load_failure()});
-        if(images.length)try{await recoverImageRejection(id,operationId,text,images.length);}catch(recovery){recoveryFailed(id,operationId,recovery);}
+        if(images.length)try{await recoverImageRejection(id,operationId,text,images.length);if(selectedId===id)error=e instanceof Error?e.message:m.load_failure();}catch(recovery){recoveryFailed(id,operationId,recovery);}
       }else unknownOutgoing(id,operationId,e instanceof Error?e.message:m.load_failure());
     }
     if(submitted)void lookup(id,operationId);
@@ -356,10 +359,10 @@
     try { const result = await api<Detail>(`/agents/${id}/stop`, { turnId }); if (selectedId === id) detail = result; return true; }
     catch(e) { error = e instanceof Error ? e.message : m.load_failure(); return false; }
   }
-  async function answerBatch(answers: Answer[], operationId: string) {
+  async function answerBatch(answers: Answer[], operationId: string, preparedText?: string) {
     if (!selectedId || !hostConnected || !client || !detail) return;
     const id = selectedId;
-    const text = answers.map(answer => `Question: ${detail!.questions.find(q => q.id === answer.questionId)?.text}\nAnswer: ${answer.answer}`).join("\n\n");
+    const text = preparedText ?? outgoing.entries.find(o => o.agentId === id && o.id === operationId)?.text ?? answers.map(answer => `Question: ${detail!.questions.find(q => q.id === answer.questionId)?.text}\nAnswer: ${answer.answer}`).join("\n\n");
     addOutgoing(id, text, operationId, answers);
     try {
       const result = await client.call<Detail>("answerBatch", { id, answers, operationId });

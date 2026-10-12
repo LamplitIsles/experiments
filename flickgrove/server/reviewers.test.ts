@@ -186,7 +186,9 @@ test("Reviewer lifecycle crosses real Peer/Chord with target-bound reports, isol
     await until(() =>
       app
         .detail(orc.id)
-        .deliveries.some((d) => d.text.includes("Which evidence?")),
+        .deliveries.some((d) =>
+          app.recovery(orc.id, d.id).text.includes("Which evidence?"),
+        ),
     );
     expect(app.detail(a.id).questions[0].state).toBe("delegated");
     expect(

@@ -87,3 +87,75 @@ test("removed conversations cannot publish an in-flight page into a reopened ide
   expect(closed.loaded).toBe(false);
   expect(reopened.messages).toEqual([]);
 });
+
+test("reconnect latest pages fill the middle gap in native order and then resume the older cursor", async () => {
+  const cache = new HistoryCache();
+  const entry = cache.get("peer:agent", "thread");
+  const m = (id: string) => ({
+    id,
+    role: "assistant" as const,
+    text: id,
+    at: 0,
+  });
+  await cache.load("peer:agent", entry, async () => ({
+    messages: [m("old-1"), m("old-2")],
+    nextCursor: "older-history",
+  }));
+  entry.synchronized = 1;
+  await cache.refresh("peer:agent", entry, 2, async () => ({
+    messages: [m("new-4"), m("new-5")],
+    nextCursor: "gap-3",
+  }));
+  expect(entry.messages.map((m) => m.id)).toEqual([
+    "old-1",
+    "old-2",
+    "new-4",
+    "new-5",
+  ]);
+  await cache.load("peer:agent", entry, async (cursor) => {
+    expect(cursor).toBe("gap-3");
+    return { messages: [m("new-3")], nextCursor: "gap-2" };
+  });
+  expect(entry.messages.map((m) => m.id)).toEqual([
+    "old-1",
+    "old-2",
+    "new-3",
+    "new-4",
+    "new-5",
+  ]);
+  await cache.load("peer:agent", entry, async (cursor) => {
+    expect(cursor).toBe("gap-2");
+    return { messages: [m("old-2")], nextCursor: "unused-native-cursor" };
+  });
+  expect(entry.messages.map((m) => m.id)).toEqual([
+    "old-1",
+    "old-2",
+    "new-3",
+    "new-4",
+    "new-5",
+  ]);
+  expect(entry.cursor).toBe("older-history");
+});
+
+test("removed provisional input is not retained as historical reading while native rows remain readable", async () => {
+  const cache = new HistoryCache();
+  const entry = cache.get("peer:a", "thread");
+  await cache.load("peer:a", entry, async () => ({
+    messages: [
+      { id: "native", role: "assistant", text: "native", at: 1 },
+      {
+        id: "operation",
+        clientId: "operation",
+        provisional: true,
+        role: "user",
+        text: "recover",
+        at: 2,
+      },
+    ],
+    nextCursor: null,
+  }));
+  cache.remember("peer:a", entry, [
+    { id: "native", role: "assistant", text: "native", at: 1 },
+  ]);
+  expect(entry.messages.map((m) => m.id)).toEqual(["native"]);
+});

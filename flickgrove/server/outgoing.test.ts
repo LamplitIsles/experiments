@@ -89,7 +89,7 @@ test("pending lookup preserves identity and accepted results are monotonic", asy
         assert.equal(submissionResult(late.deliveries[0]),"accepted");
         assert.equal(late.deliveries[0].error,undefined);
         assert.equal(late.deliveries[0].source,source);
-        assert.equal(late.messages.length,1);
+        assert.equal(late.messages.length,0);
         if(source === "question") {
           assert.equal(late.questions[0].state,"answered");
           assert.equal(late.questions[0].answer,"confirmed answer");
@@ -115,25 +115,26 @@ test("pending lookup preserves identity and accepted results are monotonic", asy
       observeOutgoing(detail("queued"));
       assert.equal(outgoing.entries[0].status, "pending");
       observeOutgoing(detail("sent"));
-      assert.equal(outgoing.entries[0].status, "accepted");
+      assert.equal(outgoing.entries.length, 0);
       assert.equal(receiptAlreadyAccepted('peer:orc','op'),true);
+      assert.equal(records.has(prefix+'op'),false);
       acceptReceipt("peer:orc", null);
       observeOutgoing(detail("queued"));
       observeOutgoing(detail("uncertain"));
       acceptReceipt('peer:orc',{operationId:'op',state:'rejected',turnId:null,error:'late'});
-      assert.equal(outgoing.entries[0].status, "accepted");
+      assert.equal(outgoing.entries.length, 0);
       observeOutgoing({id:'peer:orc',messages:[{id:'op',role:'user'}],deliveries:[]});
       assert.equal(outgoing.entries.length,0);
       const stale = withOutgoing({id:'peer:orc',messages:[],questions:[],deliveries:[{id:'op',status:'uncertain',source:'user',text:'draft',at:1,questionIds:[]}]});
       assert.equal(stale.deliveries[0].status,'sent');
-      assert.equal(stale.messages.length,1);
+      assert.equal(stale.messages.length,0);
       assert.equal(receiptAlreadyAccepted('peer:orc','op'),true);
       acceptReceipt('peer:orc',{operationId:'op',state:'rejected',turnId:null,error:'late'});
       assert.equal(outgoing.entries.length,0);
       addOutgoing('peer:orc','second','second');
       observeOutgoing({id:'peer:orc',messages:[],deliveries:[{id:'second',status:'sent'}]});
 
-      assert.equal(outgoing.entries[0].status, "accepted");
+      assert.equal(outgoing.entries.length, 0);
       const mutableImages = structuredClone(images);
       addOutgoing("peer:orc","image","image",undefined,mutableImages,["local-image"]);
       mutableImages[0].name = "changed outside";

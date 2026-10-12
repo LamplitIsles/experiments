@@ -323,6 +323,7 @@ export class CodexRuntime implements Runtime {
         if (text || images.length)
           messages.push({
             id: item.id,
+            clientId: item.clientId ?? undefined,
             turnId,
             role: "user",
             text,
@@ -466,7 +467,28 @@ export class CodexRuntime implements Runtime {
           dispatch({ type: "progress", turnId: p.turnId });
       }),
       client.onNotification("item/completed", (p) => {
-        if (p.threadId !== threadId || p.item.type !== "agentMessage") return;
+        if (
+          p.threadId !== threadId ||
+          !["agentMessage", "userMessage"].includes(p.item.type)
+        )
+          return;
+        if (p.item.type === "userMessage") {
+          dispatch({
+            type: "item",
+            turnId: p.turnId,
+            item: {
+              id: p.item.id,
+              type: "userMessage",
+              clientId: p.item.clientId ?? undefined,
+              text: p.item.content
+                .filter((i) => i.type === "text")
+                .map((i) => i.text)
+                .join("\n"),
+            },
+          });
+          return;
+        }
+        if (p.item.type !== "agentMessage") return;
         const item = p.item;
         dispatch({
           type: "item",
@@ -711,7 +733,7 @@ export class CodexRuntime implements Runtime {
         titleGeneration?.abort();
         await client.call("thread/name/set", { threadId: id, name });
       },
-      send: async (text, activeTurn, images = []) => {
+      send: async (text, activeTurn, images = [], clientUserMessageId) => {
         const input: v2.UserInput[] = [
           ...(text ? [{ type: "text" as const, text, text_elements: [] }] : []),
           ...images.map((path) => ({ type: "localImage" as const, path })),
@@ -721,6 +743,7 @@ export class CodexRuntime implements Runtime {
             return (
               await client.turnSteer({
                 threadId: id,
+                clientUserMessageId,
                 expectedTurnId: activeTurn,
                 input,
               })
@@ -728,6 +751,7 @@ export class CodexRuntime implements Runtime {
           return (
             await client.turnStart({
               threadId: id,
+              clientUserMessageId,
               input,
             })
           ).turn.id;

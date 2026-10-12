@@ -77,6 +77,12 @@ function persist(o: Outgoing) {
   } catch {
     /* A malformed record supplies no receipt. */
   }
+  if (o.status === "accepted") {
+    localStorage.removeItem(key(o));
+    if (o.localImageIds?.length || o.images?.length)
+      void saveImages(operationKey(o.agentId, o.id), []).catch(() => {});
+    return;
+  }
   try {
     readingCache.writeDevice(
       key(o),
@@ -85,7 +91,7 @@ function persist(o: Outgoing) {
   } catch (error) {
     // A new submission must be durable before sending. An existing journal or
     // owner-confirmed receipt can still converge in memory when storage is full.
-    if (!raw && o.status !== "accepted") throw error;
+    if (!raw) throw error;
   }
 }
 export function addOutgoing(
@@ -145,12 +151,20 @@ export function observeOutgoing(detail: Detail) {
   for (const delivery of detail.deliveries)
     if (
       delivery.status === "sent" ||
-      detail.messages.some((m) => m.role === "user" && m.id === delivery.id)
+      detail.messages.some(
+        (m) =>
+          m.role === "user" &&
+          (m.id === delivery.id || m.clientId === delivery.id),
+      )
     )
       rememberAccepted(detail.id, delivery.id);
   outgoing.entries = outgoing.entries.filter((o) => {
     if (o.agentId !== detail.id) return true;
-    if (detail.messages.some((m) => m.role === "user" && m.id === o.id)) {
+    if (
+      detail.messages.some(
+        (m) => m.role === "user" && (m.id === o.id || m.clientId === o.id),
+      )
+    ) {
       rememberAccepted(o.agentId, o.id);
       localStorage.removeItem(key(o));
       if (o.localImageIds?.length || o.images?.length)
@@ -164,7 +178,7 @@ export function observeOutgoing(detail: Detail) {
       o.error = d.error;
       persist(o);
     }
-    return true;
+    return o.status !== "accepted";
   });
 }
 export function acceptReceipt(agentId: string, raw: Receipt | null) {
@@ -184,6 +198,8 @@ export function acceptReceipt(agentId: string, raw: Receipt | null) {
   o.status = receipt.state === "accepted" ? "accepted" : "rejected";
   o.error = receipt.error ?? undefined;
   persist(o);
+  if (o.status === "accepted")
+    outgoing.entries = outgoing.entries.filter((entry) => entry !== o);
 }
 export function unknownOutgoing(agentId: string, id: string, error: string) {
   const o = outgoing.entries.find((o) => o.agentId === agentId && o.id === id);
@@ -196,12 +212,15 @@ export function unknownOutgoing(agentId: string, id: string, error: string) {
 export function withOutgoing(detail: Detail): Detail {
   const local = outgoing.entries.filter(
     (o) =>
-      o.agentId === detail.id && !detail.messages.some((m) => m.id === o.id),
+      o.status !== "accepted" &&
+      o.agentId === detail.id &&
+      !detail.messages.some((m) => m.id === o.id || m.clientId === o.id),
   );
   const unobserved = detail.deliveries.filter(
     (d) =>
-      (d.source === "user" || d.source === "question") &&
-      !detail.messages.some((m) => m.id === d.id) &&
+      d.status !== "sent" &&
+      !receiptAlreadyAccepted(detail.id, d.id) &&
+      !detail.messages.some((m) => m.id === d.id || m.clientId === d.id) &&
       !local.some((o) => o.id === d.id),
   );
   return {
@@ -228,6 +247,8 @@ export function withOutgoing(detail: Detail): Detail {
       ...detail.messages,
       ...local.map((o) => ({
         id: o.id,
+        clientId: o.id,
+        provisional: true,
         text: o.text,
         images: o.images,
         localImageIds: o.localImageIds,
@@ -236,7 +257,11 @@ export function withOutgoing(detail: Detail): Detail {
       })),
       ...unobserved.map((d) => ({
         id: d.id,
+        clientId: d.id,
+        provisional: true,
         text: d.text,
+        bodyRef: d.recoveryRef ? d.id : undefined,
+        delivery: d,
         images: d.images,
         role: "user" as const,
         at: d.at,

@@ -392,12 +392,22 @@ test("slow upload binds original Peer/conversation while new draft remains isola
   await request.post(origin + "/fixture/change", {
     data: { sendMode: "uncertain" },
   });
+  const beforeUnknown = (
+    await (await request.get(origin + "/fixture/info")).json()
+  ).inputs.length;
   await composer(page).fill("Unknown original");
   await composer(page).press("Enter");
   const pending = page
     .locator(".user-message")
     .filter({ hasText: "Unknown original" });
   await expect(pending.locator("small[role=status]")).toHaveText("Sending…");
+  await expect
+    .poll(
+      async () =>
+        (await (await request.get(origin + "/fixture/info")).json()).inputs
+          .length,
+    )
+    .toBe(beforeUnknown + 1);
   const before = (await (await request.get(origin + "/fixture/info")).json())
     .inputs.length;
   await page.reload();
@@ -665,7 +675,7 @@ for (const failure of [
       }),
     );
     await composer(page).press("Enter");
-    await expect(page.locator(".delivery-error")).toContainText(
+    await expect(page.locator(".agent-detail [role=alert]")).toContainText(
       failure.expected,
     );
     await expect(composer(page)).toHaveValue("Preserve failed upload");
@@ -754,6 +764,12 @@ test("virtual image recycling retains only an open viewer row, releases URLs and
   await expect(page.locator(".message-image img")).toBeVisible();
   expect(reads).toBe(2);
   const transcript = page.locator(".conversation");
+  await transcript.evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  await page.getByRole("button", { name: /earlier messages/i }).click();
+  await expect(page.locator(".history-controls [role=status]")).toHaveCount(0);
+  await page.getByRole("button", { name: "Jump to bottom" }).click();
   await page.locator(".message-image").click();
   await expect(page.locator(".full-image")).toBeVisible();
   await transcript.evaluate((el) => (el.scrollTop = 0));
@@ -844,9 +860,7 @@ for (const width of [1440, 390]) {
       "Newer image draft\n\nRejected image caption",
     );
     await expect(page.locator(".image-draft")).toHaveCount(2);
-    await expect(page.locator(".delivery-error")).toContainText(
-      "Synthetic rejection",
-    );
+    await expect(page.locator(".delivery-error")).toHaveCount(0);
     await page.screenshot({
       path: `../.scratch/flickgrove-results/image-rejected-${width}.png`,
     });

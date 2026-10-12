@@ -4,7 +4,9 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import { onMount, tick, untrack } from "svelte";
   import type { HistorySession, HistoryPage, HistoryMessages, Message, Project } from "./contracts";
-  import { api } from "./api";
+  import WorkerReport from "./WorkerReport.svelte";
+  import MessageBody from "./MessageBody.svelte";
+  import { reading as readHttp, api } from "./api";
   import { navigation, setSurface, back } from "./navigation.svelte";
   import MessageTime from "./MessageTime.svelte";
   import Markdown from "./Markdown.svelte";
@@ -44,13 +46,16 @@
     ++sequence;
     return () => clearTimeout(timer);
   });
+  let readAbort: AbortController | undefined;
   async function read(more = false) {
+    readAbort?.abort();
+    const controller = readAbort = new AbortController();
     if (!selected) return;
     const seq = ++previewSequence; reading = true; error = ""; retryOperation = "read";
     const p = params(previewProject); p.set("thread", selected.threadId);
     if (more && messageCursor) p.set("cursor", messageCursor);
     try {
-      const page = await api<HistoryMessages>(`/history/messages?${p}`);
+      const page = await readHttp<HistoryMessages>(`/messages?${p}`, hostId, controller.signal);
       if (seq !== previewSequence) return;
       messages = more ? [...page.messages, ...messages] : page.messages; messageCursor = page.nextCursor;
     } catch(e) { if (seq === previewSequence) error = e instanceof Error ? e.message : m.load_failure(); }
@@ -77,7 +82,7 @@
     finally { resuming = false; }
   }
   function label(s: HistorySession) { return s.role === "reviewer" ? "Reviewer" : s.role === "researcher" ? "Researcher" : s.role === "worker" ? m.worker() : s.agentId ? m.orc() : s.source; }
-  onMount(() => { void tick().then(() => input?.focus()); return () => { ++sequence; ++previewSequence; }; });
+  onMount(() => { void tick().then(() => input?.focus()); return () => { ++sequence; ++previewSequence; readAbort?.abort(); }; });
 </script>
 
 <div class="session-history">
@@ -102,7 +107,7 @@
     <div class="history-transcript">
       {#if reading}<p role="status">{m.loading_history()}</p>{/if}
       {#if messageCursor}<Button variant="ghost" size="sm" disabled={reading || !connected} onclick={() => read(true)}>{m.earlier_messages()}</Button>{/if}
-      {#each messages as message (message.id)}<div class:user-message={message.role === "user"} class:assistant-message={message.role === "assistant"}><div class="message-role">{#if message.role === "assistant"}<MessageTime at={message.at} />{/if}{message.role === "user" ? m.history_you() : m.history_assistant()}</div>{#if message.role === "user"}<MessageTime at={message.at} />{/if}<Markdown text={message.text} /></div>{/each}
+      {#each messages as message (message.id)}{#if message.delivery && ["worker", "reviewer", "researcher"].includes(message.delivery.source)}<WorkerReport at={message.at} text={message.text} bodyRef={message.bodyRef} owningAgentId={hostId} agentId={message.delivery.reportingResearcherId ?? message.delivery.reportingReviewerId ?? message.delivery.reportingWorkerId} kind={message.delivery.source === "researcher" ? "Researcher report" : message.delivery.source === "reviewer" ? "Reviewer report" : undefined} readPath={`/body?${new URLSearchParams({project: previewProject, thread: selected.threadId, item: message.id})}`} />{:else}<div class:user-message={message.role === "user"} class:assistant-message={message.role === "assistant"}><div class="message-role">{#if message.role === "assistant"}<MessageTime at={message.at} />{/if}{message.role === "user" ? m.history_you() : m.history_assistant()}</div>{#if message.role === "user"}<MessageTime at={message.at} />{/if}<MessageBody text={message.text} bodyRef={message.bodyRef} agentId={hostId} readPath={`/body?${new URLSearchParams({project: previewProject, thread: selected.threadId, item: message.id})}`} /></div>{/if}{/each}
       {#if !reading && !messages.length && !error}<p class="history-empty">{m.no_messages()}</p>{/if}
     </div>
     <div class="history-action">

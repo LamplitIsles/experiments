@@ -110,6 +110,7 @@ test("native confirmed per-session settings serialize with start/steer, persist 
       (r) => r.method === "turn/steer",
     );
     expect(nativeSteer.params).toEqual({
+      clientUserMessageId: "steer",
       threadId: original,
       expectedTurnId: turn,
       input: [{ type: "text", text: "steer", text_elements: [] }],

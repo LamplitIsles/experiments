@@ -244,7 +244,11 @@ test("Researcher survives two real Peer/Chord boundaries, async questions/report
     await until(() =>
       a.app
         .detail(owner.id)
-        .deliveries.some((d) => d.text.includes("Which installed version?")),
+        .deliveries.some((d) =>
+          a.app
+            .recovery(owner.id, d.id)
+            .text.includes("Which installed version?"),
+        ),
     );
     expect(a.app.detail(r.id).questions[0].state).toBe("delegated");
     expect(

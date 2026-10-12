@@ -205,7 +205,7 @@ test("restore waits for concurrent closure and acquires a fresh writer", async (
   }
 });
 
-test("existing Orc history overlays captured turns across pages and retains external turns without copying", async () => {
+test("existing Orc history preserves native item identities across pages without captured turn substitution", async () => {
   const { app, runtime, directory } = fixture();
   const orc = await app.createOrc("alpha");
   await app.send(orc.id, "Captured in Grove", "grove-request");
@@ -260,15 +260,12 @@ test("existing Orc history overlays captured turns across pages and retains exte
   ]);
   const resumed = await app.resumeHistory("alpha", orc.threadId!, false);
   expect(resumed.historyCursor).toBe("32");
-  expect(resumed.historyBoundaryId).toBe("native-answer");
   const latest = await app.agentHistory(orc.id);
   const earlier = await app.agentHistory(orc.id, latest.nextCursor!);
-  // The captured turn spans both pages; every page substitutes the stable Grove IDs.
-  expect(latest.messages[0].id).toBe("grove-request");
+  expect(latest.messages[0].id).toBe("native-answer");
   expect(earlier.messages.map((m) => m.id)).toEqual([
-    "grove-request",
-    "grove-steer",
-    "native-answer",
+    "native-user",
+    "native-steer",
   ]);
   const merged = [
     ...new Map(
@@ -276,16 +273,15 @@ test("existing Orc history overlays captured turns across pages and retains exte
     ).values(),
   ];
   expect(merged.filter((m) => m.text === "Captured in Grove")).toHaveLength(1);
-  expect(merged.filter((m) => m.id === "grove-steer")).toHaveLength(1);
+  expect(merged.filter((m) => m.id === "native-steer")).toHaveLength(1);
   expect(merged.map((m) => m.text).slice(-1)).toEqual(["CLI continuation 28"]);
   expect(app.detail(orc.id).messages).toHaveLength(3);
   await app.send(orc.id, "New input after restoration", "after-restore");
-  expect(app.detail(orc.id).historyBoundaryId).toBe("native-answer");
   expect(
     (await app.agentHistory(orc.id)).messages.some(
-      (m) => m.id === "after-restore",
+      (m) => m.clientId === "after-restore",
     ),
-  ).toBe(false);
+  ).toBe(true);
   const db = new Database(join(directory, "workspace.sqlite"), {
     readonly: true,
   });

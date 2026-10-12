@@ -234,9 +234,29 @@ test("public Chord provider reset over a real socket precedes the next delta and
   } = await import("@earendil-works/chord");
   const { BACKGROUND_CONTEXT } = await import("@earendil-works/chord/context");
   const { Grove, inputs, jsonValue } = await import("../src/chord-contract");
+  const f = fixture();
+  const agent = await f.app.createOrc("alpha");
+  await f.app.send(agent.id, "start", "reset-start");
+  f.runtime.historyItems.set(
+    agent.threadId!,
+    Array.from({ length: 140 }, (_, i) => ({
+      id: `reset-item-${i}`,
+      role: "assistant",
+      text: "body".repeat(10_000),
+      at: i + 1,
+    })),
+  );
+  const id = qualify(f.service.identity.id, agent.id);
+  await f.service.synchronizeDetail(id);
   const initial: View = {
-    snapshot: { agents: [], settings: null, revision: 0 },
-    details: {},
+    snapshot: { ...f.service.snapshot(), revision: 0 },
+    details: { [id]: await f.service.detail(id) },
+  };
+  const bytes: number[] = [];
+  const encoded = (frame: unknown) => {
+    const raw = JSON.stringify(frame);
+    bytes.push(new TextEncoder().encode(raw).length);
+    return raw;
   };
   const view = replicatedState(jsonValue(initial));
   const provider = new RemoteServiceProvider([Grove]);
@@ -268,7 +288,7 @@ test("public Chord provider reset over a real socket precedes the next delta and
               control.mode,
               (update) => {
                 ws.send(
-                  JSON.stringify({
+                  encoded({
                     type: "update",
                     subscriptionId: control.subscriptionId,
                     update: encoder.encodeUpdate(update),
@@ -278,7 +298,7 @@ test("public Chord provider reset over a real socket precedes the next delta and
             );
             subs.add(sub);
             ws.send(
-              JSON.stringify({
+              encoded({
                 type: "result",
                 id: frame.id,
                 result: encoder.encodeSnapshot(sub.snapshot),
@@ -295,7 +315,7 @@ test("public Chord provider reset over a real socket precedes the next delta and
             });
           } else
             ws.send(
-              JSON.stringify({
+              encoded({
                 type: "result",
                 id: frame.id,
                 result:
@@ -324,6 +344,11 @@ test("public Chord provider reset over a real socket precedes the next delta and
   cleanups.push(() => client.close());
   await until(() => latest?.snapshot.revision === 102);
   expect(seen.at(-1)).toBe(102);
+  expect(latest?.details[id].messages.at(-1)?.id).toBe("reset-item-139");
+  expect(Math.max(...bytes)).toBeLessThan(1024 * 1024);
+  console.log(
+    `bounded reset: maximum encoded frame ${Math.max(...bytes)} bytes`,
+  );
   client.close();
   let hydrated: View | undefined;
   const fresh = await openGrove(
@@ -592,7 +617,7 @@ test("failed submission deletion is owning-Peer durable, serialized and rejected
   expect(await deleting).toBe("Only a rejected user submission can be deleted");
   expect(
     (await fresh.call<Detail>("detail", { id })).messages.some(
-      (m) => m.id === "accepted",
+      (m) => m.clientId === "accepted",
     ),
   ).toBe(true);
   runtime.sendOverride = async () => {

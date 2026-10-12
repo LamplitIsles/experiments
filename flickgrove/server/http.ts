@@ -1,3 +1,4 @@
+import { readingHttp } from "./reading-http";
 import { filePreview } from "./file-preview";
 import { voiceHttp } from "./voice-http";
 import type { VoiceOptions } from "./voice";
@@ -88,6 +89,8 @@ export function createHandler(workspace: Workspace, options: Options) {
     );
     if (voice && voice !== true) return voice;
     if (file) return file;
+    const reading = await readingHttp(request, options.service, origins);
+    if (reading) return reading;
     const media = await imageHttp(request, options.service, origins);
     if (media) return media;
     if (

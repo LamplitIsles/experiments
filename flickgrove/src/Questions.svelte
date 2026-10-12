@@ -7,7 +7,7 @@
   import { tick, untrack } from "svelte";
   import type { Answer, Delivery, Question } from "./contracts";
   import * as m from "./paraglide/messages";
-  let { agentId, questions, deliveries, connected, onanswer, onretry }: { agentId: string; questions: Question[]; deliveries: Delivery[]; connected: boolean; onanswer: (answers: Answer[], operationId: string) => Promise<void>; onretry: (id: string) => Promise<void>; } = $props();
+  let { agentId, questions, deliveries, connected, onanswer, onretry }: { agentId: string; questions: Question[]; deliveries: Delivery[]; connected: boolean; onanswer: (answers: Answer[], operationId: string, text?: string) => Promise<void>; onretry: (id: string) => Promise<void>; } = $props();
   const storageKey = untrack(() => `${storagePrefix}/questions/${agentId}`);
   type Draft = { selected: string; text: string; edited?: boolean };
   let drafts = $state<Record<string, Draft>>(JSON.parse(localStorage.getItem(storageKey) ?? "{}"));
@@ -44,7 +44,7 @@
     if(missing){ select(missing.id);feedback="Answer this question before sending the batch.";await tick();panel?.querySelector<HTMLTextAreaElement>('textarea')?.focus();return; }
     const frozen=pending.map(q=>({questionId:q.id,answer:value(q)}));
     submitting=true;feedback="";
-    try{await onanswer(frozen,crypto.randomUUID());}finally{submitting=false;}
+    try{await onanswer(frozen,crypto.randomUUID(), frozen.map(a => `Question: ${pending.find(q => q.id === a.questionId)!.text}\nAnswer: ${a.answer}`).join("\n\n"));}finally{submitting=false;}
   }
 </script>
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->

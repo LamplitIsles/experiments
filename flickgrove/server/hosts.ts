@@ -1,3 +1,4 @@
+import { recentWindow } from "./conversation-reading";
 import {
   chmodSync,
   mkdirSync,
@@ -40,14 +41,16 @@ function qualified<T extends Agent>(host: Host, a: T): T {
     closed: a.closed,
     researchQuestion: a.researchQuestion,
     questions: a.questions,
+    unansweredCount: a.unansweredCount,
+    recoveryCount: a.recoveryCount,
     serviceTier: a.serviceTier,
     treeFast: a.treeFast,
     treeFastBusy: a.treeFastBusy,
     treeFastError: a.treeFastError,
     stop: a.stop,
     closeRequest: a.closeRequest,
+    readingRevision: a.readingRevision,
     historyCursor: a.historyCursor,
-    historyBoundaryId: a.historyBoundaryId,
     hostId: host.id,
     hostName: host.name,
   };
@@ -55,7 +58,26 @@ function qualified<T extends Agent>(host: Host, a: T): T {
     const detail = a as unknown as Detail;
     return {
       ...publicAgent,
-      messages: detail.messages,
+      messages: recentWindow(
+        detail.messages.map((m) => ({
+          ...m,
+          delivery: m.delivery
+            ? {
+                ...m.delivery,
+                reportingWorkerId: m.delivery.reportingWorkerId
+                  ? qualify(host.id, m.delivery.reportingWorkerId)
+                  : undefined,
+                reportingReviewerId: m.delivery.reportingReviewerId
+                  ? qualify(host.id, m.delivery.reportingReviewerId)
+                  : undefined,
+                reportingResearcherId: m.delivery.reportingResearcherId
+                  ? qualify(host.id, m.delivery.reportingResearcherId)
+                  : undefined,
+              }
+            : undefined,
+        })),
+        [],
+      ),
       deliveries: detail.deliveries.map((d) => ({
         ...d,
         reportingResearcherId: d.reportingResearcherId
@@ -156,8 +178,10 @@ export class HostService {
   historySession(alias: string, threadId: string) {
     return this.workspace.historySession(alias, threadId);
   }
-  historyMessages(alias: string, threadId: string, cursor?: string) {
-    return this.workspace.historyMessages(alias, threadId, cursor);
+  async historyMessages(alias: string, threadId: string, cursor?: string) {
+    return this.workspace.historyMessages(alias, threadId, cursor, (m) =>
+      this.qualifyMessage(m),
+    );
   }
   async resumeHistory(
     alias: string,
@@ -179,8 +203,57 @@ export class HostService {
   async detail(id: string) {
     return qualified(this.local(), this.workspace.detail(this.raw(id)));
   }
-  agentHistory(id: string, cursor?: string) {
-    return this.workspace.agentHistory(this.raw(id), cursor);
+  async agentHistory(id: string, cursor?: string) {
+    return this.workspace.agentHistory(this.raw(id), cursor, (m) =>
+      this.qualifyMessage(m),
+    );
+  }
+  private qualifyMessage(m: import("../src/contracts").Message) {
+    return {
+      ...m,
+      delivery: m.delivery ? this.qualifyDelivery(m.delivery) : undefined,
+    };
+  }
+  private qualifyDelivery(d: import("../src/contracts").Delivery) {
+    return {
+      ...d,
+      reportingWorkerId: d.reportingWorkerId
+        ? qualify(this.identity.id, d.reportingWorkerId)
+        : undefined,
+      reportingReviewerId: d.reportingReviewerId
+        ? qualify(this.identity.id, d.reportingReviewerId)
+        : undefined,
+      reportingResearcherId: d.reportingResearcherId
+        ? qualify(this.identity.id, d.reportingResearcherId)
+        : undefined,
+    };
+  }
+  async synchronizeDetail(id: string) {
+    return qualified(
+      this.local(),
+      await this.workspace.synchronizeDetail(this.raw(id)),
+    );
+  }
+  recoveryPage(id: string, cursor?: string) {
+    const page = this.workspace.recoveryPage(this.raw(id), cursor);
+    return {
+      ...page,
+      deliveries: page.deliveries.map((d) => this.qualifyDelivery(d)),
+    };
+  }
+  recovery(id: string, operationId: string) {
+    return this.qualifyDelivery(
+      this.workspace.recovery(this.raw(id), operationId),
+    );
+  }
+  questionHistory(id: string) {
+    return this.workspace.questionHistory(this.raw(id));
+  }
+  messageBody(id: string, itemId: string) {
+    return this.workspace.messageBody(this.raw(id), itemId);
+  }
+  historyBody(alias: string, threadId: string, itemId: string) {
+    return this.workspace.historyBody(alias, threadId, itemId);
   }
   skills(id: string) {
     return this.workspace.skills(this.raw(id));

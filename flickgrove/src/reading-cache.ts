@@ -10,13 +10,9 @@ const quota = (error: unknown) =>
 
 // A captured reading tail is displayed directly. Native history is fetched
 // separately when authoritative online detail arrives.
-export type ReadingDetail = Omit<Detail, "historyCursor" | "historyBoundaryId">;
+export type ReadingDetail = Omit<Detail, "historyCursor">;
 function readingCopy(detail: Detail, start: number): ReadingDetail {
-  const {
-    historyCursor: _cursor,
-    historyBoundaryId: _boundary,
-    ...value
-  } = detail;
+  const { historyCursor: _cursor, ...value } = detail;
   const messages = detail.messages.slice(start);
   const ids = new Set(messages.map((m) => m.id));
   return {

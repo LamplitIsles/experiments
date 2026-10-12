@@ -356,7 +356,11 @@ const server = Bun.serve({
         type: "item",
         turnId: target.app.detail(agentId).turnId!,
         item: {
-          id: "live-item",
+          id: target.runtime.historyItems
+            .get(target.app.detail(agentId).threadId!)
+            ?.some((m) => m.id === "live-item")
+            ? `live-item-${crypto.randomUUID()}`
+            : "live-item",
           type: "agentMessage",
           phase: "final_answer",
           text,

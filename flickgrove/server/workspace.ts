@@ -1,4 +1,10 @@
-import { splitMessages } from "../src/conversation-messages";
+import {
+  associate,
+  recentWindow,
+  readingPage,
+  nativeBody,
+  deliveryMetadata,
+} from "./conversation-reading";
 import { ImageStore } from "./images";
 import { DirectoryBranches, type BranchReader } from "./directory-branches";
 import type { MessageImage } from "../src/contracts";
@@ -128,6 +134,8 @@ export class Workspace {
     }
   }
   private save() {
+    for (const a of this.state.agents)
+      a.messages = recentWindow(a.messages, []);
     if (this.disposed) return;
     this.branches.update(
       this.state.agents.filter((a) => !a.closed).map((a) => a.project.path),
@@ -150,6 +158,45 @@ export class Workspace {
     this.subscribers.add(listener);
     return () => this.subscribers.delete(listener);
   }
+  private confirmNative(a: RuntimeAgent, clientId?: string, turnId?: string) {
+    const d = clientId
+      ? a.deliveries.find((d) => d.id === clientId)
+      : undefined;
+    if (!d) return;
+    d.status = "sent";
+    d.turnId = turnId ?? d.turnId;
+    d.error = undefined;
+    for (const q of a.questions)
+      if (d.questionIds.includes(q.id)) {
+        q.state = "answered";
+        q.answer = d.answers?.find((v) => v.questionId === q.id)?.answer;
+      }
+    return d;
+  }
+  private async orderNativeItems(a: RuntimeAgent, itemId: string) {
+    if (!a.threadId) return;
+    const page = await readingPage(
+      this.options.runtime,
+      a.threadId,
+      undefined,
+      [],
+      256 * 1024,
+    );
+    if (
+      a.closed ||
+      this.disposed ||
+      !page.messages.some((m) => m.id === itemId)
+    )
+      return;
+    const positions = new Map(page.messages.map((m, index) => [m.id, index]));
+    const ordered = a.messages
+      .filter((m) => positions.has(m.id))
+      .sort((a, b) => positions.get(a.id)! - positions.get(b.id)!);
+    a.messages = a.messages.map((m) =>
+      positions.has(m.id) ? ordered.shift()! : m,
+    );
+    this.save();
+  }
   private event(a: RuntimeAgent, event: RuntimeEvent) {
     if (
       a.closed ||
@@ -159,6 +206,7 @@ export class Workspace {
       return;
     if (
       event.type !== "disconnected" &&
+      !(event.type === "item" && event.item.type === "userMessage") &&
       this.completedTurns.has(`${a.id}/${event.turnId}`)
     )
       return;
@@ -189,13 +237,49 @@ export class Workspace {
       a.execution = undefined;
       a.error = undefined;
     } else if (event.type === "item") {
-      if (event.turnId === a.turnId && a.execution?.retrying) {
+      if (
+        event.item.type !== "userMessage" &&
+        event.turnId === a.turnId &&
+        a.execution?.retrying
+      ) {
         a.execution = undefined;
         a.error = undefined;
         // Publish recovery even when the item is buffered or omitted below.
         this.save();
       }
       const item = event.item;
+      if (item.type === "userMessage") {
+        const d = item.clientId
+          ? a.deliveries.find((d) => d.id === item.clientId)
+          : undefined;
+        const matched = a.messages.findIndex(
+          (m) =>
+            m.id === item.id ||
+            (m.provisional && item.clientId && m.clientId === item.clientId),
+        );
+        const message: Message = {
+          id: item.id,
+          clientId: item.clientId,
+          turnId: event.turnId,
+          role: "user",
+          text: item.text ?? "",
+          at: d?.at ?? Date.now(),
+          ...(d?.images?.length ? { images: d.images } : {}),
+        };
+        if (matched >= 0) a.messages.splice(matched, 1, message);
+        else a.messages.push(message);
+        // Only native item positions can correct an out-of-order notification.
+        if (
+          matched < 0 &&
+          a.messages.some(
+            (m) => m.role === "assistant" && m.turnId === event.turnId,
+          )
+        )
+          void this.orderNativeItems(a, item.id).catch(() => {});
+        this.confirmNative(a, item.clientId, event.turnId);
+        this.save();
+        return;
+      }
       if (item.type !== "agentMessage") return;
       if (item.delivery === "async" && item.questions?.length) {
         const newQuestions: string[] = [];
@@ -246,7 +330,7 @@ export class Workspace {
             },
           );
         }
-      } else if (item.phase === "final_answer" && item.text) {
+      } else if (item.phase !== "commentary" && item.text) {
         const key = `${a.id}/${event.turnId}`;
         const answers = this.finalAnswers.get(key) ?? new Map();
         answers.set(item.id, { id: item.id, text: item.text });
@@ -346,6 +430,18 @@ export class Workspace {
       owner && this.branches.shares(owner.project.path, a.project.path);
     return structuredClone({
       ...agent,
+      unansweredCount: a.questions.filter((q) => q.state === "unanswered")
+        .length,
+      recoveryCount: a.deliveries.filter((d) => d.status !== "sent").length,
+      error: agent.error?.slice(0, 8000),
+      questions: agent.questions.slice(-100).map((q) => ({
+        ...q,
+        text: "",
+        title: q.title.slice(0, 200),
+        options: [],
+        answer: undefined,
+        recoveryRef: true,
+      })),
       treeFast: (owner ?? a).treeFast ?? (owner ?? a).serviceTier !== "default",
       treeFastError: (owner ?? a).treeFastError,
       treeFastBusy: this.treeActions.has(owner?.id ?? a.id),
@@ -367,9 +463,104 @@ export class Workspace {
     const a = this.agent(id);
     return {
       ...this.publicAgent(a),
-      messages: structuredClone(a.messages),
-      deliveries: structuredClone(a.deliveries),
+      messages: structuredClone(recentWindow(a.messages, a.deliveries)),
+      deliveries: a.deliveries
+        .filter(
+          (d) =>
+            d.status !== "sent" ||
+            d.source === "question" ||
+            a.messages.some((m) => m.clientId === d.id),
+        )
+        .slice(-100)
+        .map(deliveryMetadata),
     };
+  }
+  async synchronizeDetail(id: string) {
+    const a = this.agent(id);
+    if (!a.threadId) return this.detail(id);
+    const arriving: Message[] = [];
+    const stop = this.subscribe(() => {
+      for (const m of a.messages)
+        if (!arriving.some((v) => v.id === m.id)) arriving.push(m);
+    });
+    const initial = new Set(a.messages.map((m) => m.id));
+    try {
+      const page = await readingPage(
+        this.options.runtime,
+        a.threadId,
+        undefined,
+        a.deliveries,
+        256 * 1024,
+        (m) => this.restoreNativeImages(a, m),
+      );
+      const nativeClients = new Set(page.messages.map((m) => m.clientId));
+      for (const m of page.messages)
+        this.confirmNative(a, m.clientId, m.turnId);
+      const additions = arriving.filter(
+        (m) =>
+          !initial.has(m.id) &&
+          !page.messages.some((v) => v.id === m.id) &&
+          !nativeClients.has(m.id),
+      );
+      a.messages = recentWindow([...page.messages, ...additions], []);
+      a.historyCursor = page.nextCursor ?? undefined;
+      a.readingRevision = (a.readingRevision ?? 0) + 1;
+      this.save();
+      return this.detail(id);
+    } finally {
+      stop();
+    }
+  }
+  recoveryPage(id: string, cursor?: string) {
+    const before = cursor
+      ? JSON.parse(Buffer.from(cursor, "base64url").toString())
+      : null;
+    if (
+      cursor &&
+      (!Array.isArray(before) ||
+        before.length !== 2 ||
+        !Number.isFinite(before[0]) ||
+        typeof before[1] !== "string")
+    )
+      throw new Error("Invalid recovery cursor");
+    // Position is the immutable ledger key, even when its record is deleted.
+    const records = this.agent(id)
+      .deliveries.filter(
+        (d) =>
+          d.status !== "sent" &&
+          (!before ||
+            d.at < before[0] ||
+            (d.at === before[0] && d.id < before[1])),
+      )
+      .sort((a, b) => b.at - a.at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+    const page = records.slice(0, 100),
+      last = page.at(-1);
+    return {
+      deliveries: page.map(deliveryMetadata),
+      nextCursor:
+        records.length > 100 && last
+          ? Buffer.from(JSON.stringify([last.at, last.id])).toString(
+              "base64url",
+            )
+          : null,
+    };
+  }
+  recovery(id: string, operationId: string) {
+    const d = this.agent(id).deliveries.find((d) => d.id === operationId);
+    if (!d) throw new Error("Delivery not found");
+    return structuredClone(d);
+  }
+  questionHistory(id: string) {
+    return structuredClone(this.agent(id).questions);
+  }
+  async messageBody(id: string, itemId: string) {
+    const a = this.agent(id);
+    if (!a.threadId) throw new Error("Native session unavailable");
+    return nativeBody(this.options.runtime, a.threadId, itemId);
+  }
+  async historyBody(alias: string, threadId: string, itemId: string) {
+    await this.historySession(alias, threadId);
+    return nativeBody(this.options.runtime, threadId, itemId);
   }
   async rename(id: string, title: string) {
     const a = this.agent(id);
@@ -630,47 +821,60 @@ export class Workspace {
       throw new Error("Session does not belong to this project directory");
     return this.historyIdentity(session);
   }
-  async historyMessages(alias: string, threadId: string, cursor?: string) {
+  async historyMessages(
+    alias: string,
+    threadId: string,
+    cursor?: string,
+    project?: (m: Message) => Message,
+  ) {
     await this.historySession(alias, threadId);
-    return this.options.runtime.historyMessages(threadId, cursor);
-  }
-  async agentHistory(id: string, cursor?: string) {
-    const agent = this.agent(id);
-    if (!agent.threadId || !agent.historyCursor)
-      return { messages: [], nextCursor: null };
-    const page = await this.options.runtime.historyMessages(
-      agent.threadId,
-      cursor ?? agent.historyCursor,
+    const agent = this.state.agents.find((a) => a.threadId === threadId);
+    let confirmed = false;
+    const page = await readingPage(
+      this.options.runtime,
+      threadId,
+      cursor,
+      agent?.deliveries ?? [],
+      undefined,
+      (m) => {
+        const d =
+          agent && m.clientId
+            ? agent.deliveries.find((d) => d.id === m.clientId)
+            : undefined;
+        if (agent && d && d.status !== "sent") {
+          this.confirmNative(agent, m.clientId, m.turnId);
+          confirmed = true;
+          m = associate(m, agent.deliveries);
+        }
+        return project ? project(m) : m;
+      },
     );
-    const captured = new Map<string, Message[]>();
-    for (const message of splitMessages(agent).historical) {
-      if (!message.turnId) continue;
-      const group = captured.get(message.turnId) ?? [];
-      group.push(message);
-      captured.set(message.turnId, group);
-    }
-    const messages: Message[] = [],
-      inserted = new Set<string>();
-    for (const message of page.messages) {
-      const group = message.turnId ? captured.get(message.turnId) : undefined;
-      if (!group) messages.push(message);
-      else if (!inserted.has(message.turnId!)) {
-        messages.push(...group);
-        inserted.add(message.turnId!);
-      }
-    }
-    for (const message of messages) {
-      if (!message.images?.length || !this.options.runtime.historyImage)
-        continue;
+    if (confirmed) this.save();
+    return page;
+  }
+  private async restoreNativeImages(agent: RuntimeAgent, message: Message) {
+    if (message.images?.length && this.options.runtime.historyImage) {
       const restored: MessageImage[] = [];
-      for (const image of message.images) {
+      for (const [index, image] of message.images.entries()) {
+        const saved = agent.messages.find((m) => m.id === message.id)?.images?.[
+          index
+        ];
+        if (
+          image.availability === "missing" &&
+          saved &&
+          saved.availability !== "missing" &&
+          this.images.read(agent.id, saved.id, false)
+        ) {
+          restored.push(saved);
+          continue;
+        }
         if (image.availability !== "missing") {
           restored.push(image);
           continue;
         }
         try {
           const file = await this.options.runtime.historyImage(
-            agent.threadId,
+            agent.threadId!,
             image.id,
           );
           if (!file) {
@@ -687,10 +891,41 @@ export class Workspace {
           restored.push(image);
         }
       }
-      message.images = restored;
+      message = { ...message, images: restored };
     }
-    return { ...page, messages };
+    return message;
   }
+  async agentHistory(
+    id: string,
+    cursor?: string,
+    project?: (m: Message) => Message,
+  ) {
+    const agent = this.agent(id);
+    if (!agent.threadId) return { messages: [], nextCursor: null };
+    let confirmed = false;
+    const page = await readingPage(
+      this.options.runtime,
+      agent.threadId,
+      cursor,
+      agent.deliveries,
+      undefined,
+      async (message) => {
+        const d = message.clientId
+          ? agent.deliveries.find((d) => d.id === message.clientId)
+          : undefined;
+        if (d && d.status !== "sent") {
+          this.confirmNative(agent, message.clientId, message.turnId);
+          confirmed = true;
+          message = associate(message, agent.deliveries);
+        }
+        message = await this.restoreNativeImages(agent, message);
+        return project ? project(message) : message;
+      },
+    );
+    if (confirmed) this.save();
+    return page;
+  }
+
   async resumeHistory(
     alias: string,
     threadId: string,
@@ -851,9 +1086,7 @@ export class Workspace {
         handle = await opening;
         a.threadId = handle.threadId;
         a.historyCursor = handle.historyCursor;
-        a.historyBoundaryId = handle.historyCursor
-          ? a.messages.at(-1)?.id
-          : undefined;
+
         a.model = handle.model ?? a.model;
         a.effort = handle.effort ?? a.effort;
         a.serviceTier = handle.serviceTier ?? a.serviceTier;
@@ -955,7 +1188,7 @@ export class Workspace {
       this.save();
       let turnId: string;
       try {
-        turnId = await handle.send(text, activeTurn, paths);
+        turnId = await handle.send(text, activeTurn, paths, requestId);
       } catch (error) {
         if (!(error instanceof StaleTurn)) throw error;
         if (
@@ -970,7 +1203,7 @@ export class Workspace {
           error.activeTurnId ??
           (a.turnId !== activeTurn ? a.turnId : undefined);
         a.turnId = currentTurn;
-        turnId = await handle.send(text, currentTurn, paths);
+        turnId = await handle.send(text, currentTurn, paths, requestId);
       }
       if (!this.completedTurns.has(`${a.id}/${turnId}`)) {
         if (turnId !== activeTurn)
@@ -978,9 +1211,13 @@ export class Workspace {
         a.turnId = turnId;
       }
       if (a.stop && a.stop.turnId !== turnId) a.stop = undefined;
-      if (!a.messages.some((m) => m.id === requestId))
+      // Admission is not a native item identity. Until its notification arrives,
+      // render the persisted operation once; merge by clientId, never by turn/text.
+      if (!a.messages.some((m) => m.clientId === requestId))
         a.messages.splice(messagePosition, 0, {
           id: requestId,
+          clientId: requestId,
+          provisional: true,
           role: "user",
           text,
           turnId,
@@ -1014,8 +1251,10 @@ export class Workspace {
           .catch(() => {});
       }
     } catch (error) {
-      d.status = error instanceof DeliveryRejected ? "failed" : "uncertain";
-      d.error = error instanceof Error ? error.message : "Delivery failed";
+      if (d.status !== "sent") {
+        d.status = error instanceof DeliveryRejected ? "failed" : "uncertain";
+        d.error = error instanceof Error ? error.message : "Delivery failed";
+      }
       // A rejected steer does not stop the turn already running. Runtime
       // completion/disconnection events remain authoritative for its lifecycle.
       if (
@@ -1068,7 +1307,11 @@ export class Workspace {
       const d = a.deliveries[index];
       if (
         a.role !== "orc" ||
-        a.messages.some((m) => m.role === "user" && m.id === operationId) ||
+        a.messages.some(
+          (m) =>
+            m.role === "user" &&
+            (m.id === operationId || m.clientId === operationId),
+        ) ||
         (d && (d.source !== "user" || d.status !== "failed"))
       )
         throw new Error("Only a rejected user submission can be deleted");

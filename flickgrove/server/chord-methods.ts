@@ -23,10 +23,6 @@ export async function invoke(app: HostService, member: Method, input: unknown) {
       const p = parse(member);
       return await app.historySession(p.project, p.threadId);
     }
-    case "historyMessages": {
-      const p = parse(member);
-      return await app.historyMessages(p.project, p.threadId, p.cursor);
-    }
     case "resumeHistory": {
       const p = parse(member);
       return await app.resumeHistory(
@@ -35,10 +31,6 @@ export async function invoke(app: HostService, member: Method, input: unknown) {
         p.archived,
         p.settings,
       );
-    }
-    case "agentHistory": {
-      const p = parse(member);
-      return await app.agentHistory(p.id, p.cursor);
     }
     case "detail":
       return await app.detail(parse(member).id);

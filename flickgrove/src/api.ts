@@ -17,6 +17,16 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
   const call = routeCall(path, body);
   return client.call<T>(call.member, call.input);
 }
+export async function reading<T>(
+  path: string,
+  peerOrAgent: string,
+  signal?: AbortSignal,
+): Promise<T> {
+  const response = await peers().media(peerOrAgent, `/api/read${path}`, {
+    signal,
+  });
+  return response.json();
+}
 export function editable(target: EventTarget | null) {
   return (
     target instanceof HTMLElement &&

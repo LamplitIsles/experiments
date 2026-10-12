@@ -428,7 +428,9 @@ export class Peers {
       ...init,
       headers,
       credentials: "omit",
-      signal: AbortSignal.timeout(60_000),
+      signal: init.signal
+        ? AbortSignal.any([init.signal, AbortSignal.timeout(60_000)])
+        : AbortSignal.timeout(60_000),
     });
     if (!response.ok) {
       const body = await response.json().catch(() => null);

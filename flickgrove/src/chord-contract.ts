@@ -46,12 +46,6 @@ export const inputs = {
     host: id.optional(),
   }),
   historySession: z.object({ project: id, threadId: id, host: id.optional() }),
-  historyMessages: z.object({
-    project: id,
-    threadId: id,
-    cursor: id.optional(),
-    host: id.optional(),
-  }),
   resumeHistory: z.object({
     project: id,
     threadId: id,
@@ -59,7 +53,6 @@ export const inputs = {
     settings: settingsSchema,
     host: id.optional(),
   }),
-  agentHistory: z.object({ id, cursor: id.optional() }),
   detail: z.object({ id }),
   skills: z.object({ id }),
   createOrc: z.object({
@@ -114,6 +107,7 @@ export const receiptSchema = z.object({
 export const lookupSchema = receiptSchema.nullable();
 // Domain fields are validated on both receiving boundaries; unknown engine fields never enter state.
 const question = z.object({
+  recoveryRef: z.boolean().optional(),
   id,
   itemId: id,
   index: z.number(),
@@ -153,6 +147,8 @@ const agent = z.object({
   state: z.enum(["idle", "working", "stopping", "error"]),
   closed: z.boolean(),
   questions: z.array(question),
+  unansweredCount: z.number().optional(),
+  recoveryCount: z.number().optional(),
   threadId: id.optional(),
   turnId: id.optional(),
   execution: z
@@ -160,8 +156,8 @@ const agent = z.object({
     .optional(),
   workingSince: z.number().optional(),
   error: z.string().optional(),
+  readingRevision: z.number().optional(),
   historyCursor: z.string().optional(),
-  historyBoundaryId: id.optional(),
   closeRequest: z.object({ reason: z.string() }).optional(),
   stop: z
     .object({
@@ -170,10 +166,32 @@ const agent = z.object({
     })
     .optional(),
 });
+export const deliverySchema = z.object({
+  recoveryRef: z.boolean().optional(),
+  id,
+  text: z.string(),
+  status: z.enum(["queued", "sending", "sent", "failed", "uncertain"]),
+  images: z.array(imageSchema).optional(),
+  source: z.enum(["user", "worker", "reviewer", "researcher", "question"]),
+  questionIds: z.array(id),
+  answers: z.array(answerSchema).optional(),
+  at: z.number(),
+  reportingWorkerId: id.optional(),
+  reportingResearcherId: id.optional(),
+  researchQuestion: z.string().optional(),
+  reportingReviewerId: id.optional(),
+  reviewTarget: agent.shape.reviewTarget,
+  error: z.string().optional(),
+  turnId: id.optional(),
+});
 export const detailSchema = agent.extend({
   messages: z.array(
     z.object({
       id,
+      provisional: z.boolean().optional(),
+      clientId: id.optional(),
+      bodyRef: z.string().optional(),
+      delivery: deliverySchema.optional(),
       images: z.array(imageSchema).optional(),
       role: z.enum(["user", "assistant"]),
       text: z.string(),
@@ -181,25 +199,7 @@ export const detailSchema = agent.extend({
       turnId: id.optional(),
     }),
   ),
-  deliveries: z.array(
-    z.object({
-      id,
-      text: z.string(),
-      status: z.enum(["queued", "sending", "sent", "failed", "uncertain"]),
-      images: z.array(imageSchema).optional(),
-      source: z.enum(["user", "worker", "reviewer", "researcher", "question"]),
-      questionIds: z.array(id),
-      answers: z.array(answerSchema).optional(),
-      at: z.number(),
-      reportingWorkerId: id.optional(),
-      reportingResearcherId: id.optional(),
-      researchQuestion: z.string().optional(),
-      reportingReviewerId: id.optional(),
-      reviewTarget: agent.shape.reviewTarget,
-      error: z.string().optional(),
-      turnId: id.optional(),
-    }),
-  ),
+  deliveries: z.array(deliverySchema),
 });
 export const snapshotSchema = z.object({
   entryId: id.optional(),
@@ -248,15 +248,11 @@ export function routeCall(
       { project, host, cursor, query: url.searchParams.get("query") ?? "" },
     ],
     "/history/session": ["historySession", { project, host, threadId }],
-    "/history/messages": [
-      "historyMessages",
-      { project, host, threadId, cursor },
-    ],
     "/history/resume": ["resumeHistory", { ...(body as object), host }],
   };
   let route = simple[url.pathname];
   const match =
-    /^\/agents\/([^/]+)(?:\/(messages|lookup|answers|skills|stop|title|close|history|settings|tree-fast))?$/.exec(
+    /^\/agents\/([^/]+)(?:\/(messages|lookup|answers|skills|stop|title|close|settings|tree-fast))?$/.exec(
       url.pathname,
     );
   if (match) {
@@ -271,7 +267,6 @@ export function routeCall(
       settings: "updateSettings",
       "tree-fast": "updateTreeFast",
       close: "closeTree",
-      history: "agentHistory",
     } as const;
     const member = match[2]
       ? members[match[2] as keyof typeof members]
@@ -279,7 +274,6 @@ export function routeCall(
     const input = {
       ...(body as object),
       id,
-      ...(member === "agentHistory" ? { cursor } : {}),
     };
     route = [member, input];
   }

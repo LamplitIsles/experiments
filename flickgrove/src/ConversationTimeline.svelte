@@ -3,12 +3,12 @@
   import { onMount, tick, untrack, type Snippet } from "svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import type { HistoryMessages, Message } from "./contracts";
-  import { api } from "./api";
+  import { reading } from "./api";
   import { historyCache, type LoadedHistory } from "./history-cache";
   import { transcriptPositions, saveTranscriptPosition } from "./transcript-state";
   import * as m from "./paraglide/messages";
-  let { agentId, boundary, live, ready, connected, renderMessage, header, footer, onfollow, reports, pinned }: {
-    agentId: string; boundary?: string; live: Message[]; ready: boolean; connected: boolean;
+  let { syncRevision = 0, agentId, boundary, live, ready, connected, renderMessage, header, footer, onfollow, reports, pinned }: {
+    agentId: string; boundary?: string; syncRevision?: number; live: Message[]; ready: boolean; connected: boolean;
     renderMessage: Snippet<[Message]>; header: Snippet; footer: Snippet; onfollow: (follow: boolean) => void; reports: Set<string>; pinned?: string;
   } = $props();
   const id = untrack(() => agentId);
@@ -17,8 +17,25 @@
   let history = $state.raw<LoadedHistory | null>(untrack(() => boundary ? historyCache.get(id, boundary) : null));
   let historical = $state.raw(untrack(() => history?.messages ?? []));
   let cursor = $state(untrack(() => history?.cursor ?? null)), error = $state(untrack(() => history?.error ?? "")), loading = $state(false);
+  const request = new AbortController();
   let active = true, attempted: LoadedHistory | null = null;
-  const messages = $derived([...new Map([...historical, ...live].map(message => [message.id, message])).values()]);
+  let retained = $state.raw<Message[]>([]);
+  $effect.pre(() => {
+    const current = live, revision = syncRevision;
+    untrack(() => {
+      const ids = new Set(current.map(m => m.id)), clients = new Set(current.filter(m => !m.provisional).map(m => m.clientId));
+      historical = historical.filter(m => !m.provisional || ids.has(m.id));
+      retained = [...retained.filter(m => !ids.has(m.id) && !clients.has(m.id) && !m.provisional), ...current];
+      let bytes = retained.reduce((sum, m) => sum + JSON.stringify(m).length * 2, 0);
+      while (bytes > 8 * 1024 * 1024 && retained.length > 1) bytes -= JSON.stringify(retained.shift()).length * 2;
+      if (history && history.synchronized === revision) historyCache.remember(id, history, retained);
+    });
+  });
+  const messages = $derived.by(() => {
+    const rows = [...historical, ...retained, ...live];
+    const clients = new Set(rows.filter(m => !m.provisional && m.clientId).map(m => m.clientId));
+    return [...new Map(rows.filter(m => !m.provisional || !clients.has(m.clientId)).map(m => [m.id, m])).values()];
+  });
   let transcript = $state<HTMLDivElement>();
   let tail: HTMLDivElement;
   const headerKey = "timeline-header";
@@ -135,18 +152,22 @@
     const entry = history;
     if (!entry || !connected || loading) return;
     const initial = !entry.loaded;
+    const revision = syncRevision;
     loading = true; error = "";
-    await historyCache.load(id, entry, async cursor => {
+    const fetchPage = async (cursor?: string) => {
       const params = new URLSearchParams(); if (cursor) params.set("cursor", cursor);
-      return api<HistoryMessages>(`/agents/${encodeURIComponent(id)}/history?${params}`);
-    });
+      params.set("agent", id);
+      return reading<HistoryMessages>(`/messages?${params}`, id, request.signal);
+    };
+    if (entry.loaded && entry.synchronized !== revision) await historyCache.refresh(id, entry, revision, () => fetchPage());
+    else { await historyCache.load(id, entry, fetchPage); if (!entry.error) entry.synchronized = revision; }
     if (!active || entry !== history) return;
     historical = entry.messages; cursor = entry.cursor; error = entry.error; loading = false;
     if (initial && (!saved || saved.follow)) { await tick(); if (active) $virtualizer.scrollToEnd(); }
   }
   $effect(() => {
     const entry = history;
-    if (ready && connected && entry && attempted !== entry && (!entry.loaded || entry.pending) && !entry.error) {
+    if (ready && connected && entry && !loading && (attempted !== entry || entry.synchronized !== syncRevision) && (!entry.loaded || entry.pending || entry.synchronized !== syncRevision) && !entry.error) {
       attempted = entry; untrack(() => { void load(); });
     }
   });
@@ -171,7 +192,7 @@
     observer.observe(tail);
     if (!saved || saved.follow) void tick().then(() => { if (active) $virtualizer.scrollToEnd(); });
     return () => {
-      active = false; observer.disconnect();
+      active = false; request.abort(); observer.disconnect();
       if (!transcript || !initiallyReady) return;
       const scroll = lastScroll;
       const measurements = $virtualizer.takeSnapshot();

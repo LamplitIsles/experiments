@@ -191,5 +191,8 @@
   "tree_native": "Confirmed next-turn tier: {tier}.",
   "loading_conversation": "Loading conversation…",
   "diagram_loading": "Loading diagram…",
-  "diagram_invalid": "Unable to render diagram. Source is shown below."
+  "diagram_invalid": "Unable to render diagram. Source is shown below.",
+  "read_full_message": "Read full message",
+  "loading_message": "Loading message…",
+  "earlier_submissions": "Earlier submissions"
 }

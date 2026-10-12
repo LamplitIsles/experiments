@@ -53,8 +53,8 @@ const app = new Workspace({
   projects: async () => fixtureProjects,
 });
 let turn = 0;
-runtime.sendOverride = async (id, text) => {
-  const turnId = `turn-${++turn}`;
+runtime.sendOverride = async (id, text, activeTurn) => {
+  const turnId = activeTurn ?? `turn-${++turn}`;
   runtime.emit(id, { type: "working", turnId });
   setTimeout(
     async () => {

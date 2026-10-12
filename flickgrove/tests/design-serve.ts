@@ -105,8 +105,27 @@ function unit(
     db.close();
   }
   const runtime = new FakeRuntime();
-  for (const a of agents)
-    runtime.names.set(a.threadId ?? `thread-${a.id}`, a.title);
+  for (const a of agents) {
+    const threadId = a.threadId ?? `thread-${a.id}`;
+    runtime.names.set(threadId, a.title);
+    runtime.historyItems.set(
+      threadId,
+      a.messages.map((m) => ({
+        ...m,
+        clientId: a.deliveries.find((d) => d.id === m.id)?.id,
+      })),
+    );
+    runtime.historySessions.set(threadId, {
+      threadId,
+      title: a.title,
+      preview: "Fixture",
+      cwd: a.project.path,
+      role: a.role,
+      archived: false,
+      source: "appServer",
+      updatedAt: Date.now(),
+    });
+  }
   runtime.models = async () => {
     if (modelFailure) throw new Error("Synthetic model outage");
     return [

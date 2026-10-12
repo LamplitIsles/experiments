@@ -505,7 +505,7 @@ function startTurn(input, clientUserMessageId) {
   state.active = turn.id;
   save();
   send({ method: "turn/started", params: { threadId: state.threadId, turn } });
-  if (process.env.FAKE_COMPLETE_START_USER_ITEM === "true" && turn.items[0])
+  if (turn.items[0])
     send({
       method: "item/completed",
       params: {

@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Detail, Message } from "../src/contracts";
 import { ReadingCache } from "../src/reading-cache";
-import { splitMessages } from "../src/conversation-messages";
 import {
   retainTranscriptPositions,
   saveTranscriptPosition,
@@ -88,30 +87,11 @@ function detail(id = "peer:orc"): Detail {
     deliveries: [],
   };
 }
-test("ID boundaries survive prefix insertion and reject a missing boundary", () => {
-  const messages = [
-    message("inserted"),
-    message("old"),
-    message("boundary"),
-    message("op-1"),
-    message("op-2"),
-  ];
-  expect(
-    splitMessages({ messages, historyBoundaryId: "boundary" }).live.map(
-      (m) => m.id,
-    ),
-  ).toEqual(["op-1", "op-2"]);
-  expect(splitMessages({ messages }).historical).toEqual([]);
-  expect(() =>
-    splitMessages({ messages, historyBoundaryId: "missing" }),
-  ).toThrow("boundary is missing");
-});
 test("reading copies keep a bounded suffix and Worker identity without mutating online detail", () => {
   const storage = new MemoryStorage(),
     cache = new ReadingCache(storage, prefix);
   const online = detail();
   online.historyCursor = "native-cursor";
-  online.historyBoundaryId = "old";
   online.messages = [
     message("old", "x".repeat(160_000)),
     message("report"),
@@ -148,7 +128,6 @@ test("reading copies keep a bounded suffix and Worker identity without mutating 
   cache.saveDetail(online);
   const saved = cache.readDetail(online.id)!;
   expect(saved.messages.map((m) => m.id)).toEqual(["report", "recent"]);
-  expect(saved).not.toHaveProperty("historyBoundaryId");
   expect(saved).not.toHaveProperty("historyCursor");
   expect(
     saved.deliveries.map((d) => [d.id, d.text, d.reportingWorkerId]),

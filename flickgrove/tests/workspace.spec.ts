@@ -136,6 +136,9 @@ test("all pending questions preserve drafts and use one explicit batch submissio
     .getByRole("button", { name: "Send all answers", exact: true })
     .click();
   await expect(page.locator(".question-card")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "All questions", exact: true })
+    .click();
   await expect(page.locator(".answered-summary")).toContainText(
     "My custom choice",
   );

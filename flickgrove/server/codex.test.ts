@@ -696,3 +696,76 @@ test("native isolated process reads validated localImage on start and steer exac
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("isolated app-server wire reads a multi-megabyte native page and oversized body through bounded Workspace pages", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "grove-large-native-wire-"));
+  const runtime = new CodexRuntime({
+    cwd: directory,
+    origin: () => "http://fixture.invalid",
+    codexPath: fileURLToPath(
+      new URL("../tests/fake-codex.mjs", import.meta.url),
+    ),
+    env: {
+      PATH: process.env.PATH,
+      HOME: join(directory, "user-home"),
+      CODEX_HOME: join(directory, "codex-home"),
+      FAKE_SERVER_ROOT: directory,
+    },
+  });
+  const app = new Workspace({
+    directory,
+    runtime,
+    projects: async () => [{ alias: "wire", name: "Wire", path: directory }],
+  });
+  try {
+    const a = await app.createOrc("wire", {
+      fast: false,
+      orc: { model: "fixture-model", effort: "medium" },
+      worker: { model: "fixture-model", effort: "medium" },
+    });
+    const texts = Array.from(
+      { length: 42 },
+      (_, i) =>
+        `Original native ${i} ` + '内容"'.repeat(i === 40 ? 350_000 : 16_000),
+    );
+    await writeFile(
+      join(directory, ".fake-app-server-control.json"),
+      JSON.stringify({
+        historyItems: texts.map((text, i) => ({
+          turnId: "huge-turn",
+          item: {
+            type: "agentMessage",
+            id: `wire-${i}`,
+            text,
+            phase: "final_answer",
+            delivery: null,
+            memoryCitation: null,
+          },
+        })),
+      }),
+    );
+    const window = await app.synchronizeDetail(a.id);
+    expect(
+      new TextEncoder().encode(JSON.stringify(window.messages)).length,
+    ).toBeLessThanOrEqual(256 * 1024);
+    const collected: import("../src/contracts").Message[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await app.agentHistory(a.id, cursor);
+      expect(
+        new TextEncoder().encode(JSON.stringify(page)).length,
+      ).toBeLessThanOrEqual(1024 * 1024);
+      collected.unshift(...page.messages);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    expect(collected.map((m) => m.id)).toEqual(
+      texts.map((_, i) => `wire-${i}`),
+    );
+    expect(collected.find((m) => m.id === "wire-40")?.bodyRef).toBe("wire-40");
+    expect(await app.messageBody(a.id, "wire-40")).toBe(texts[40]);
+  } finally {
+    app.dispose();
+    await runtime.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 15_000);

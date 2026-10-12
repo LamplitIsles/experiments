@@ -12,6 +12,8 @@ export interface RuntimeItem {
   id: string;
   type: string;
   text?: string;
+  clientId?: string;
+  images?: import("../src/contracts").MessageImage[];
   phase?: string | null;
   delivery?: string | null;
   questions?:
@@ -69,7 +71,12 @@ export interface RuntimeHandle {
     settings: ExecutionSettings | { serviceTier: string },
   ): Promise<ExecutionSettings>;
   rename(title: string): Promise<void>;
-  send(text: string, turnId?: string, images?: string[]): Promise<string>;
+  send(
+    text: string,
+    turnId?: string,
+    images?: string[],
+    clientId?: string,
+  ): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   title(input: string): Promise<string | undefined>;
   close(): Promise<void>;

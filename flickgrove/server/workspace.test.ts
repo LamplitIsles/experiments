@@ -86,7 +86,7 @@ test("ordinary answers appear complete at turn end but async questions appear wh
   runtime.emit(a.id, question);
   runtime.emit(a.id, question);
   expect(app.detail(a.id).questions).toHaveLength(1);
-  expect(app.detail(a.id).questions[0]).toMatchObject({
+  expect(app.questionHistory(a.id)[0]).toMatchObject({
     text: "Which color?",
     state: "unanswered",
   });
@@ -181,28 +181,60 @@ test("backend restart restores questions and captured models and resumes an exis
 
 test("a completed turn arriving before send resolves does not leave a session working", async () => {
   const { app, runtime } = fixture();
-  const a = await app.createOrc("alpha");
-  runtime.sendOverride = async () => {
-    runtime.emit(a.id, { type: "working", turnId: "fast" });
-    runtime.emit(a.id, {
-      type: "item",
-      turnId: "fast",
-      item: {
-        id: "reply",
-        type: "agentMessage",
-        phase: "final_answer",
-        text: "Done",
+  const open = runtime.open.bind(runtime);
+  runtime.open = async (agent, notify) => {
+    const handle = await open(agent, notify);
+    return {
+      ...handle,
+      send: async () => {
+        const native = {
+          id: "native-first",
+          clientId: "first",
+          role: "user" as const,
+          text: "Start",
+          turnId: "fast",
+          at: 1,
+        };
+        runtime.historyItems.set(handle.threadId, [native]);
+        runtime.emit(agent.id, { type: "working", turnId: "fast" });
+        runtime.emit(agent.id, {
+          type: "item",
+          turnId: "fast",
+          item: {
+            id: "reply",
+            type: "agentMessage",
+            phase: "final_answer",
+            text: "Done",
+          },
+        });
+        runtime.emit(agent.id, {
+          type: "completed",
+          turnId: "fast",
+          status: "completed",
+        });
+        notify({
+          type: "item",
+          turnId: "fast",
+          item: {
+            id: native.id,
+            clientId: native.clientId,
+            type: "userMessage",
+            text: native.text,
+          },
+        });
+        return "fast";
       },
-    });
-    runtime.emit(a.id, {
-      type: "completed",
-      turnId: "fast",
-      status: "completed",
-    });
-    return "fast";
+    };
   };
+  const a = await app.createOrc("alpha");
   await app.send(a.id, "Start", "first");
   expect(app.detail(a.id).state).toBe("idle");
+  for (
+    let i = 0;
+    i < 100 && app.detail(a.id).messages[0]?.id !== "native-first";
+    i++
+  )
+    await Bun.sleep(5);
   expect(app.detail(a.id).messages.map((m) => m.text)).toEqual([
     "Start",
     "Done",
@@ -563,7 +595,9 @@ test("queued Worker reports survive restart and unknown delivery keeps closure b
     .detail(a.id)
     .deliveries.find((d) => d.reportingWorkerId === w.id)!;
   expect(d.status).toBe("uncertain");
-  expect(d.text).toContain("Durable completion report");
+  expect(restarted.recovery(a.id, d.id).text).toContain(
+    "Durable completion report",
+  );
   expect(resumedRuntime.inputs.map((i) => i.text)).toEqual([
     "Resume explicitly",
   ]);
@@ -616,7 +650,7 @@ test("a rejected Worker report blocks closing its sender and can retry the persi
     "bound",
   );
   await app.retryDelivery(a.id, d.id);
-  expect(runtime.inputs.at(-1)?.text).toBe(d.text);
+  expect(runtime.inputs.at(-1)?.text).toBe(app.recovery(a.id, d.id).text);
   await untilClosed(app, w.id);
   expect(app.snapshot().agents.some((a) => a.id === w.id)).toBe(false);
 });
@@ -662,9 +696,9 @@ test("queued async-question forwarding is durable before the owner queue runs", 
     status: "uncertain",
     reportingWorkerId: w.id,
   });
-  expect(restarted.detail(a.id).deliveries.at(-1)?.text).toContain(
-    "Required context",
-  );
+  expect(
+    restarted.recovery(a.id, restarted.detail(a.id).deliveries.at(-1)!.id).text,
+  ).toContain("Required context");
   held.resolve("held-turn");
   await blocker;
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -768,7 +802,7 @@ test("a report during Stopping is retained for explicit retry and cannot make cl
     .detail(orc.id)
     .deliveries.find((d) => d.source === "worker")!;
   expect(report.status).toBe("failed");
-  expect(report.text).toContain("Report retained");
+  expect(app.recovery(orc.id, report.id).text).toContain("Report retained");
   runtime.emit(orc.id, { type: "completed", turnId, status: "interrupted" });
   runtime.emit(worker.id, {
     type: "completed",
@@ -1342,8 +1376,11 @@ test("one immutable answer batch sends once, confirms original IDs, excludes new
     .detail(a.id)
     .deliveries.find((d) => d.id === "batch-one")!;
   expect(pending.status).toBe("sending");
-  expect(pending.answers).toEqual(answers);
-  expect(pending.questionIds).toEqual(["original:0", "original:1"]);
+  expect(app.recovery(a.id, pending.id).answers).toEqual(answers);
+  expect(app.recovery(a.id, pending.id).questionIds).toEqual([
+    "original:0",
+    "original:1",
+  ]);
   expect(
     app.detail(a.id).questions.every((q) => q.state === "unanswered"),
   ).toBe(true);
@@ -1355,7 +1392,7 @@ test("one immutable answer batch sends once, confirms original IDs, excludes new
     "Question: original 0\nAnswer: One\n\nQuestion: original 1\nAnswer: Two",
   );
   expect(
-    app.detail(a.id).questions.map((q) => [q.id, q.state, q.answer]),
+    app.questionHistory(a.id).map((q) => [q.id, q.state, q.answer]),
   ).toEqual([
     ["original:0", "answered", "One"],
     ["original:1", "answered", "Two"],
@@ -1415,10 +1452,7 @@ test("rejected batch retries its persisted answers; unknown batch lookup and dup
   ).toBe(true);
   runtime.sendOverride = undefined;
   await app.retryDelivery(a.id, "rejected-batch");
-  expect(app.detail(a.id).questions.map((q) => q.answer)).toEqual([
-    "Yes",
-    "No",
-  ]);
+  expect(app.questionHistory(a.id).map((q) => q.answer)).toEqual(["Yes", "No"]);
   expect(runtime.inputs).toHaveLength(3);
   await expect(
     app.answerBatch(a.id, answers, "already-answered"),
