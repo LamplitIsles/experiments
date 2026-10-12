@@ -4,6 +4,7 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import { onMount, tick, untrack } from "svelte";
   import type { HistorySession, HistoryPage, HistoryMessages, Message, Project } from "./contracts";
+  import QuestionRecord from "./QuestionRecord.svelte";
   import WorkerReport from "./WorkerReport.svelte";
   import MessageBody from "./MessageBody.svelte";
   import { reading as readHttp, api } from "./api";
@@ -17,6 +18,7 @@
   } = $props();
   let query = $state(""); let sessions = $state<HistorySession[]>([]); let cursor = $state<string | null>(null);
   let loading = $state(false); let error = $state(""); let sequence = 0;
+  let record = $state<{item?: string; operation?: string} | null>(null);
   let selected = $state<HistorySession | null>(null); let previewProject = $state(untrack(() => project.alias));
   let messages = $state<Message[]>([]); let messageCursor = $state<string | null>(null);
   let reading = $state(false); let resuming = $state(false); let previewSequence = 0;
@@ -24,6 +26,7 @@
   let input = $state<HTMLInputElement | null>(null);
   let results = $state<HTMLDivElement | null>(null); let listScroll = 0;
   const previewOpen = $derived(navigation.surfaces.includes("history-preview") && !!selected);
+  $effect(() => { if (!previewOpen) record = null; });
   $effect(() => { if (!previewOpen) void tick().then(() => { if (results) results.scrollTop = listScroll; }); });
   function params(alias = project.alias) { return new URLSearchParams({ host: hostId, project: alias }); }
   async function search(more = false) {
@@ -63,7 +66,7 @@
   }
   async function select(session: HistorySession, alias = project.alias) {
     if (!previewOpen) listScroll = results?.scrollTop ?? 0;
-    ++previewSequence; selected = session; previewProject = alias; messages = []; messageCursor = null;
+    ++previewSequence; record = null; selected = session; previewProject = alias; messages = []; messageCursor = null;
     setSurface("history-preview", true); await read();
   }
   async function owningOrc() {
@@ -107,9 +110,10 @@
     <div class="history-transcript">
       {#if reading}<p role="status">{m.loading_history()}</p>{/if}
       {#if messageCursor}<Button variant="ghost" size="sm" disabled={reading || !connected} onclick={() => read(true)}>{m.earlier_messages()}</Button>{/if}
-      {#each messages as message (message.id)}{#if message.delivery && ["worker", "reviewer", "researcher"].includes(message.delivery.source)}<WorkerReport at={message.at} text={message.text} bodyRef={message.bodyRef} owningAgentId={hostId} agentId={message.delivery.reportingResearcherId ?? message.delivery.reportingReviewerId ?? message.delivery.reportingWorkerId} kind={message.delivery.source === "researcher" ? "Researcher report" : message.delivery.source === "reviewer" ? "Reviewer report" : undefined} readPath={`/body?${new URLSearchParams({project: previewProject, thread: selected.threadId, item: message.id})}`} />{:else}<div class:user-message={message.role === "user"} class:assistant-message={message.role === "assistant"}><div class="message-role">{#if message.role === "assistant"}<MessageTime at={message.at} />{/if}{message.role === "user" ? m.history_you() : m.history_assistant()}</div>{#if message.role === "user"}<MessageTime at={message.at} />{/if}<MessageBody text={message.text} bodyRef={message.bodyRef} agentId={hostId} readPath={`/body?${new URLSearchParams({project: previewProject, thread: selected.threadId, item: message.id})}`} /></div>{/if}{/each}
+      {#each messages as message (message.id)}{#if message.delivery && ["worker", "reviewer", "researcher"].includes(message.delivery.source)}<WorkerReport at={message.at} text={message.text} bodyRef={message.bodyRef} owningAgentId={hostId} agentId={message.delivery.reportingResearcherId ?? message.delivery.reportingReviewerId ?? message.delivery.reportingWorkerId} kind={message.delivery.source === "researcher" ? "Researcher report" : message.delivery.source === "reviewer" ? "Reviewer report" : undefined} readPath={`/body?${new URLSearchParams({project: previewProject, thread: selected.threadId, item: message.id})}`} />{:else}<div class:user-message={message.role === "user"} class:assistant-message={message.role === "assistant"}><div class="message-role">{#if message.role === "assistant"}<MessageTime at={message.at} />{/if}{message.role === "user" ? m.history_you() : m.history_assistant()}</div>{#if message.role === "user"}<MessageTime at={message.at} />{/if}<MessageBody text={message.text} bodyRef={message.bodyRef} agentId={hostId} readPath={`/body?${new URLSearchParams({project: previewProject, thread: selected.threadId, item: message.id})}`} />{#if message.questionItemId || message.delivery?.source === "question"}<Button tabindex={0} class="question-record-entry" variant="secondary" size="sm" onclick={() => record = message.questionItemId ? {item:message.questionItemId} : {operation:message.clientId ?? message.id}}>View questions and answers</Button>{/if}</div>{/if}{/each}
       {#if !reading && !messages.length && !error}<p class="history-empty">{m.no_messages()}</p>{/if}
     </div>
+    {#if record}<section class="question-panel" aria-label="Questions and answers"><header class="question-panel-heading"><h2>Questions and answers · Read only</h2><Button tabindex={0} variant="ghost" size="sm" onclick={() => record = null}>Close</Button></header><QuestionRecord peerOrAgent={hostId} params={{project:previewProject,thread:selected.threadId,...record}} {connected} onpending={selected.agentId && !selected.closed && selected.role === "orc" ? () => void resume() : undefined} /></section>{/if}
     <div class="history-action">
       {#if selected.role === "worker" || selected.role === "reviewer" || selected.role === "researcher"}<span>{selected.role === "researcher" ? "Continue this Researcher through its original Orc." : selected.role === "reviewer" ? m.history_reviewer_help() : m.history_worker_help()}</span><Button size="sm" disabled={!connected || reading || !selected.ownerThreadId} onclick={owningOrc}>{m.view_owning_orc()}</Button>
       {:else}<span>{m.history_resume_help()}</span><Button size="sm" disabled={!connected || resuming} onclick={resume}>{resuming ? m.resuming_session() : selected.agentId && !selected.closed ? m.open_existing_session() : selected.archived ? m.restore_resume() : m.resume_session()}</Button>{/if}

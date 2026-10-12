@@ -57,7 +57,13 @@ for (const surface of [
           .getByRole("button", { name: "Edit title", exact: true })
           .click();
       if (surface === "questions")
-        await page.locator(".questions-toggle").click();
+        await request.post(origin + "/fixture/change", {
+          data: {
+            question: true,
+            questionId: "navigation",
+            questionOptions: false,
+          },
+        });
     }
     const dismissed = {
       detail: ".agent-detail",

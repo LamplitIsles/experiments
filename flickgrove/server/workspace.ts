@@ -1,5 +1,6 @@
 import {
   associate,
+  questionEntry,
   recentWindow,
   readingPage,
   nativeBody,
@@ -169,7 +170,8 @@ export class Workspace {
     for (const q of a.questions)
       if (d.questionIds.includes(q.id)) {
         q.state = "answered";
-        q.answer = d.answers?.find((v) => v.questionId === q.id)?.answer;
+        q.answer =
+          d.answers?.find((v) => v.questionId === q.id)?.answer ?? d.text;
       }
     return d;
   }
@@ -299,11 +301,11 @@ export class Workspace {
             newQuestions.push(id);
           }
         });
-        if (item.text && !a.messages.some((m) => m.id === item.id))
+        if (!a.messages.some((m) => m.id === item.id))
           a.messages.push({
             id: item.id,
             role: "assistant",
-            text: item.text,
+            text: item.text ?? "",
             turnId: event.turnId,
             at: Date.now(),
           });
@@ -463,7 +465,9 @@ export class Workspace {
     const a = this.agent(id);
     return {
       ...this.publicAgent(a),
-      messages: structuredClone(recentWindow(a.messages, a.deliveries)),
+      messages: structuredClone(
+        recentWindow(a.messages, a.deliveries, a.questions),
+      ),
       deliveries: a.deliveries
         .filter(
           (d) =>
@@ -491,7 +495,7 @@ export class Workspace {
         undefined,
         a.deliveries,
         256 * 1024,
-        (m) => this.restoreNativeImages(a, m),
+        (m) => this.restoreNativeImages(a, questionEntry(m, a.questions)),
       );
       const nativeClients = new Set(page.messages.map((m) => m.clientId));
       for (const m of page.messages)
@@ -550,8 +554,65 @@ export class Workspace {
     if (!d) throw new Error("Delivery not found");
     return structuredClone(d);
   }
-  questionHistory(id: string) {
-    return structuredClone(this.agent(id).questions);
+  questionHistory(
+    id: string,
+    selection: { item?: string; operation?: string; pending?: boolean } = {},
+  ) {
+    const agent = this.state.agents.find((a) => a.id === id);
+    if (!agent) throw new Error("Session not found");
+    const delivery = selection.operation
+      ? agent.deliveries.find(
+          (d) => d.id === selection.operation && d.source === "question",
+        )
+      : undefined;
+    if (selection.operation && !delivery)
+      throw new Error(
+        "Answer record unavailable. Retry from the conversation.",
+      );
+    const questions = agent.questions.filter(
+      (q) =>
+        (!selection.pending || q.state !== "answered") &&
+        (!selection.item || q.itemId === selection.item) &&
+        (!delivery || delivery.questionIds.includes(q.id)),
+    );
+    if ((selection.item || selection.operation) && !questions.length)
+      throw new Error(
+        "Question record unavailable. Retry from the conversation.",
+      );
+    return questions.map((q) => {
+      const operations =
+        q.state === "answered"
+          ? []
+          : agent.deliveries.filter(
+              (d) =>
+                d.source === "question" &&
+                d.status !== "sent" &&
+                d.questionIds.includes(q.id),
+            );
+      const unresolved =
+        operations.find((d) => d.status !== "failed") ?? operations.at(-1);
+      return structuredClone({
+        ...q,
+        ...(unresolved
+          ? {
+              answerOperation: { id: unresolved.id, status: unresolved.status },
+            }
+          : {}),
+      });
+    });
+  }
+  async historyQuestions(
+    alias: string,
+    threadId: string,
+    selection: { item?: string; operation?: string },
+  ) {
+    await this.historySession(alias, threadId);
+    const agent = this.state.agents.find((a) => a.threadId === threadId);
+    if (!agent)
+      throw new Error(
+        "Question record unavailable. Retry from the conversation.",
+      );
+    return this.questionHistory(agent.id, selection);
   }
   async messageBody(id: string, itemId: string) {
     const a = this.agent(id);
@@ -846,6 +907,7 @@ export class Workspace {
           confirmed = true;
           m = associate(m, agent.deliveries);
         }
+        m = questionEntry(m, agent?.questions ?? []);
         return project ? project(m) : m;
       },
     );
@@ -918,7 +980,10 @@ export class Workspace {
           confirmed = true;
           message = associate(message, agent.deliveries);
         }
-        message = await this.restoreNativeImages(agent, message);
+        message = await this.restoreNativeImages(
+          agent,
+          questionEntry(message, agent.questions),
+        );
         return project ? project(message) : message;
       },
     );
@@ -1230,7 +1295,7 @@ export class Workspace {
         if (questionIds.includes(q.id)) {
           q.state = "answered";
           const answer = d.answers?.find((a) => a.questionId === q.id);
-          if (answer) q.answer = answer.answer;
+          q.answer = answer?.answer ?? d.text;
         }
       this.save();
       if (

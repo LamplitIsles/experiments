@@ -233,9 +233,7 @@ for (const width of [1440, 390])
     await expect(tools).toHaveCount(0);
     await expect(page.locator(".read-only")).toBeVisible();
     await page.screenshot({ path: `${shots}/${width}-reviewer-detail.png` });
-    await page
-      .getByRole("button", { name: "All questions", exact: true })
-      .click();
+    await page.getByRole("button", { name: /pending question/ }).click();
     await expect(page.locator(".delegated-questions")).toContainText(
       "Please delegate missing screenshot evidence",
     );

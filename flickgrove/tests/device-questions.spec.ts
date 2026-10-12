@@ -91,7 +91,9 @@ for (const width of [1440, 390]) {
     const panel = page.locator(".question-panel");
     await expect(panel).toBeVisible();
     if (width === 390) {
-      await panel.getByRole("button", { name: "Close", exact: true }).click();
+      await panel
+        .getByRole("button", { name: "Collapse questions", exact: true })
+        .click();
       await page
         .getByRole("button", { name: "‹ Sessions", exact: true })
         .click();
@@ -102,15 +104,12 @@ for (const width of [1440, 390]) {
           exact: true,
         })
         .click();
-      await page
-        .getByRole("button", { name: "All questions", exact: true })
-        .click();
     } else await screenshot("long-active");
     await change({ sendMode: "held" });
     await panel.locator("textarea").fill("First answer");
     await expect(
-      page.getByRole("button", { name: "Add images", exact: true }),
-    ).toBeEnabled();
+      page.getByRole("textbox", { name: "Message Orc", exact: true }),
+    ).not.toBeVisible();
     await panel.locator("textarea").press("Enter");
     await expect(panel).toContainText("Sending");
     await expect(dot(mac)).toHaveCount(1);
@@ -135,8 +134,8 @@ for (const width of [1440, 390]) {
     await change({ sendMode: "rejected" });
     await panel.locator("textarea").fill("Second answer");
     await expect(
-      page.getByRole("button", { name: "Add images", exact: true }),
-    ).toBeEnabled();
+      page.getByRole("textbox", { name: "Message Orc", exact: true }),
+    ).not.toBeVisible();
     await panel.locator("textarea").press("Enter");
     await expect(panel).toContainText("Synthetic rejection");
     await expect(dot(mac)).toHaveCount(1);
@@ -168,8 +167,8 @@ for (const width of [1440, 390]) {
     await change({ sendMode: "uncertain" });
     await panel.locator("textarea").fill("Null remains unresolved");
     await expect(
-      page.getByRole("button", { name: "Add images", exact: true }),
-    ).toBeEnabled();
+      page.getByRole("textbox", { name: "Message Orc", exact: true }),
+    ).not.toBeVisible();
     await panel.locator("textarea").press("Enter");
     await expect(panel).toContainText("Sending");
     await page.reload();

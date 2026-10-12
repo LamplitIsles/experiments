@@ -48,7 +48,7 @@
     if (selection && previous instanceof HTMLTextAreaElement) previous.setSelectionRange(...selection);
   }
   function show(captured = false) {
-    if (!connected || tree?.treeFastBusy || navigation.details.at(-1) !== detail.id || navigation.surfaces.length || pending.has(tree?.id ?? detail.ownerId ?? detail.id)) return;
+    if (!connected || tree?.treeFastBusy || navigation.details.at(-1) !== detail.id || navigation.surfaces.some(surface => surface !== "questions") || pending.has(tree?.id ?? detail.ownerId ?? detail.id)) return;
     if (!captured) capture(); model = detail.model; effort = detail.effort; modelError = "";
     setSurface("session-settings", true);
   }

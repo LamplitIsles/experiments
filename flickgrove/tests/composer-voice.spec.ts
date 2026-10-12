@@ -1218,3 +1218,35 @@ test("capability failure after local PCM preserves draft and permits retry", asy
   await expect(input(page)).toHaveValue("keep你好世界");
   await released(page, request);
 });
+
+test("question takeover cancels capture and late microphone while retaining the ordinary draft", async ({
+  page,
+  request,
+}) => {
+  await setup(page, request);
+  await input(page).fill("Keep ordinary voice draft");
+  await page.evaluate(() => ((window as any).capture.hold = true));
+  await page
+    .getByRole("button", { name: "Start voice input", exact: true })
+    .click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Starting microphone" }),
+  ).toBeVisible();
+  await request.post(origin + "/fixture/change", {
+    data: {
+      question: true,
+      questionId: "voice-takeover",
+      questionOptions: false,
+    },
+  });
+  await expect(page.locator(".question-panel")).toBeVisible();
+  await expect(input(page)).not.toBeVisible();
+  await page.evaluate(() => (window as any).capture.release());
+  await released(page, request);
+  await page.getByRole("button", { name: "Collapse questions" }).click();
+  await expect(input(page)).toHaveValue("Keep ordinary voice draft");
+  await expect(
+    page.getByRole("button", { name: "Start voice input", exact: true }),
+  ).toBeEnabled();
+  await expect(page.locator(".inline-error")).toHaveCount(0);
+});

@@ -8,11 +8,11 @@
   import MessageImages from "./MessageImages.svelte";
   import { restoreImages, type ImageDraft } from "./image-drafts";
   import { Badge } from "$lib/components/ui/badge/index.js";
-  import { X, ArrowDown, MessageCircle, ChevronDown } from "@lucide/svelte";
+  import { X, Square, ArrowDown, MessageCircle, ChevronDown } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { questionPanels, setQuestionPanel } from "./question-state.svelte";
   import { navigation, setSurface, removeQuestionDrawer, back } from "./navigation.svelte";
-  import { untrack } from "svelte";
+  import { untrack, onMount } from "svelte";
   import type { Answer, Agent, Detail, Skill, Message, Delivery } from "./contracts";
   import { elapsed } from "./api";
   import TitleEditor from "./TitleEditor.svelte";
@@ -23,6 +23,7 @@
   import ConversationTimeline from "./ConversationTimeline.svelte";
   import Composer from "./Composer.svelte";
   import Questions from "./Questions.svelte";
+  import QuestionRecord from "./QuestionRecord.svelte";
   import * as m from "./paraglide/messages";
   let { detail, ready = true, tree, owner, skills, now, connected, mediaConnected, entryId, entryConnected, workers, lastSeen, actionError, closeError, onrefresh, onstop, onupdate, onrename, onclose, onopen, onsend, onanswer, onretry, onrecovered, ondeletefailed }: { detail: Detail; ready?: boolean; tree?: Agent; owner?: Agent; skills: Skill[]; now: number; connected: boolean; mediaConnected: boolean; entryId?: string; entryConnected: boolean; workers: Agent[]; lastSeen?: number; actionError: string; closeError?: string; onupdate: (value: Detail) => void; onrefresh: () => Promise<void>; onstop: () => Promise<boolean>; onrename: (title: string) => Promise<string | undefined>; onclose: () => void; onopen: (id: string) => void; onsend: (agentId: string, text: string, requestId: string, images?: ImageDraft[]) => Promise<boolean>; onanswer: (answers: Answer[], operationId: string, text?: string) => Promise<void>; onretry: (id: string) => Promise<void>; onrecovered: (agentId:string,operationId:string) => void; ondeletefailed: (agentId:string,operationId:string) => Promise<void>; } = $props();
   let composer = $state<Composer>();
@@ -56,7 +57,18 @@
   let follow = $state(true);
   let pinnedImage = $state<string>();
   const expandedReports = untrack(() => transcriptPositions.get(detail.id)?.reports ?? new Set<string>());
-  const panelOpen = $derived(!!questionPanels[detail.id]);
+  let record = $state<{item?: string; operation?: string} | null>(null);
+  let pendingItem = $state<string>();
+  let beforeRecord = false;
+  const pendingOpen = $derived(!!questionPanels[detail.id]);
+  const panelOpen = $derived(pendingOpen || !!record);
+  function openRecord(message: Message) {
+    if (!record) beforeRecord = pendingOpen;
+    record = message.questionItemId ? {item: message.questionItemId} : {operation: message.clientId ?? message.id};
+  }
+  function closeRecord() { record = null; setQuestionPanel(detail.id, beforeRecord && pendingCount > 0); }
+  function openPending(item?: string) { record = null; pendingItem = item; setQuestionPanel(detail.id, true); }
+
   let narrow = $state(matchMedia("(max-width: 1100px)").matches);
   $effect(() => {
     const media = matchMedia("(max-width: 1100px)");
@@ -73,7 +85,7 @@
     if (!narrow) { drawerWasOpen = false; removeQuestionDrawer(); return; }
     if (drawerWasOpen && !drawerOpen) {
       drawerWasOpen = false;
-      setQuestionPanel(detail.id, false);
+      if (record) closeRecord(); else setQuestionPanel(detail.id, false);
       return;
     }
     drawerWasOpen = drawerOpen;
@@ -82,9 +94,19 @@
   });
   const panelVisible = $derived(panelOpen && (!narrow ? !navigation.surfaces.length : navigation.surfaces.at(-1) === "questions"));
   function toggleQuestions() {
-    if (narrow) { if (navigation.surfaces.includes("questions")) void back(); else { setQuestionPanel(detail.id, true); setSurface("questions", true); } }
-    else setQuestionPanel(detail.id, !panelOpen);
+    if (record) { closeRecord(); if (!beforeRecord) removeQuestionDrawer(); return; }
+    setQuestionPanel(detail.id, !pendingOpen);
+    if (pendingOpen) removeQuestionDrawer();
   }
+  onMount(() => {
+    const dismissRecord = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing || event.keyCode === 229 || !record || !panelVisible) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      closeRecord(); if (!beforeRecord) removeQuestionDrawer();
+    };
+    window.addEventListener("keydown", dismissRecord, true);
+    return () => window.removeEventListener("keydown", dismissRecord, true);
+  });
   let reasonOpen = $state(false);
   let reasonIdentity: string | undefined;
   let reasonCause: string | undefined;
@@ -98,37 +120,54 @@
   let questionError = $state("");
   let questionRevision = $state(0);
   let fullBatches = $state<Delivery[]>([]);
+  let questionLoading = $state(false);
+  let batchLoading = $state(false), batchError = $state("");
+  const questionReadKey = $derived(JSON.stringify([detail.id, detail.questions.map(q => [q.id, q.state]), detail.unansweredCount]));
   $effect(() => {
-    const id = detail.id, identities = JSON.stringify(detail.questions.map(q => [q.id, q.state]));
-    const batches = detail.deliveries.filter(d => d.source === "question");
-    const revision = questionRevision;
-    if (!panelOpen || !connected) return;
+    const identities = questionReadKey, revision = questionRevision;
+    const id = untrack(() => detail.id);
+    if (!pendingOpen || !connected) { questionLoading = false; return; }
     const controller = new AbortController();
-    void Promise.all([
-      reading<import("./contracts").Question[]>(`/questions?${new URLSearchParams({agent: id})}`, id, controller.signal),
-      Promise.all(batches.map(d => d.recoveryRef ? reading<Delivery>(`/recovery?${new URLSearchParams({agent: id, operation: d.id})}`, id, controller.signal) : d)),
-    ]).then(([questions, deliveries]) => { if (!controller.signal.aborted) { fullQuestions = questions; fullBatches = deliveries; questionError = ""; } })
-      .catch(e => { if (!controller.signal.aborted) questionError = (e as Error).message; });
+    questionLoading = true;
+    void untrack(() => reading<import("./contracts").Question[]>(`/questions?${new URLSearchParams({agent: id, pending: "true"})}`, id, controller.signal))
+      .then(questions => { if (!controller.signal.aborted) { fullQuestions = questions; questionError = ""; } })
+      .catch(e => { if (!controller.signal.aborted) questionError = (e as Error).message; })
+      .finally(() => { if (!controller.signal.aborted) questionLoading = false; });
     return () => controller.abort();
   });
+  // HTTP question identities also locate unresolved operations outside the
+  // bounded detail delivery window, without copying another transcript.
+  const batchReferences = $derived([...new Map([
+    ...fullQuestions.flatMap(q => q.answerOperation && detail.questions.find(ref => ref.id === q.id)?.state !== "answered" ? [q.answerOperation] : []),
+    ...detail.deliveries.filter(d => d.source === "question" && d.status !== "sent").map(d => ({id:d.id,status:d.status})),
+  ].map(ref => [ref.id, ref])).values()].filter(ref => detail.deliveries.find(d => d.id === ref.id)?.status !== "sent"));
+  const batchReadKey = $derived(JSON.stringify(batchReferences));
+  $effect(() => {
+    const key = batchReadKey, revision = questionRevision;
+    if (!pendingOpen || !connected) return;
+    const id = untrack(() => detail.id);
+    const batches = untrack(() => batchReferences.map(ref => detail.deliveries.find(d => d.id === ref.id) ?? {...ref,source:"question" as const,recoveryRef:true,text:"",at:0,questionIds:[]}));
+    const controller = new AbortController();
+    batchLoading = true;
+    void untrack(() => Promise.all(batches.map(d => d.recoveryRef ? reading<Delivery>(`/recovery?${new URLSearchParams({agent: id, operation: d.id})}`, id, controller.signal) : d)))
+      .then(deliveries => { if (!controller.signal.aborted) { fullBatches = deliveries; batchError = ""; } })
+      .catch(e => { if (!controller.signal.aborted) batchError = (e as Error).message; })
+      .finally(() => { if (!controller.signal.aborted) batchLoading = false; });
+    return () => controller.abort();
+  });
+  const shownQuestions = $derived(fullQuestions.filter(q => detail.questions.find(ref => ref.id === q.id)?.state !== "answered"));
+  const shownBatches = $derived(fullBatches.filter(d => detail.deliveries.find(ref => ref.id === d.id)?.status !== "sent").map(d => ({...d,status: detail.deliveries.find(ref => ref.id === d.id)?.status ?? d.status})));
   const pending = $derived(detail.questions.filter(q => q.state !== "answered"));
   const pendingCount = $derived(detail.role === "orc" ? detail.unansweredCount ?? pending.length : pending.length);
-  let observedSent: Set<string> | undefined;
   $effect(() => {
-    if (!ready) return;
-    const sent = detail.deliveries.filter(d => d.source === "question" && submissionResult(d) === "accepted");
-    // The initial snapshot is history, not a completion of this selected session.
-    const completed = observedSent && sent.some(d => !observedSent!.has(d.id));
-    observedSent ??= new Set();
-    for (const delivery of sent) observedSent.add(delivery.id);
-    if (!completed || !panelOpen || (detail.unansweredCount ?? pending.length)) return;
+    if (!ready || !connected || !pendingOpen || pendingCount || questionLoading || questionError || shownQuestions.length) return;
     setQuestionPanel(detail.id, false);
-    removeQuestionDrawer();
+    if (!record) removeQuestionDrawer();
   });
 
 </script>
 <aside class="agent-detail" aria-label={detail.title}>
-  <div class="mobile-back"><Button variant="ghost" size="sm" onclick={onclose}>{navigation.details.length > 1 ? m.back_orc() : m.back_sessions()}</Button><Weekly surface="weekly-detail" hostId={entryId} connected={entryConnected} /></div><header class="detail-heading"><div class="detail-meta"><div class="role-project">{detail.role === "orc" ? m.orc() : detail.role === "reviewer" ? "Reviewer" : detail.role === "researcher" ? "Researcher" : m.worker()} / {detail.project.alias}</div><div class="detail-status">{#if detail.hostName}<span class="owner-badge">{detail.hostName}</span>{/if}{#if detail.error}<button class="execution-feedback" class:failed={!detail.execution?.retrying} class:working={detail.execution?.retrying} aria-expanded={reasonOpen} aria-controls="execution-reason" onclick={() => reasonOpen = !reasonOpen}><i></i>{executionLabel}{#if detail.execution?.retrying && detail.state === "working"}<span>{elapsed(detail.workingSince, now)}</span>{/if}<ChevronDown size={12} /></button>{:else}<span class:working={detail.state === "working"} class:failed={detail.state === "error"}><i></i>{detail.closeRequest ? m.closing_worker() : detail.stop?.status === "unknown" ? m.stop_unconfirmed() : detail.state === "stopping" ? m.stopping() : detail.state === "working" ? m.working() + " " + elapsed(detail.workingSince, now) : detail.state === "error" ? m.failed() : m.idle()}</span>{/if}{#if pendingCount}<Badge variant="outline" class="border-amber-500/30 text-amber-200">{m.needs_input()}</Badge>{/if}</div>{#if detail.role !== "reviewer" && detail.role !== "researcher"}<SessionSettings {detail} {tree} connected={connected && ready} {onupdate} />{:else}<span>{detail.model} · {detail.effort}</span>{/if}</div><Button class="questions-toggle" variant="ghost" size="sm" aria-label={m.all_questions()} aria-expanded={panelVisible} onclick={toggleQuestions}><MessageCircle />{m.all_questions()}{#if pendingCount}<span class="pending-count">{pendingCount}</span>{/if}</Button>{#if detail.error && reasonOpen}<div class="execution-reason" id="execution-reason" role="status">{detail.error}</div>{/if}<TitleEditor title={detail.title} editable={ready && detail.role === "orc" && connected} {onrename} /></header>
+  <div class="mobile-back"><Button variant="ghost" size="sm" onclick={onclose}>{navigation.details.length > 1 ? m.back_orc() : m.back_sessions()}</Button><Weekly surface="weekly-detail" hostId={entryId} connected={entryConnected} /></div><header class="detail-heading"><div class="detail-meta"><div class="role-project">{detail.role === "orc" ? m.orc() : detail.role === "reviewer" ? "Reviewer" : detail.role === "researcher" ? "Researcher" : m.worker()} / {detail.project.alias}</div><div class="detail-status">{#if detail.hostName}<span class="owner-badge">{detail.hostName}</span>{/if}{#if detail.error}<button class="execution-feedback" class:failed={!detail.execution?.retrying} class:working={detail.execution?.retrying} aria-expanded={reasonOpen} aria-controls="execution-reason" onclick={() => reasonOpen = !reasonOpen}><i></i>{executionLabel}{#if detail.execution?.retrying && detail.state === "working"}<span>{elapsed(detail.workingSince, now)}</span>{/if}<ChevronDown size={12} /></button>{:else}<span class:working={detail.state === "working"} class:failed={detail.state === "error"}><i></i>{detail.closeRequest ? m.closing_worker() : detail.stop?.status === "unknown" ? m.stop_unconfirmed() : detail.state === "stopping" ? m.stopping() : detail.state === "working" ? m.working() + " " + elapsed(detail.workingSince, now) : detail.state === "error" ? m.failed() : m.idle()}</span>{/if}{#if pendingCount}<Badge variant="outline" class="border-amber-500/30 text-amber-200">{m.needs_input()}</Badge>{/if}</div>{#if detail.role !== "reviewer" && detail.role !== "researcher"}<SessionSettings {detail} {tree} connected={connected && ready} {onupdate} />{:else}<span>{detail.model} · {detail.effort}</span>{/if}</div>{#if detail.error && reasonOpen}<div class="execution-reason" id="execution-reason" role="status">{detail.error}</div>{/if}<TitleEditor title={detail.title} editable={ready && detail.role === "orc" && connected} {onrename} /></header>
   {#if detail.researchQuestion}<div class="review-target">Question: {detail.researchQuestion}</div>{/if}
   {#if detail.reviewTarget}<p class="review-target">{detail.reviewTarget.profile} · {detail.reviewTarget.spec} · {detail.reviewTarget.fixedPoint} → {detail.reviewTarget.reviewedHead}</p>{/if}
   {#if closeError}<p class="detail-close-error" role="alert">{closeError}</p>{/if}
@@ -145,6 +184,7 @@
       {@const delivery = detail.deliveries.find(d=>d.id===(message.clientId ?? message.id))}
       {#if report}<WorkerReport at={message.at} agentId={report.reportingResearcherId ?? report.reportingReviewerId ?? report.reportingWorkerId} kind={report.source === "researcher" ? "Researcher report" : report.source === "reviewer" ? "Reviewer report" : undefined} text={message.text} bodyRef={message.bodyRef} owningAgentId={detail.id} readPath={message.provisional ? `/recovery?${new URLSearchParams({agent: detail.id, operation: message.id})}` : undefined} sender={workers.find(w => w.id === (report.reportingResearcherId ?? report.reportingReviewerId ?? report.reportingWorkerId))?.title} initiallyExpanded={expandedReports.has(message.clientId ?? message.id)} onexpanded={value => { if (value) expandedReports.add(message.clientId ?? message.id); else expandedReports.delete(message.clientId ?? message.id); }} />
       {:else}<div class:user-message={message.role === "user"} class:assistant-message={message.role === "assistant"}><div class="message-role">{#if message.role === "assistant"}<MessageTime at={message.at} />{/if}{message.role === "assistant" ? detail.role === "orc" ? m.orc() : detail.role === "reviewer" ? "Reviewer" : detail.role === "researcher" ? "Researcher" : m.worker() : ""}</div>{#if message.role === "user"}<MessageTime at={message.at} />{/if}<MessageBody text={message.text} bodyRef={message.bodyRef} agentId={detail.id} readPath={message.provisional ? `/recovery?${new URLSearchParams({agent: detail.id, operation: message.id})}` : undefined} />
+      {#if message.questionItemId || message.delivery?.source === "question"}<Button tabindex={0} class="question-record-entry" variant="secondary" size="sm" onclick={() => openRecord(message)}><MessageCircle />View questions and answers</Button>{/if}
       {#if message.images?.length || message.localImageIds?.length}<MessageImages connected={mediaConnected} agentId={detail.id} operationId={message.id} images={message.images} localImageIds={message.localImageIds} onviewer={open => { if (open) pinnedImage = message.id; else if (pinnedImage === message.id) pinnedImage = undefined; }} />{/if}
       {#if delivery && submissionResult(delivery) !== 'accepted'}<small class:failed={submissionResult(delivery)==='rejected'} role="status">{submissionResult(delivery)==='rejected' ? m.failed() : m.sending()}</small>{/if}
       </div>{/if}
@@ -158,13 +198,21 @@
     {/snippet}
   </ConversationTimeline>{/key}
   {#if !follow}<Button class="jump-bottom" variant="secondary" size="icon-sm" aria-label={m.jump_bottom()} title={m.jump_bottom()} onclick={() => timeline?.jumpToBottom()}><ArrowDown /></Button>{/if}</div>
-  {#if detail.role === "orc"}<Composer bind:this={composer} agentId={detail.id} project={detail.project.alias} {skills} connected={connected && ready} working={detail.state === "working"} stopping={detail.state === "stopping"} {onstop} {onsend} />{:else}<footer class="read-only"><p>{m.read_only()}</p>{#if owner}<button onclick={() => onopen(owner.id)}>{m.through_orc()}</button>{/if}</footer>{/if}
-  </div>
-  {#if panelOpen}<section class="question-panel" class:question-hidden={!panelVisible} aria-label={m.all_questions()}>
-    <header class="question-panel-heading"><strong>{m.all_questions()}</strong><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={toggleQuestions}><X /></Button></header>
-    {#if questionError}<p class="inline-error" role="alert">{questionError}</p><Button variant="ghost" size="sm" onclick={() => questionRevision++}>{m.retry()}</Button>{/if}
-    {#if detail.role === "orc"}<Questions agentId={detail.id} questions={fullQuestions} deliveries={fullBatches} connected={ready && connected && detail.state !== "stopping"} {onanswer} {onretry} />
-    {:else}<div class="delegated-questions">{#each fullQuestions as q}<div><p>{q.text}</p><span>{q.state === "answered" ? q.answer : m.delegated()}</span></div>{/each}</div>{/if}
-  </section>{/if}</div>
+  <div class="input-seat">
+    {#if pendingCount && (!pendingOpen || record)}<Button tabindex={0} class="pending-entry" variant="ghost" size="sm" onclick={() => openPending()}><MessageCircle />{pendingCount} pending {pendingCount === 1 ? "question" : "questions"}</Button>{/if}
+    {#if panelOpen}<section class="question-panel" class:question-hidden={!panelVisible} aria-label={record ? "Questions and answers" : "Pending questions"}>
+      <header class="question-panel-heading"><h2>{record ? "Questions and answers · Read only" : "Pending questions"}</h2><div class="question-header-actions">{#if detail.role === "orc" && detail.state === "working"}<Button tabindex={0} variant="ghost" size="icon-sm" aria-label="Stop Orc" title="Stop Orc" disabled={!ready || !connected} onclick={onstop}><Square /></Button>{/if}<Button tabindex={0} variant="ghost" size="icon-sm" aria-label={record ? "Close" : "Collapse questions"} onclick={toggleQuestions}><X /></Button></div></header>
+      {#if record}<QuestionRecord peerOrAgent={detail.id} params={{agent: detail.id, ...record}} {connected} onpending={openPending} />{/if}
+      <div class:question-hidden={!!record} class="pending-content">
+        {#if questionError || batchError}<div class="question-load"><p class="inline-error" role="alert">{questionError || batchError}</p><Button tabindex={0} variant="secondary" size="sm" disabled={!connected} onclick={() => questionRevision++}>Retry</Button></div>{/if}
+        {#if questionLoading && !shownQuestions.length}<p class="question-load" role="status">Loading questions…</p>{:else if !shownQuestions.length && !questionError}<p class="question-load" role="status">{!connected ? "Reconnect to load questions." : "No pending questions."}</p>{/if}
+        {#if detail.role === "orc"}<Questions agentId={detail.id} questions={shownQuestions} deliveries={shownBatches} selectedItem={pendingItem} recovering={batchLoading || !!batchError} connected={ready && connected && detail.state !== "stopping"} {onanswer} {onretry} />
+        {:else}<div class="delegated-questions">{#each shownQuestions as q}<div><p>{q.text}</p><span>{m.delegated()}</span></div>{/each}</div>{/if}
+      </div>
+    </section>{/if}
+    <div class:question-hidden={panelVisible}>
+    {#if detail.role === "orc"}<Composer bind:this={composer} suspended={panelVisible} agentId={detail.id} project={detail.project.alias} {skills} connected={connected && ready} working={detail.state === "working"} stopping={detail.state === "stopping"} {onstop} {onsend} />{:else}<footer class="read-only"><p>{m.read_only()}</p>{#if owner}<button onclick={() => onopen(owner.id)}>{m.through_orc()}</button>{/if}</footer>{/if}
+    </div>
+  </div></div></div>
   {#if navigation.preview}<div class:preview-hidden={navigation.surfaces.at(-1) !== "file-preview"}><FilePreview {connected} agent={navigation.preview.agent} href={navigation.preview.href} onclose={() => void back()} /></div>{/if}
 </aside>

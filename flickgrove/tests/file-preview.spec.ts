@@ -67,8 +67,15 @@ for (const width of [1440, 390]) {
         .toBe(900);
       await drawer.getByRole("button", { name: "Close preview" }).click();
     }
-    if (width === 390) await page.keyboard.press("Alt+j");
-    else
+    if (width === 390)
+      await page
+        .getByRole("button", { name: "‹ Sessions", exact: true })
+        .click();
+    await page
+      .getByRole("group", { name: "Host filter" })
+      .getByRole("button", { name: "Remote", exact: true })
+      .click();
+    if (width === 1440 || !(await page.locator(".agent-detail").count()))
       await page
         .getByRole("button", { name: "Open Remote reports Orc", exact: true })
         .click();
@@ -228,7 +235,9 @@ for (const width of [1440, 390]) {
     await expect(questions).toBeVisible();
     await expect(answer).toHaveValue("Preserved answer draft");
     await page.screenshot({ path: `${output}/${width}-questions-draft.png` });
-    await questions.getByRole("button", { name: "Close", exact: true }).click();
+    await questions
+      .getByRole("button", { name: "Collapse questions", exact: true })
+      .click();
     await page.getByRole("link", { name: "Missing", exact: true }).click();
     await expect(page.locator(".file-preview [role=alert]")).toContainText(
       "File missing",
@@ -469,7 +478,7 @@ test("New and skill finish before a requested preview; Questions width roundtrip
   );
   await page
     .locator(".question-panel")
-    .getByRole("button", { name: "Close", exact: true })
+    .getByRole("button", { name: "Collapse questions", exact: true })
     .click();
   expect(await page.evaluate(() => history.state.grove.surfaces)).toEqual([]);
   await expect(page.getByRole("textbox", { name: "Message Orc" })).toHaveValue(

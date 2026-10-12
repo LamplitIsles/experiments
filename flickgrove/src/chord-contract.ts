@@ -188,6 +188,7 @@ export const detailSchema = agent.extend({
   messages: z.array(
     z.object({
       id,
+      questionItemId: id.optional(),
       provisional: z.boolean().optional(),
       clientId: id.optional(),
       bodyRef: z.string().optional(),

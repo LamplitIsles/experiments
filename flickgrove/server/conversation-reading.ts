@@ -1,4 +1,4 @@
-import type { Delivery, Message } from "../src/contracts";
+import type { Delivery, Message, Question } from "../src/contracts";
 import type { Runtime } from "./runtime";
 export const LIVE_BYTES = 256 * 1024;
 export const PAGE_BYTES = 1024 * 1024;
@@ -36,16 +36,29 @@ export function associate(message: Message, deliveries: Delivery[]): Message {
       }
     : message;
 }
+// Projection over native identity and the existing ledger; no transcript copy.
+export function questionEntry(
+  message: Message,
+  questions: Question[],
+): Message {
+  return questions.some((q) => q.itemId === message.id)
+    ? { ...message, questionItemId: message.id }
+    : message;
+}
 export function readable(message: Message, budget: number): Message {
   return encodedBytes(message) > budget
     ? { ...message, text: "", bodyRef: message.id }
     : message;
 }
-export function recentWindow(messages: Message[], deliveries: Delivery[]) {
+export function recentWindow(
+  messages: Message[],
+  deliveries: Delivery[],
+  questions: Question[] = [],
+) {
   const result: Message[] = [];
   for (const message of messages.slice(-100).reverse()) {
     const projected = readable(
-      associate(message, deliveries),
+      questionEntry(associate(message, deliveries), questions),
       LIVE_BYTES - 2048,
     );
     if (encodedBytes([...result, projected]) > LIVE_BYTES) break;

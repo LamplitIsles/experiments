@@ -36,7 +36,12 @@
     });
   });
   const messages = $derived.by(() => {
-    const rows = [...historical, ...retained, ...live];
+    // A recent HTTP page may overlap only the suffix of the already-read live
+    // window. Keep its known earlier prefix before that native overlap, rather
+    // than appending it after the page and rotating the conversation order.
+    const overlap = historical.length ? retained.findIndex(m => m.id === historical[0].id) : -1;
+    const prefix = overlap > 0 ? retained.slice(0, overlap) : [];
+    const rows = [...prefix, ...historical, ...retained, ...live];
     const clients = new Set(rows.filter(m => !m.provisional && m.clientId).map(m => m.clientId));
     return [...new Map(rows.filter(m => (!m.provisional || !clients.has(m.clientId)) && (readingSettled || !m.provisional || !m.delivery?.recoveryRef || m.delivery.status === "sent")).map(m => [m.id, m])).values()];
   });
@@ -172,6 +177,9 @@
     else { await historyCache.load(id, entry, fetchPage); if (!entry.error) entry.synchronized = revision; }
     if (!active || entry !== history) return;
     historical = entry.messages; cursor = entry.cursor; error = entry.error; loading = false; historyLoaded = entry.loaded;
+    // The page may arrive after the last live publication. Cache the retained
+    // native prefix now as well, so its reading anchor survives a revisit.
+    historyCache.remember(id, entry, retained);
     if (initial && (!saved || saved.follow)) { await tick(); if (active) $virtualizer.scrollToEnd(); }
   }
   $effect(() => {

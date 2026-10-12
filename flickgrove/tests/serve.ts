@@ -156,7 +156,9 @@ const service = new HostService(app, {
 const handler = createHandler(app, {
   origin: () => "http://127.0.0.1:14318",
   service,
-  assets: resolve("../.scratch/flickgrove-browser/assets"),
+  assets: resolve(
+    process.env.GROVE_TEST_ASSETS ?? "../.scratch/flickgrove-browser/assets",
+  ),
 });
 const server = Bun.serve({
   hostname: "127.0.0.1",

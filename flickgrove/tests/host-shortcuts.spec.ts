@@ -202,7 +202,9 @@ test("composition, modifiers and every foreground navigation layer retain focus/
       .toEqual([]);
   }
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.locator(".questions-toggle").click();
+  await request.post(origin + "/fixture/change", {
+    data: { question: true, questionId: "guard", questionOptions: false },
+  });
   await expect
     .poll(() => page.evaluate(() => history.state.grove.surfaces))
     .toContain("questions");

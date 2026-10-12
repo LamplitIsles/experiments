@@ -4,256 +4,196 @@ import {
   type Page,
   type APIRequestContext,
 } from "@playwright/test";
-
 const origin = "http://127.0.0.1:14319";
-const composer = (page: Page) =>
-  page.getByRole("textbox", { name: "Message Orc", exact: true });
 const panel = (page: Page) => page.locator(".question-panel");
-const change = (request: APIRequestContext, data: Record<string, unknown>) =>
+const input = (page: Page) =>
+  page.getByRole("textbox", { name: "Message Orc", exact: true });
+const change = (request: APIRequestContext, data: object) =>
   request.post(origin + "/fixture/change", { data });
-async function open(page: Page, request: APIRequestContext, width = 1440) {
-  await request.post(origin + "/fixture/reset", { data: { mode: "long" } });
+async function start(page: Page, request: APIRequestContext, width = 1440) {
+  await request.post(origin + "/fixture/reset", { data: { mode: "working" } });
   await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
   await page.goto(origin);
   if (width === 390) await page.locator(".session-open").first().click();
-  await expect(composer(page)).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Add images", exact: true }),
-  ).toBeEnabled();
+  await expect(input(page)).toBeVisible();
 }
-async function question(page: Page, request: APIRequestContext, id: string) {
-  await change(request, {
-    question: true,
-    questionId: id,
-    questionOptions: false,
-  });
-  await expect(panel(page).locator("h3")).toHaveText(`${id} question 1`);
-}
-async function geometry(page: Page) {
-  return page.evaluate(() =>
-    [".agent-detail", ".conversation-wrap", ".composer"].map((selector) => {
-      const { x, y, width, height } = document
-        .querySelector(selector)!
-        .getBoundingClientRect();
-      return { x, y, width, height };
-    }),
-  );
-}
-
-for (const width of [1440, 390]) {
-  test(`${width} Questions overlay preserves geometry; accepted Enter retires surface, Back and explicit history`, async ({
+for (const width of [1440, 390])
+  test(`pending arrivals and completion respect foreground Settings ${width}`, async ({
     page,
     request,
   }) => {
-    await open(page, request, width);
-    await composer(page).fill("Preserved composer draft");
-    await question(page, request, "complete");
-    await panel(page)
-      .getByRole("button", { name: "Close", exact: true })
-      .click();
-    await expect(panel(page)).toHaveCount(0);
-    await page.locator(".conversation").evaluate((el) => (el.scrollTop = 120));
-    const before = await geometry(page);
-    const position = await page
-      .locator(".conversation")
-      .evaluate((el) => el.scrollTop);
+    await start(page, request, width);
+    await input(page).fill("ordinary draft");
+    // Open settings before arrival. It keeps focus and remains the foremost layer.
     await page
-      .getByRole("button", { name: "All questions", exact: true })
+      .getByRole("button", { name: "Session settings", exact: true })
       .click();
-    await expect(panel(page)).toBeVisible();
-    expect(await geometry(page)).toEqual(before);
-    await page.screenshot({
-      path: `../.scratch/flickgrove-host-shortcuts/questions/${width}-overlay.png`,
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    const focused = await page.evaluate(
+      () => document.activeElement?.outerHTML,
+    );
+    await change(request, {
+      question: true,
+      questionId: "foreground",
+      questionOptions: false,
     });
-    await panel(page).locator("textarea").fill("Immutable answer");
+    await expect(panel(page)).not.toBeVisible();
+    expect(await page.evaluate(() => document.activeElement?.outerHTML)).toBe(
+      focused,
+    );
+    await page.keyboard.press("Escape");
+    await expect(dialog).not.toBeVisible();
+    await expect(panel(page).locator("h3")).toHaveText("foreground question 1");
+    await panel(page).locator("textarea").fill("frozen answer");
     await change(request, { sendMode: "held" });
     await panel(page).locator("textarea").press("Enter");
     await page.keyboard.press("Enter");
-    await expect(panel(page)).toContainText("Sending");
-    await expect(panel(page)).toBeVisible();
-    await page.screenshot({
-      path: `../.scratch/flickgrove-results/answers-pending-${width}.png`,
-    });
-    await change(request, { sendMode: "accepted" });
-    await expect(panel(page)).toHaveCount(0);
-    await expect
-      .poll(() => page.evaluate(() => history.state.grove.surfaces))
-      .toEqual([]);
-    const after = await geometry(page);
-    if (width === 1440) expect(after).toEqual(before);
-    else expect(after[2]).toEqual(before[2]); // Answering removes the mobile Needs input header badge.
-    await expect(composer(page)).toHaveValue("Preserved composer draft");
-    expect(
-      await page.locator(".conversation").evaluate((el) => el.scrollTop),
-    ).toBe(position);
+    await expect(panel(page).locator(".answer-batch")).toContainText(
+      "frozen answer",
+    );
     await page
-      .getByRole("button", { name: "All questions", exact: true })
+      .getByRole("button", { name: "Session settings", exact: true })
       .click();
-    await expect(panel(page).locator(".answered-item")).toHaveCount(1);
-    await expect(panel(page)).toContainText("Immutable answer");
-    await page.screenshot({
-      path: `../.scratch/flickgrove-results/answers-accepted-${width}.png`,
-    });
-    await expect(panel(page)).toBeVisible();
-    await panel(page)
-      .getByRole("button", { name: "Close", exact: true })
-      .click();
-    await expect(panel(page)).toHaveCount(0);
-    await page.evaluate(() => {
-      (window as any).backState = undefined;
-      window.addEventListener(
-        "popstate",
-        (event) => {
-          (window as any).backState = event.state?.grove;
-        },
-        { once: true },
-      );
-      history.back();
-    });
-    await expect
-      .poll(() => page.evaluate(() => (window as any).backState))
-      .toEqual({ details: [], surfaces: [] });
-    await expect(panel(page)).toHaveCount(0);
-    if (width === 390)
-      await expect(page.locator(".agent-detail")).toHaveCount(0);
-    else await expect(composer(page)).toHaveValue("Preserved composer draft");
-    const info = await (await request.get(origin + "/fixture/info")).json();
-    expect(
-      info.inputs.filter((input: { text: string }) =>
-        input.text.includes("Question: complete question 1"),
-      ),
-    ).toHaveLength(1);
+    await change(request, { sendMode: "accepted" });
+    await expect(panel(page)).not.toBeVisible();
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(input(page)).toHaveValue("ordinary draft");
   });
-}
-
-for (const width of [1440, 390])
-  for (const mode of ["rejected", "uncertain"]) {
-    test(`Questions ${mode} at ${width} stays visible; only authoritative retry success closes`, async ({
-      page,
-      request,
-    }) => {
-      await open(page, request, width);
-      await question(page, request, mode);
-      await change(request, { sendMode: mode });
-      await panel(page).locator("textarea").fill("Retained immutable answer");
-      await panel(page).locator("textarea").press("Enter");
-      await expect(panel(page).locator(".answer-batch")).toContainText(
-        mode === "rejected" ? "Synthetic rejection" : "Sending…",
-      );
-      await expect(panel(page)).toBeVisible();
-      expect(await page.evaluate(() => history.state.grove.surfaces)).toEqual(
-        width === 390 ? ["questions"] : [],
-      );
-      await page.screenshot({
-        path: `../.scratch/flickgrove-results/answers-${mode === "rejected" ? "rejected" : "null-pending"}-${width}.png`,
-      });
-      if (mode === "rejected") {
-        await change(request, { sendMode: "accepted" });
-        await panel(page)
-          .getByRole("button", { name: "Retry", exact: true })
-          .click();
-        await expect(panel(page)).toHaveCount(0);
-        await expect
-          .poll(() => page.evaluate(() => history.state.grove.surfaces))
-          .toEqual([]);
-      } else {
-        await page.reload();
-        await expect(panel(page)).toBeVisible();
-        await expect(panel(page)).toContainText("Retained immutable answer");
-      }
-    });
-  }
-
-test("Late answer completion from another session preserves current questions and drafts", async ({
+test("mobile New/Back and widening preserve questions and foreground hierarchy", async ({
   page,
   request,
 }) => {
-  await open(page, request);
-  await question(page, request, "original");
-  await change(request, { sendMode: "held" });
-  await panel(page).locator("textarea").fill("Original answer");
-  await panel(page).locator("textarea").press("Enter");
-  await expect(panel(page)).toContainText("Sending");
-  const originalId = await page.evaluate(() =>
-    history.state.grove.details.at(-1),
-  );
-  const operationId = await panel(page)
-    .locator(".answer-batch")
-    .getAttribute("data-operation-id");
-  await page
-    .getByRole("group", { name: "Host filter" })
-    .getByRole("button", { name: "Neil’s Mac", exact: true })
-    .click();
-  await expect(composer(page)).toBeVisible();
-  await composer(page).fill("Peer composer draft");
-  await change(request, {
-    question: true,
-    questionId: "peer-pending",
-    questionAgent: "peer",
-    questionOptions: false,
-  });
-  await expect(panel(page).locator("h3")).toHaveText("peer-pending question 1");
-  await panel(page).locator("textarea").fill("Peer answer draft");
-  await change(request, { sendMode: "accepted" });
-  await expect
-    .poll(async () => {
-      const detail = await (
-        await request.get(
-          origin + "/fixture/agents/" + encodeURIComponent(originalId),
-        )
-      ).json();
-      return detail.deliveries.find(
-        (delivery: { id: string }) => delivery.id === operationId,
-      )?.status;
-    })
-    .toBe("sent");
-  await expect(panel(page)).toBeVisible();
-  await expect(panel(page).locator("textarea")).toHaveValue(
-    "Peer answer draft",
-  );
-  await expect(composer(page)).toHaveValue("Peer composer draft");
-});
-
-test("900px Completion below Settings retires Questions without stealing foreground focus or leaving a Back layer", async ({
-  page,
-  request,
-}) => {
-  await open(page, request, 900);
-  await composer(page).fill("Foreground composer draft");
-  await question(page, request, "foreground");
-  await change(request, { sendMode: "held" });
-  await panel(page).locator("textarea").fill("Foreground answer");
-  await panel(page).locator("textarea").press("Enter");
-  await expect(panel(page)).toContainText("Sending");
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await start(page, request, 390);
+  await input(page).fill("navigation draft");
+  await input(page).evaluate((el) => el.blur());
+  await page.keyboard.press("n");
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
-  const focused = await page.evaluate(() => document.activeElement?.outerHTML);
-  await change(request, { sendMode: "accepted" });
-  await expect(panel(page)).toHaveCount(0);
+  const field = dialog.getByRole("textbox").first();
+  await field.fill("New draft");
+  await change(request, {
+    question: true,
+    questionId: "deferred",
+    questionOptions: false,
+  });
+  await expect(field).toBeFocused();
+  await expect(field).toHaveValue("New draft");
+  await expect(panel(page)).not.toBeVisible();
+  await page.goBack();
+  await expect(panel(page).locator("h3")).toHaveText("deferred question 1");
+  await panel(page).locator("textarea").fill("question draft");
+  await page.setViewportSize({ width: 1440, height: 900 });
   await expect
     .poll(() => page.evaluate(() => history.state.grove.surfaces))
-    .toEqual(["settings"]);
-  await expect(dialog).toBeVisible();
-  expect(await page.evaluate(() => document.activeElement?.outerHTML)).toBe(
-    focused,
+    .toEqual([]);
+  await expect(panel(page).locator("textarea")).toHaveValue("question draft");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect
+    .poll(() => page.evaluate(() => history.state.grove.surfaces))
+    .toEqual(["questions"]);
+  await page.goBack();
+  await expect(panel(page)).not.toBeVisible();
+  await expect(input(page)).toHaveValue("navigation draft");
+  await page.goBack();
+  await expect(page.locator(".session-list")).toBeVisible();
+  await page.locator(".session-open").first().click();
+  await expect(panel(page).locator("textarea")).toHaveValue("question draft");
+});
+test("unadmitted answer retains exact identity after reload and null lookup never replays", async ({
+  page,
+  request,
+}) => {
+  let intercepted: any;
+  await page.routeWebSocket(
+    origin.replace("http:", "ws:") + "/api/socket",
+    (ws) => {
+      const server = ws.connectToServer();
+      ws.onMessage((raw) => {
+        const message = JSON.parse(String(raw));
+        if (message.call?.member === "answerBatch")
+          intercepted = message.call.args[0];
+        else server.send(raw);
+      });
+    },
   );
-  await page.keyboard.press("Escape");
-  await expect(dialog).toHaveCount(0);
-  await expect(panel(page)).toHaveCount(0);
-  await expect(composer(page)).toHaveValue("Foreground composer draft");
-  const parent = await page.evaluate(
-    () =>
-      new Promise((resolve) => {
-        window.addEventListener(
-          "popstate",
-          (event) => resolve(event.state?.grove),
-          { once: true },
-        );
-        history.back();
-      }),
+  await start(page, request);
+  await change(request, {
+    question: true,
+    questionId: "unadmitted",
+    questionOptions: false,
+  });
+  await panel(page).locator("textarea").fill("original envelope");
+  const before = (await (await request.get(origin + "/fixture/info")).json())
+    .inputs.length;
+  await panel(page).locator("textarea").press("Enter");
+  await expect.poll(() => intercepted).toBeDefined();
+  await expect(panel(page).locator(".answer-batch")).toHaveAttribute(
+    "data-operation-id",
+    intercepted.operationId,
   );
-  expect(parent).toEqual({ details: [], surfaces: [] });
-  await expect(panel(page)).toHaveCount(0);
-  await expect(composer(page)).toHaveValue("Foreground composer draft");
+  await change(request, {
+    question: true,
+    questionId: "new",
+    questionOptions: false,
+  });
+  await page.reload();
+  await expect(panel(page).locator(".answer-batch")).toHaveAttribute(
+    "data-operation-id",
+    intercepted.operationId,
+  );
+  await expect(panel(page).locator(".answer-batch")).toContainText(
+    "original envelope",
+  );
+  await expect(panel(page).getByRole("button", { name: "Retry" })).toHaveCount(
+    0,
+  );
+  expect(
+    (await (await request.get(origin + "/fixture/info")).json()).inputs.length,
+  ).toBe(before);
+});
+test("late readonly load cannot replace a different Peer; reconnect reopens answered native item", async ({
+  page,
+  request,
+}) => {
+  await start(page, request);
+  await change(request, {
+    question: true,
+    questionId: "record",
+    questionOptions: false,
+  });
+  await panel(page).locator("textarea").fill("recorded answer");
+  await panel(page).locator("textarea").press("Enter");
+  await expect(panel(page)).not.toBeVisible();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/read/questions?*item=record", async (route) => {
+    await gate;
+    await route.continue().catch(() => {});
+  });
+  await page
+    .locator('[data-message-id="record"]')
+    .getByRole("button", { name: "View questions and answers" })
+    .click();
+  await expect(panel(page).getByRole("status")).toContainText(
+    "Loading questions",
+  );
+  await page.getByRole("button", { name: "Neil’s Mac", exact: true }).click();
+  release();
+  await expect(page.locator(".detail-heading h1")).toContainText(
+    "Reader performance",
+  );
+  await expect(panel(page)).not.toBeVisible();
+  await page.getByRole("button", { name: /^NUC/ }).click();
+  await page.reload();
+  await expect(input(page)).toBeVisible();
+  await page
+    .locator('[data-message-id="record"]')
+    .getByRole("button", { name: "View questions and answers" })
+    .click();
+  await expect(panel(page).locator(".recorded-answer")).toContainText(
+    "recorded answer",
+  );
+  await expect(panel(page).locator("textarea:visible")).toHaveCount(0);
 });

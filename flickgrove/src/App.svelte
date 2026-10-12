@@ -130,7 +130,7 @@
   }
   function open(id: string, fromDetail = false) { openConversation(id, fromDetail, snapshot.agents.find(a => a.id === id)?.ownerId); }
   async function restoreDetail(id: string) {
-    error = ""; selectedId = id; observeQuestions(snapshot.agents,id);
+    error = ""; selectedId = id; observeQuestions(snapshot.agents,id,true);
     const host = id.split(":")[0];
     // Unwinding nested history can briefly restore the previous host's owner.
     if (!switchingHost || host === hostFilter) remembered = { ...remembered, [host]: id };
@@ -412,7 +412,7 @@
     }
     if (editable(event.target) || navigation.surfaces.length) return;
     if (event.key.toLowerCase() === "i" && detail?.role === "orc") { event.preventDefault(); document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(); return; }
-    if (event.target instanceof HTMLElement && event.target.closest(".question-card")) return;
+    if (event.target instanceof HTMLElement && event.target.closest(".question-panel, .pending-entry, .question-record-entry")) return;
     if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter"].includes(event.key)) { void sessionList?.keydown(event); return; }
     if (event.key.toLowerCase() === "n") { event.preventDefault(); void show("new"); }
     else if (event.key.toLowerCase() === "e") { event.preventDefault(); sessionList?.expandFocused(); }
@@ -455,7 +455,7 @@
     window.addEventListener("compositionend", compositionEnd);
     const timer = setInterval(() => now = Date.now(), 1000);
     const permission = () => { if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission().catch(() => {}); };
-    const completionTab = (e: KeyboardEvent) => { if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey) e.preventDefault(); };
+    const completionTab = (e: KeyboardEvent) => { if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof HTMLElement && e.target.closest(".question-panel"))) e.preventDefault(); };
     window.addEventListener("keydown", completionTab, true);
     const installer = (e: Event) => { e.preventDefault(); install = e as Event & { prompt: () => Promise<void> }; };
     window.addEventListener("pointerdown", permission, { once: true }); window.addEventListener("keydown", permission, { once: true }); window.addEventListener("keydown", keydown); window.addEventListener("beforeinstallprompt", installer);

@@ -198,14 +198,14 @@ export class FakeRuntime implements Runtime {
     if (
       event.type === "item" &&
       event.item.type === "agentMessage" &&
-      event.item.text &&
-      event.item.phase !== "commentary"
+      (event.item.text || event.item.questions?.length) &&
+      (event.item.questions?.length || event.item.phase !== "commentary")
     ) {
       const m: Message = {
         id: event.item.id,
         turnId: event.turnId,
         role: "assistant",
-        text: event.item.text,
+        text: event.item.text ?? "",
         at: Date.now(),
       };
       if (event.item.delivery === "async") {

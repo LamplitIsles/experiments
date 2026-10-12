@@ -246,8 +246,18 @@ export class HostService {
       this.workspace.recovery(this.raw(id), operationId),
     );
   }
-  questionHistory(id: string) {
-    return this.workspace.questionHistory(this.raw(id));
+  questionHistory(
+    id: string,
+    selection: { item?: string; operation?: string; pending?: boolean } = {},
+  ) {
+    return this.workspace.questionHistory(this.raw(id), selection);
+  }
+  historyQuestions(
+    alias: string,
+    threadId: string,
+    selection: { item?: string; operation?: string },
+  ) {
+    return this.workspace.historyQuestions(alias, threadId, selection);
   }
   messageBody(id: string, itemId: string) {
     return this.workspace.messageBody(this.raw(id), itemId);

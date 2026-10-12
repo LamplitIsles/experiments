@@ -708,6 +708,8 @@ const server = Bun.serve({
         questionAgent?: string;
         questionCount?: number;
         questionOptions?: boolean;
+        questionRecommended?: boolean;
+        laterSubmissions?: number;
         questionLong?: boolean;
         restartHub?: boolean;
         closedAgent?: string;
@@ -839,6 +841,17 @@ const server = Bun.serve({
           status: body.complete,
         });
       }
+      if (body.laterSubmissions)
+        for (
+          let index = 0;
+          index < Math.min(body.laterSubmissions, 110);
+          index++
+        )
+          await current.app.send(
+            "orc",
+            `Owned later input ${index}`,
+            `window-extra-${index}`,
+          );
       if (body.question) {
         const questionAgent = body.questionAgent ?? "orc";
         const target =
@@ -864,7 +877,11 @@ const server = Bun.serve({
                   body.questionOptions === false
                     ? []
                     : [
-                        { label: "Recommended choice" },
+                        {
+                          label: body.questionRecommended
+                            ? "Recommended choice (Recommended)"
+                            : "Recommended choice",
+                        },
                         {
                           label: "Alternative",
                           ...(body.questionLong

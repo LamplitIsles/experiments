@@ -174,6 +174,7 @@ test("backend restart restores questions and captured models and resumes an exis
   await restarted.send(a.id, "Continue now", "second");
   expect(restarted.detail(a.id).messages.map((m) => m.text)).toEqual([
     "Continue tomorrow",
+    "", // Original native question item now retains its timeline entry.
     "Continue now",
   ]);
   expect(runtime.agents.get(a.id)?.threadId).toBe(threadId);

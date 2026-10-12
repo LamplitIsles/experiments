@@ -12,7 +12,7 @@
   import type { Skill } from './contracts';
   import SkillSearch from './SkillSearch.svelte';
   import * as m from './paraglide/messages';
-  let { agentId, project, skills, connected, working = false, stopping = false, onstop, onsend }: { agentId: string; project: string; skills: Skill[]; connected: boolean; working?: boolean; stopping?: boolean; onstop?: () => Promise<boolean>; onsend: (agentId: string, text: string, requestId: string, images?: ImageDraft[]) => Promise<boolean> } = $props();
+  let { agentId, project, skills, connected, suspended = false, working = false, stopping = false, onstop, onsend }: { agentId: string; project: string; skills: Skill[]; connected: boolean; suspended?: boolean; working?: boolean; stopping?: boolean; onstop?: () => Promise<boolean>; onsend: (agentId: string, text: string, requestId: string, images?: ImageDraft[]) => Promise<boolean> } = $props();
   let text = $state(untrack(() => localStorage.getItem(`${storagePrefix}/composer/${agentId}`) ?? ''));
   let input = $state<HTMLTextAreaElement | null>(null);
   let composing = false;
@@ -62,6 +62,14 @@
     const timer=setInterval(()=>{voiceSeconds=Math.floor(voice.elapsedMs/1000);},500);
     window.addEventListener("keydown",escape,true);document.addEventListener("visibilitychange",hidden);window.addEventListener("pagehide",cancelVoice);window.addEventListener("grove-navigation-pop",navigating);
     return()=>{clearInterval(timer);voice.dispose();window.removeEventListener("keydown",escape,true);document.removeEventListener("visibilitychange",hidden);window.removeEventListener("pagehide",cancelVoice);window.removeEventListener("grove-navigation-pop",navigating);};
+  });
+  let ordinarySelection: {start: number; end: number} | undefined;
+  $effect(() => {
+    const hidden = suspended;
+    untrack(() => {
+      if (hidden) { if (input) ordinarySelection = {start:input.selectionStart,end:input.selectionEnd}; cancelVoice(); }
+      else if (ordinarySelection) { const saved = ordinarySelection; void tick().then(() => input?.setSelectionRange(saved.start,saved.end)); }
+    });
   });
   async function refreshDraft(applyRecovery=false) {
     if(applyRecovery)cancelVoice();
@@ -119,7 +127,7 @@
   }
   async function send() {
     if(!ready && restoration)await restoration;
-    if(voiceBusy || composing || (!text.trim() && !images.length) || !connected || stopping || preparing || !ready) return;
+    if(suspended || voiceBusy || composing || (!text.trim() && !images.length) || !connected || stopping || preparing || !ready) return;
     if(images.length){imageError=intakeError([],images.map(i=>i.file));if(imageError)return;}
     const value=text.trim(); const frozen=$state.snapshot(images);const version=revision;const id=crypto.randomUUID();
     preparing=true;

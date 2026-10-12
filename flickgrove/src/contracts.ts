@@ -44,6 +44,7 @@ export interface MessageImage {
   availability?: "missing";
 }
 export interface Message {
+  questionItemId?: string;
   provisional?: boolean;
   clientId?: string;
   delivery?: Delivery;
@@ -85,6 +86,8 @@ export interface QuestionOption {
   description?: string;
 }
 export interface Question {
+  // HTTP-only projection of the existing unresolved answer operation.
+  answerOperation?: Pick<Delivery, "id" | "status">;
   id: string;
   itemId: string;
   index: number;

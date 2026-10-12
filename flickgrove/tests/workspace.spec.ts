@@ -132,17 +132,18 @@ test("all pending questions preserve drafts and use one explicit batch submissio
   await expect(answer).toHaveValue("My custom choice");
   await page.reload();
   await expect(answer).toHaveValue("My custom choice");
+  await answer.press("Enter");
+  for (let i = 0; i < 7; i++)
+    await page.locator(".question-option").first().click();
   await page
     .getByRole("button", { name: "Send all answers", exact: true })
     .click();
   await expect(page.locator(".question-card")).toHaveCount(0);
   await page
-    .getByRole("button", { name: "All questions", exact: true })
+    .getByRole("button", { name: "View questions and answers", exact: true })
+    .first()
     .click();
-  await expect(page.locator(".answered-summary")).toContainText(
-    "My custom choice",
-  );
-  await expect(page.locator(".sent-answer").first()).toHaveText(
+  await expect(page.locator(".recorded-answer")).toContainText(
     "My custom choice",
   );
 });

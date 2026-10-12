@@ -339,14 +339,14 @@ export class CodexRuntime implements Runtime {
           });
       } else if (
         item.type === "agentMessage" &&
-        item.text &&
-        item.phase !== "commentary"
+        (item.text || item.questions?.length) &&
+        (item.questions?.length || item.phase !== "commentary")
       ) {
         messages.push({
           id: item.id,
           turnId,
           role: "assistant",
-          text: item.text,
+          text: item.text ?? "",
           at,
         });
       }

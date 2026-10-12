@@ -37,7 +37,18 @@ export async function readingHttp(
       case "/api/read/recovery":
         return respond(service.recovery(agent, p.get("operation") ?? ""));
       case "/api/read/questions":
-        return respond(service.questionHistory(agent));
+        return respond(
+          agent
+            ? service.questionHistory(agent, {
+                item: p.get("item") ?? undefined,
+                operation: p.get("operation") ?? undefined,
+                pending: p.get("pending") === "true",
+              })
+            : await service.historyQuestions(project, thread, {
+                item: p.get("item") ?? undefined,
+                operation: p.get("operation") ?? undefined,
+              }),
+        );
       default:
         return respond({ error: "Reading action not found" }, 404);
     }

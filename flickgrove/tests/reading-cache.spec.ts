@@ -59,14 +59,15 @@ for (const failure of ["QuotaExceededError", "SecurityError"]) {
       ).toBeVisible();
       await page
         .locator(".question-panel-heading")
-        .getByRole("button", { name: "Close", exact: true })
+        .getByRole("button", { name: "Collapse questions", exact: true })
+        .click();
+      await writer
+        .getByRole("button", { name: "Collapse questions", exact: true })
         .click();
       await writerInput.fill("Snapshot after closing the question panel");
       await writerInput.press("Enter");
       await expect(page.getByText("Received.", { exact: true })).toHaveCount(3);
-      await expect(
-        page.getByRole("button", { name: "All questions", exact: true }),
-      ).toHaveAttribute("aria-expanded", "false");
+      await expect(page.locator(".question-panel")).not.toBeVisible();
       await input.fill("Must not reach execution host");
       await input.press("Enter");
       await expect(page.getByRole("alert")).toContainText(
@@ -90,6 +91,9 @@ for (const failure of ["QuotaExceededError", "SecurityError"]) {
         ),
       ).toBe(0);
       await expect(input).toHaveValue("Must not reach execution host");
+      await writer.getByRole("button", { name: /pending question/ }).click();
+      for (let i = 0; i < 8; i++)
+        await writer.locator(".question-option").first().click();
       await writer
         .getByRole("button", { name: "Send all answers", exact: true })
         .click();

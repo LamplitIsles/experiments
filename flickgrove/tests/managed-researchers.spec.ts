@@ -112,9 +112,7 @@ for (const width of [1440, 390])
     await expect(page.locator(".model-trigger")).toHaveCount(0);
     await expect(page.locator(".read-only")).toBeVisible();
     await page.screenshot({ path: `${shots}/${width}-detail.png` });
-    await page
-      .getByRole("button", { name: "All questions", exact: true })
-      .click();
+    await page.getByRole("button", { name: /pending question/ }).click();
     await expect(page.locator(".delegated-questions")).toContainText(
       "Which installed version",
     );
@@ -133,7 +131,11 @@ for (const width of [1440, 390])
       await page
         .getByRole("button", { name: "New session", exact: true })
         .click();
-    else await page.keyboard.press("n");
+    else {
+      await expect(input).toBeVisible();
+      await input.evaluate((el) => el.blur());
+      await page.keyboard.press("n");
+    }
     await page
       .getByRole("button", { name: "Experiments", exact: true })
       .click();
