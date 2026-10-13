@@ -256,6 +256,7 @@ test("Reviewer history identifies its role and routes to its owning Orc", async 
   await page.keyboard.press("n");
   await page.getByRole("button", { name: "Experiments", exact: true }).click();
   await page.getByRole("button", { name: "Find history", exact: true }).click();
+  await page.getByRole("switch", { name: "Only Orc" }).click();
   const row = page
     .locator(".history-result")
     .filter({ hasText: "Standards review" });

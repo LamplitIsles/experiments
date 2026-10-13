@@ -16,6 +16,7 @@ for (const mobile of [false, true]) {
       name: "Search title or first message…",
     });
     await expect(search).toBeFocused();
+    await page.getByRole("switch", { name: "Only Orc" }).click();
     await search.fill("scrolling");
     await expect(page.locator(".history-result")).toHaveCount(1);
     await page.locator(".history-result").click();
@@ -86,7 +87,8 @@ test("dense session list fits at least ten Orcs, with compact state and input in
   });
   await page.goto("http://127.0.0.1:14319/");
   const list = page.locator(".session-list");
-  await expect(list.locator(".session-item")).toHaveCount(20);
+  // Dense fixture has 19 Orcs on NUC and one on the other device.
+  await expect(list.locator(".session-item")).toHaveCount(19);
   const counts = await list.evaluate((node) => {
     const bounds = node.getBoundingClientRect();
     return [...node.querySelectorAll(".session-item")].filter((item) => {

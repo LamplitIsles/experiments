@@ -147,6 +147,7 @@
   "open_session": "Open session",
   "find_history": "Find history",
   "search_history": "Search title or first message…",
+  "only_orc": "Only Orc",
   "history_scope": "Includes closed and archived sessions",
   "back_history": "Back",
   "session_preview": "Session preview",

@@ -142,6 +142,7 @@ for (const width of [1440, 390])
     await page
       .getByRole("button", { name: "Find history", exact: true })
       .click();
+    await page.getByRole("switch", { name: "Only Orc" }).click();
     const row = page
       .locator(".history-result")
       .filter({ hasText: "Native collaboration evidence" });

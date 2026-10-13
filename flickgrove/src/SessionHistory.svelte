@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ArrowLeft, History } from "@lucide/svelte";
   import { Input } from "$lib/components/ui/input/index.js";
+  import { Switch } from "$lib/components/ui/switch/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { onMount, tick, untrack } from "svelte";
   import type { HistorySession, HistoryPage, HistoryMessages, Message, Project } from "./contracts";
@@ -17,6 +18,8 @@
     onresume: (session: HistorySession, project: string) => Promise<void>;
   } = $props();
   let query = $state(""); let sessions = $state<HistorySession[]>([]); let cursor = $state<string | null>(null);
+  let onlyOrc = $state(true);
+  const visibleSessions = $derived(onlyOrc ? sessions.filter(s => s.role === "orc") : sessions);
   let loading = $state(false); let error = $state(""); let sequence = 0;
   let record = $state<{item?: string; operation?: string} | null>(null);
   let selected = $state<HistorySession | null>(null); let previewProject = $state(untrack(() => project.alias));
@@ -42,10 +45,11 @@
     finally { if (seq === sequence) loading = false; }
   }
   $effect(() => {
-    const _query = query;
+    const _query = query; const _onlyOrc = onlyOrc;
+    listScroll = 0; untrack(() => { if (results) results.scrollTop = 0; });
     sessions = []; cursor = null; loading = true;
     const timer = setTimeout(() => { void search(); }, 200);
-    // Invalidate in-flight results immediately while a new query is being typed.
+    // Invalidate in-flight results immediately when the query or filter changes.
     ++sequence;
     return () => clearTimeout(timer);
   });
@@ -92,16 +96,19 @@
   <div class="history-heading"><Button variant="ghost" size="icon-sm" aria-label={m.back_history()} onclick={() => back()}><ArrowLeft /></Button><strong>{previewOpen ? m.session_preview() : m.find_history()}</strong></div>
   <p class="history-context">{hostName} <span>›</span> {!previewOpen || previewProject === project.alias ? project.name : previewProject}</p>
   {#if !previewOpen}
+    <div class="history-controls">
     <Input bind:ref={input} bind:value={query} aria-label={m.search_history()} placeholder={m.search_history()} onkeydown={e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); void search(); } }} />
+    <label class="history-filter"><Switch bind:checked={onlyOrc} aria-label={m.only_orc()} /><span>{m.only_orc()}</span></label>
+    </div>
     <p class="history-scope">{m.history_scope()}</p>
     <div class="history-results" bind:this={results}>
-      {#each sessions as session (session.threadId)}
+      {#each visibleSessions as session (session.threadId)}
         <button class="history-result" title={session.preview} onclick={() => select(session)}>
           <strong>{session.title}</strong><span class="history-result-meta">{label(session)}{session.closed ? " · " + m.history_closed() : ""}{session.archived ? " · " + m.history_archived() : ""}<time>{new Date(session.updatedAt).toLocaleDateString()}</time></span>
         </button>
       {/each}
       {#if loading}<p class="history-empty" role="status">{m.searching_history()}</p>
-      {:else if !sessions.length}<div class="history-empty"><History /><p>{cursor ? m.history_scan_more() : m.no_history()}</p></div>{/if}
+      {:else if !visibleSessions.length}<div class="history-empty"><History /><p>{cursor ? m.history_scan_more() : m.no_history()}</p></div>{/if}
       {#if cursor}<Button variant="ghost" size="sm" disabled={loading || !connected} onclick={() => search(true)}>{m.load_more_history()}</Button>{/if}
     </div>
   {:else if selected}
