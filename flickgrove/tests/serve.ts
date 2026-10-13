@@ -5,6 +5,7 @@ import { Workspace } from "../server/workspace";
 import { HostService } from "../server/hosts";
 import { createHandler, createUpgrade } from "../server/http";
 import { groveWebsocket } from "../server/chord-socket";
+import type { HistorySession } from "../src/contracts";
 import { FakeRuntime, fixtureProjects } from "../server/testing";
 const directory = mkdtempSync(join(tmpdir(), "flickgrove-browser-"));
 const runtime = new FakeRuntime();
@@ -160,6 +161,10 @@ const handler = createHandler(app, {
     process.env.GROVE_TEST_ASSETS ?? "../.scratch/flickgrove-browser/assets",
   ),
 });
+const originalHistory = runtime.history.bind(runtime);
+const originalSessions = new Map(runtime.historySessions);
+const originalItems = new Map(runtime.historyItems);
+let historyFilterReads: (string | null)[] = [];
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: 14318,
@@ -171,6 +176,48 @@ const server = Bun.serve({
       origin: () => "http://127.0.0.1:14318",
     })(request, server);
     if (upgraded) return upgraded === true ? undefined : upgraded;
+    if (new URL(request.url).pathname === "/fixture/history-filter") {
+      if (request.method === "DELETE") {
+        runtime.history = originalHistory;
+        runtime.historySessions.clear();
+        runtime.historyItems.clear();
+        for (const [id, value] of originalSessions)
+          runtime.historySessions.set(id, value);
+        for (const [id, value] of originalItems)
+          runtime.historyItems.set(id, value);
+      }
+      if (request.method === "POST") {
+        const { sessions, delayedCall } = (await request.json()) as {
+          sessions: HistorySession[];
+          delayedCall?: number;
+        };
+        let calls = 0;
+        const reads: (string | null)[] = [];
+        runtime.history = async (cwd, cursor) => {
+          reads.push(cursor ?? null);
+          const call = ++calls;
+          const offset = Number(cursor ?? 0);
+          const matches = sessions.filter((s) => s.cwd === cwd);
+          const page = {
+            sessions: matches.slice(offset, offset + 30),
+            nextCursor:
+              matches.length > offset + 30 ? String(offset + 30) : null,
+          };
+          if (call === delayedCall) await Bun.sleep(900);
+          return page;
+        };
+        runtime.historySessions.clear();
+        for (const s of sessions) {
+          runtime.historySessions.set(s.threadId, s);
+          runtime.historyItems.set(s.threadId, [
+            { id: s.threadId + "-user", role: "user", text: s.preview, at: 1 },
+          ]);
+        }
+        historyFilterReads = reads;
+      }
+      return Response.json(historyFilterReads);
+    }
+
     if (
       request.method === "POST" &&
       new URL(request.url).pathname === "/fixture/history-continuation"

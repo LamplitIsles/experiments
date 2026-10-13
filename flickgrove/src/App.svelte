@@ -536,7 +536,7 @@
     window.addEventListener("compositionend", compositionEnd);
     const timer = setInterval(() => now = Date.now(), 1000);
     const permission = () => { if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission().catch(() => {}); };
-    const completionTab = (e: KeyboardEvent) => { if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof HTMLElement && e.target.closest(".question-panel"))) e.preventDefault(); };
+    const completionTab = (e: KeyboardEvent) => { if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof HTMLElement && e.target.closest(".question-panel, .history-controls"))) e.preventDefault(); };
     window.addEventListener("keydown", completionTab, true);
     const installer = (e: Event) => { e.preventDefault(); install = e as Event & { prompt: () => Promise<void> }; };
     window.addEventListener("pointerdown", permission, { once: true }); window.addEventListener("keydown", permission, { once: true }); window.addEventListener("keydown", keydown); window.addEventListener("beforeinstallprompt", installer);
