@@ -51,6 +51,7 @@ export class Workspace {
   private readonly handles = new Map<string, RuntimeHandle>();
   private readonly subscribers = new Set<() => void>();
   private readonly treeActions = new Set<string>();
+  private readonly closingTrees = new Set<string>();
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly opening = new Map<string, Promise<RuntimeHandle>>();
   private readonly completedTurns = new Set<string>();
@@ -727,6 +728,7 @@ export class Workspace {
   }
   async updateTreeFast(id: string, fast: boolean, retry = false) {
     const root = this.root(this.agent(id));
+    if (this.closingTrees.has(root.id)) throw new Error("Tree is closing");
     if (this.treeActions.has(root.id))
       throw new Error("Tree settings are being saved");
     if (root.treeFastError && !retry)
@@ -1182,6 +1184,8 @@ export class Workspace {
   }
   private serialize<T>(id: string, work: () => Promise<T>): Promise<T> {
     const a = this.state.agents.find((a) => a.id === id);
+    if (a && this.closingTrees.has(a.ownerId ?? a.id))
+      return Promise.reject(new Error("Tree is closing"));
     if (a && this.treeActions.has(a.ownerId ?? a.id))
       return Promise.reject(new Error("Tree settings are being saved"));
     const previous = this.queues.get(id) ?? Promise.resolve();
@@ -1496,37 +1500,86 @@ export class Workspace {
       throw new Error("No unconfirmed user submissions to abandon");
     return ids;
   }
-  closeTree(id: string, abandonUnknownOperationIds?: string[]) {
+  async closeTree(id: string, abandonUnknownOperationIds?: string[]) {
+    if (abandonUnknownOperationIds !== undefined)
+      return this.closeAbandoningUnknown(id, abandonUnknownOperationIds);
+    const a = this.agent(id);
+    if (a.role !== "orc") throw new Error("Only an Orc tree can be closed");
+    if (this.closingTrees.has(id)) throw new Error("Tree is closing");
+    const members = this.state.agents.filter(
+      (w) => w.ownerId === id && !w.closed,
+    );
+    const validate = () => {
+      if (this.disposed) throw new Error("Workspace is stopped");
+      if (this.treeActions.has(id))
+        throw new Error("Tree settings are being saved");
+      this.assertIdle(a);
+      for (const member of [a, ...members.filter((w) => !w.closed)]) {
+        if (
+          this.queues.has(member.id) ||
+          this.opening.has(member.id) ||
+          this.closingChildren.has(member.id)
+        )
+          throw new Error(`${member.title} has an in-flight operation`);
+      }
+      for (const w of members.filter((w) => !w.closed)) {
+        const reason = this.childCloseReason(w);
+        if (reason)
+          throw new Error(
+            `${w.role[0]!.toUpperCase() + w.role.slice(1)} “${w.title}”: ${reason}`,
+          );
+        if (!w.threadId)
+          throw new Error(`${w.title}: Native thread startup is unconfirmed`);
+      }
+    };
+    validate(); // No releases or durable close requests on preflight failure.
+    this.closingTrees.add(id);
+    try {
+      for (const member of [...members, a]) {
+        validate();
+        try {
+          const handle = await this.handle(member, false);
+          validate(); // Native resume may have revealed new work or a disconnect.
+          await handle.close();
+        } catch (error) {
+          throw new Error(
+            `${member.title}: Native thread release failed: ${String(error)}. Retry Close tree after inspecting the outcome.`,
+          );
+        }
+        if (this.disposed)
+          throw new Error("Workspace stopped during native release");
+        this.handles.delete(member.id);
+        if (member === a) validate();
+        else {
+          const reason = this.childCloseReason(member);
+          if (reason) throw new Error(`${member.title}: ${reason}`);
+        }
+        this.failedChildCloses.delete(member.id);
+        member.closed = true;
+        this.save();
+      }
+      return { closed: true as const, id };
+    } finally {
+      this.closingTrees.delete(id);
+    }
+  }
+  private closeAbandoningUnknown(id: string, operationIds: string[]) {
     return this.serialize(id, async () => {
       const a = this.agent(id);
-      if (a.role !== "orc")
-        throw new Error(
-          "Only Orc can close Workers, Reviewers and Researchers",
-        );
-      const workers = this.state.agents.filter(
-        (w) => w.ownerId === id && !w.closed,
-      );
-      if (workers.length)
-        throw new Error(
-          `Ask Orc to close its Workers, Reviewers and Researchers first: ${workers.map((w) => w.title).join(", ")}`,
-        );
       const validate = () => {
-        if (abandonUnknownOperationIds === undefined) this.assertIdle(a);
-        else {
-          const actual = this.abandonUnknownIds(a);
-          if (
-            actual.length !== abandonUnknownOperationIds.length ||
-            new Set(abandonUnknownOperationIds).size !== actual.length ||
-            actual.some((id) => !abandonUnknownOperationIds.includes(id))
-          )
-            throw new Error(
-              "Unconfirmed submissions changed. Read the session and confirm again.",
-            );
-        }
+        const actual = this.abandonUnknownIds(a);
+        if (
+          actual.length !== operationIds.length ||
+          new Set(operationIds).size !== actual.length ||
+          actual.some((id) => !operationIds.includes(id))
+        )
+          throw new Error(
+            "Unconfirmed submissions changed. Read the session and confirm again.",
+          );
       };
       validate();
-      const handle = this.handles.get(id);
-      await handle?.close();
+      // Keep explicit abandonment scoped to the root and its cached handle.
+      await this.handles.get(id)?.close();
       this.handles.delete(id);
       validate();
       a.closed = true;
@@ -1625,6 +1678,12 @@ export class Workspace {
     const a = this.authenticated(token);
     if (!(roleTools[a.role] as readonly string[]).includes(name))
       throw new Error("Tool is not available to this role");
+    if (
+      this.closingTrees.has(a.ownerId ?? a.id) &&
+      !name.endsWith("_read") &&
+      !name.endsWith("_list")
+    )
+      throw new Error("Tree is closing");
     switch (name) {
       case "researcher_start":
       case "reviewer_start":
@@ -1963,6 +2022,41 @@ export class Workspace {
       ),
     );
   }
+  private childCloseReason(w: RuntimeAgent) {
+    let reason: string | undefined;
+    if (this.queues.has(w.id) || this.opening.has(w.id))
+      reason = "Waiting for in-flight owned agent operations";
+    else if (
+      w.deliveries.some((d) =>
+        ["queued", "sending", "uncertain"].includes(d.status),
+      )
+    )
+      reason = "Waiting for owned agent delivery confirmation";
+    else if (
+      this.state.agents
+        .find((a) => a.id === w.ownerId)
+        ?.deliveries.some(
+          (d) =>
+            (d.reportingWorkerId ??
+              d.reportingReviewerId ??
+              d.reportingResearcherId) === w.id && d.status !== "sent",
+        )
+    )
+      reason =
+        "Waiting for report delivery to Orc; retry rejected reports or inspect unconfirmed delivery";
+    else if (w.questions.some((q) => q.state !== "answered"))
+      reason = "Waiting for answers to delegated questions";
+    else if (
+      w.state === "working" ||
+      w.state === "stopping" ||
+      (w.state !== "idle" && !w.turnEnded)
+    )
+      reason =
+        w.state === "working"
+          ? "Waiting for current work to finish"
+          : "Current turn outcome is unconfirmed; inspect the owned agent before resolving closure";
+    return reason;
+  }
   private async advanceChildCloses() {
     if (this.disposed) return;
     let changed = false;
@@ -1976,42 +2070,10 @@ export class Workspace {
         this.failedChildCloses.has(w.id)
       )
         continue;
-      let reason: string | undefined;
-      if (
-        this.treeActions.has(w.ownerId!) ||
-        this.queues.has(w.id) ||
-        this.opening.has(w.id)
-      )
-        reason = "Waiting for in-flight owned agent operations";
-      else if (
-        w.deliveries.some((d) =>
-          ["queued", "sending", "uncertain"].includes(d.status),
-        )
-      )
-        reason = "Waiting for owned agent delivery confirmation";
-      else if (
-        this.state.agents
-          .find((a) => a.id === w.ownerId)
-          ?.deliveries.some(
-            (d) =>
-              (d.reportingWorkerId ??
-                d.reportingReviewerId ??
-                d.reportingResearcherId) === w.id && d.status !== "sent",
-          )
-      )
-        reason =
-          "Waiting for report delivery to Orc; retry rejected reports or inspect unconfirmed delivery";
-      else if (w.questions.some((q) => q.state !== "answered"))
-        reason = "Waiting for answers to delegated questions";
-      else if (
-        w.state === "working" ||
-        w.state === "stopping" ||
-        (w.state !== "idle" && !w.turnEnded)
-      )
-        reason =
-          w.state === "working"
-            ? "Waiting for current work to finish"
-            : "Current turn outcome is unconfirmed; inspect the owned agent before resolving closure";
+      const reason =
+        this.treeActions.has(w.ownerId!) || this.closingTrees.has(w.ownerId!)
+          ? "Waiting for in-flight tree operations"
+          : this.childCloseReason(w);
       if (reason) {
         if (w.closeRequest.reason !== reason) {
           w.closeRequest.reason = reason;

@@ -352,7 +352,7 @@ test("Orc tools own their Workers while Workers can only report to their parent"
   ).rejects.toThrow("through Orc");
 });
 
-test("history pages move backward and a tree closes only after Orc closes its idle Workers", async () => {
+test("history pages move backward and ordinary Close releases idle owned Workers", async () => {
   const { app, runtime } = fixture();
   const a = await app.createOrc("alpha");
   const token = runtime.agents.get(a.id)!.token;
@@ -378,7 +378,7 @@ test("history pages move backward and a tree closes only after Orc closes its id
     limit: 1,
   })) as any;
   expect(page.worker.state).toBe("working");
-  await expect(app.closeTree(a.id)).rejects.toThrow("Worker");
+  await expect(app.closeTree(a.id)).rejects.toThrow("Reader");
   runtime.emit(worker.id, { type: "completed", turnId, status: "completed" });
   const latest = (await app.tool(token, "worker_read", {
     workerId: worker.id,
@@ -392,8 +392,6 @@ test("history pages move backward and a tree closes only after Orc closes its id
   })) as any;
   expect(earlier.messages[0].text).toContain("Assigned spec: #3109");
   expect(earlier.hasMore).toBe(false);
-  await expect(app.closeTree(a.id)).rejects.toThrow("Worker");
-  await app.tool(token, "worker_close", { workerId: worker.id });
   await app.closeTree(a.id);
   expect(app.snapshot().agents).toEqual([]);
   expect(runtime.inputs.some((i) => i.text === "/close")).toBe(false);
@@ -752,9 +750,7 @@ test("stop targets only the observed Orc turn, waits for authoritative interrupt
       (d) => d.id === "more",
     )?.status,
   ).toBe("failed");
-  await expect(app.closeTree(orc.id)).rejects.toThrow(
-    "Workers, Reviewers and Researchers first",
-  );
+  await expect(app.closeTree(orc.id)).rejects.toThrow("still working");
   runtime.emit(orc.id, { type: "completed", turnId, status: "interrupted" });
   expect(app.detail(orc.id).state).toBe("idle");
   expect(app.detail(orc.id).stop?.status).toBe("confirmed");

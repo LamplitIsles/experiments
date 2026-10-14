@@ -346,7 +346,9 @@ test("Researcher survives two real Peer/Chord boundaries, async questions/report
       ownerThreadId: owner.threadId,
       ownerProject: "alpha",
     });
-    await expect(a.app.closeTree(owner.id)).rejects.toThrow("Researchers");
+    await expect(a.app.closeTree(owner.id)).rejects.toThrow(
+      "unconfirmed delivery",
+    );
     expect(
       await a.app.tool(token, "researcher_close", {
         researcherId: fresh.id,

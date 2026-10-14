@@ -253,7 +253,7 @@ test("Reviewer lifecycle crosses real Peer/Chord with target-bound reports, isol
         ),
     ).toBe(true);
     expect(oldRuntime.inputs.filter((i) => i.agentId === b.id)).toHaveLength(2);
-    await expect(app.closeTree(orc.id)).rejects.toThrow("Reviewers");
+    await expect(app.closeTree(orc.id)).rejects.toThrow("unconfirmed delivery");
     expect(
       await app.tool(token, "reviewer_close", {
         reviewerId: b.id,

@@ -162,7 +162,7 @@ test("closed Orc resumes its identity and leaves closed Workers closed; Worker a
   ).rejects.toThrow("original Orc");
 });
 
-test("restore waits for concurrent closure and acquires a fresh writer", async () => {
+test("restore refuses during ordinary tree closure; explicit retry acquires a fresh writer", async () => {
   const { app, runtime } = fixture();
   const open = runtime.open.bind(runtime);
   const closing = Promise.withResolvers<void>(),
@@ -183,25 +183,22 @@ test("restore waits for concurrent closure and acquires a fresh writer", async (
   const orc = await app.createOrc("alpha");
   const close = app.closeTree(orc.id);
   await closing.promise;
-  let restored = false;
-  const resume = app
-    .resumeHistory("alpha", orc.threadId!, false)
-    .then((result) => {
-      restored = true;
-      return result;
-    });
   try {
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(restored).toBe(false);
+    await expect(
+      app.resumeHistory("alpha", orc.threadId!, false),
+    ).rejects.toThrow("closing");
+    expect(opens).toBe(1);
     release.resolve();
     await close;
-    expect((await resume).id).toBe(orc.id);
+    expect((await app.resumeHistory("alpha", orc.threadId!, false)).id).toBe(
+      orc.id,
+    );
     expect(opens).toBe(2);
     expect(runtime.listeners.has(orc.id)).toBe(true);
     expect(app.snapshot().agents).toHaveLength(1);
   } finally {
     release.resolve();
-    await Promise.allSettled([close, resume]);
+    await Promise.allSettled([close]);
   }
 });
 

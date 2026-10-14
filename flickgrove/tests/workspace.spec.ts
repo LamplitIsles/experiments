@@ -487,3 +487,65 @@ test("Orc titles edit in place, cancel safely, retain failed drafts and persist 
   await page.keyboard.press("Alt+x");
   await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
 });
+
+test("ordinary tree Close preflights a running child and releases an open idle child in one action", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  await newSession(page);
+  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await createSession(page);
+  const input = page.getByRole("textbox", { name: "Message Orc" });
+  await input.fill("Start a long Worker");
+  await input.press("Enter");
+  await expect(
+    page.getByText("Long Worker started.", { exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Alt+x");
+  await expect(
+    page.getByText(/Worker “Long Reader”: Waiting for current work/),
+  ).toBeVisible();
+  const before = await (await request.get("/fixture/snapshot")).json();
+  const rootId = await page.evaluate(() =>
+    history.state?.grove?.details.at(-1),
+  );
+  const root = before.agents.find((a: { id: string }) => a.id === rootId);
+  const child = before.agents.find(
+    (a: { ownerId: string }) => a.ownerId === root.id,
+  );
+  expect(child.state).toBe("working");
+  await page.screenshot({
+    path: "../.scratch/close-quiescent-tree/browser-refusal.png",
+  });
+  await input.fill("Finish the long Worker");
+  await input.press("Enter");
+  await expect(
+    page.getByText("Long Worker finished.", { exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(async () => {
+      const snapshot = await (await request.get("/fixture/snapshot")).json();
+      return snapshot.agents
+        .filter((a: { id: string }) => a.id === root.id || a.id === child.id)
+        .map((a: { state: string }) => a.state);
+    })
+    .toEqual(["idle", "idle"]);
+  await page.screenshot({
+    path: "../.scratch/close-quiescent-tree/browser-idle-open.png",
+  });
+  await page.keyboard.press("Alt+x");
+  await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
+  await expect
+    .poll(async () => {
+      const snapshot = await (await request.get("/fixture/snapshot")).json();
+      return snapshot.agents.some(
+        (a: { id: string }) => a.id === root.id || a.id === child.id,
+      );
+    })
+    .toBe(false);
+  await expect(input).toHaveCount(0);
+  await page.screenshot({
+    path: "../.scratch/close-quiescent-tree/browser-closed.png",
+  });
+});
