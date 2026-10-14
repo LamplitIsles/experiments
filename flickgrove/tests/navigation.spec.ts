@@ -24,10 +24,7 @@ for (const surface of [
       await page.getByRole("button", { name: "Hosts", exact: true }).click();
     else if (surface === "settings")
       await page.getByRole("button", { name: "Settings", exact: true }).click();
-    else if (surface === "new")
-      await page
-        .getByRole("button", { name: "New session", exact: true })
-        .click();
+    else if (surface === "new") await page.locator(".mobile-new").click();
     else {
       if (surface === "worker") {
         await page

@@ -1,11 +1,11 @@
 <script lang="ts">
   import { ChevronDown, ChevronRight, Plus, Zap, MessageCircle, GitBranch } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { onMount, tick, untrack } from "svelte";
+  import { onMount, tick, untrack, type Snippet } from "svelte";
   import { storagePrefix } from "./api";
   import type { Agent, Host } from "./contracts";
   import * as m from "./paraglide/messages";
-  let { agents, rootOrder, onreorder, hosts, selectedId, loading, connected, onopen, onnew, onclosetree, closingId, closeError }: { agents: Agent[]; rootOrder: string[]; onreorder: (ids: string[]) => void; hosts: Host[]; selectedId: string | null; loading: boolean; connected: boolean; onopen: (id: string) => void; onnew: () => void; onclosetree: (id: string) => Promise<void>; closingId: string | null; closeError: { id: string; reason: string } | null } = $props();
+  let { agents, rootOrder, onreorder, hosts, selectedId, loading, connected, onopen, onnew, onclosetree, closingId, closeError, children }: { agents: Agent[]; rootOrder: string[]; onreorder: (ids: string[]) => void; hosts: Host[]; selectedId: string | null; loading: boolean; connected: boolean; onopen: (id: string) => void; onnew: () => void; onclosetree: (id: string) => Promise<void>; closingId: string | null; closeError: { id: string; reason: string } | null; children?: Snippet } = $props();
   let expanded = $state<string[]>(JSON.parse(localStorage.getItem(`${storagePrefix}/expanded`) ?? "[]"));
   let desktop = $state(matchMedia("(min-width: 701px)").matches);
   let draggingId = $state<string | null>(null);
@@ -104,7 +104,11 @@
 </script>
 <svelte:window onpointerdown={e => { if (revealedId && e.target instanceof Element && !e.target.closest(`[data-swipe-id="${revealedId}"]`)) revealedId = null; }} />
 <section class="session-list" aria-label={m.sessions()} bind:this={list} onscroll={() => localStorage.setItem(`${storagePrefix}/list-scroll`, String(list.scrollTop))}>
-  <h1>{m.sessions()}</h1>
+  <div class="session-list-heading">
+    <h1>{m.sessions()}</h1>
+    <Button variant="ghost" size="icon-sm" aria-label={m.new_session()} onclick={onnew}><Plus /></Button>
+  </div>
+  {@render children?.()}
   {#if loading && !agents.length}<p class="list-empty" role="status">{m.loading()}</p>{:else if !roots.length}<div class="list-empty"><h2>{m.empty_heading()}</h2><p>{m.empty_help()}</p><Button size="sm" disabled={!connected} onclick={onnew}><Plus />{m.new_session()}</Button></div>{/if}
   {#each visible as agent (agent.id)}
     {@const children = agents.filter(w => w.ownerId === agent.id)}{@const host = hosts.find(h => h.id === agent.hostId)}

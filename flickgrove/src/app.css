@@ -120,7 +120,6 @@ main {
   font-size: 11px;
   white-space: nowrap;
 }
-.connection-banner,
 .app-error,
 .action-notice {
   position: absolute;
@@ -131,6 +130,18 @@ main {
   align-items: center;
   gap: 12px;
   max-width: calc(100% - 48px);
+  padding: 10px 14px;
+  border: 1px solid #65563c;
+  border-radius: 8px;
+  background: #2d281f;
+  font-size: 12px;
+}
+.connection-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
   padding: 10px 14px;
   border: 1px solid #65563c;
   border-radius: 8px;
@@ -1105,8 +1116,14 @@ pre {
   border-right: 1px solid var(--border);
   background: var(--background);
 }
-.session-list h1 {
+.session-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin: 0 8px 14px;
+}
+.session-list h1 {
+  margin: 0;
   font-size: 13px;
   color: var(--muted-foreground);
   font-weight: 550;

@@ -127,10 +127,7 @@ for (const width of [1440, 390])
       data: { mode: "researchers" },
     });
     await page.goto(origin);
-    if (width === 390)
-      await page
-        .getByRole("button", { name: "New session", exact: true })
-        .click();
+    if (width === 390) await page.locator(".mobile-new").click();
     else {
       await expect(input).toBeVisible();
       await input.evaluate((el) => el.blur());
