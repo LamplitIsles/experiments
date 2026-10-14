@@ -49,15 +49,17 @@ export class Workspace {
   private readonly db: Database;
   private readonly state: State;
   private readonly handles = new Map<string, RuntimeHandle>();
-  private readonly finalAnswers = new Map<
-    string,
-    Map<string, { id: string; text: string }>
-  >();
   private readonly subscribers = new Set<() => void>();
   private readonly treeActions = new Set<string>();
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly opening = new Map<string, Promise<RuntimeHandle>>();
   private readonly completedTurns = new Set<string>();
+  // IDs only: retain live publication identity until this active turn ends, even
+  // after the bounded reading window has evicted the corresponding bodies.
+  private readonly completedItems = new Map<
+    string,
+    { turnId: string; ids: Set<string> }
+  >();
   private readonly closingChildren = new Set<string>();
   private readonly failedChildCloses = new Set<string>();
   private disposed = false;
@@ -135,8 +137,10 @@ export class Workspace {
     }
   }
   private save() {
-    for (const a of this.state.agents)
+    for (const a of this.state.agents) {
+      this.rememberCompletedItems(a, a.messages);
       a.messages = recentWindow(a.messages, []);
+    }
     if (this.disposed) return;
     this.branches.update(
       this.state.agents.filter((a) => !a.closed).map((a) => a.project.path),
@@ -199,6 +203,20 @@ export class Workspace {
     );
     this.save();
   }
+  private rememberCompletedItems(a: RuntimeAgent, messages: Message[]) {
+    if (!a.turnId || a.closed || this.disposed) {
+      this.completedItems.delete(a.id);
+      return;
+    }
+    let completed = this.completedItems.get(a.id);
+    if (completed?.turnId !== a.turnId) {
+      completed = { turnId: a.turnId, ids: new Set() };
+      this.completedItems.set(a.id, completed);
+    }
+    for (const message of messages)
+      if (message.role === "assistant" && message.turnId === a.turnId)
+        completed.ids.add(message.id);
+  }
   private event(a: RuntimeAgent, event: RuntimeEvent) {
     if (
       a.closed ||
@@ -221,7 +239,6 @@ export class Workspace {
       if (a.turnId === event.turnId) return;
       if (a.turnId) {
         this.completedTurns.add(`${a.id}/${a.turnId}`);
-        this.finalAnswers.delete(`${a.id}/${a.turnId}`);
       }
       a.execution = undefined;
       a.workingSince = undefined;
@@ -246,7 +263,7 @@ export class Workspace {
       ) {
         a.execution = undefined;
         a.error = undefined;
-        // Publish recovery even when the item is buffered or omitted below.
+        // Publish recovery even when the item has no visible content below.
         this.save();
       }
       const item = event.item;
@@ -301,6 +318,9 @@ export class Workspace {
             newQuestions.push(id);
           }
         });
+        // Persisted question identities already prove an evicted repeat.
+        if (!newQuestions.length && !a.messages.some((m) => m.id === item.id))
+          return;
         if (!a.messages.some((m) => m.id === item.id))
           a.messages.push({
             id: item.id,
@@ -332,26 +352,20 @@ export class Workspace {
             },
           );
         }
-      } else if (item.phase !== "commentary" && item.text) {
-        const key = `${a.id}/${event.turnId}`;
-        const answers = this.finalAnswers.get(key) ?? new Map();
-        answers.set(item.id, { id: item.id, text: item.text });
-        this.finalAnswers.set(key, answers);
-        return;
+      } else if (item.text) {
+        if (a.messages.some((m) => m.id === item.id)) return;
+        if (this.completedItems.get(a.id)?.ids.has(item.id)) return;
+        const message: Message = {
+          id: item.id,
+          text: item.text,
+          role: "assistant",
+          turnId: event.turnId,
+          at: Date.now(),
+        };
+        a.messages.push(message);
       } else return;
     } else if (event.type === "completed") {
-      const key = `${a.id}/${event.turnId}`;
-      this.completedTurns.add(key);
-      for (const item of this.finalAnswers.get(key)?.values() ?? []) {
-        if (!a.messages.some((m) => m.id === item.id))
-          a.messages.push({
-            ...item,
-            role: "assistant",
-            turnId: event.turnId,
-            at: Date.now(),
-          });
-      }
-      this.finalAnswers.delete(key);
+      this.completedTurns.add(`${a.id}/${event.turnId}`);
       if (a.turnId === event.turnId) {
         a.turnEnded = true;
         const stopped =
@@ -506,6 +520,7 @@ export class Workspace {
           !page.messages.some((v) => v.id === m.id) &&
           !nativeClients.has(m.id),
       );
+      this.rememberCompletedItems(a, page.messages);
       a.messages = recentWindow([...page.messages, ...additions], []);
       a.historyCursor = page.nextCursor ?? undefined;
       a.readingRevision = (a.readingRevision ?? 0) + 1;
@@ -2061,6 +2076,7 @@ export class Workspace {
     this.disposed = true;
     this.branches.dispose();
     this.subscribers.clear();
+    this.completedItems.clear();
     void this.options.runtime.close();
     this.db.close();
   }

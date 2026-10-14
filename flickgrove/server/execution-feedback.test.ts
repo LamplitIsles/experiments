@@ -31,7 +31,10 @@ test("isolated native notifications through Workspace and real Chord preserve re
       new URL("../tests/fake-codex.mjs", import.meta.url),
     ),
     env: {
-      ...process.env,
+      PATH: process.env.PATH!,
+      HOME: join(directory, "home"),
+      XDG_CONFIG_HOME: join(directory, "config"),
+      XDG_DATA_HOME: join(directory, "data"),
       CODEX_HOME: join(directory, "codex-home"),
       FAKE_SERVER_ROOT: directory,
     },
@@ -64,9 +67,13 @@ test("isolated native notifications through Workspace and real Chord preserve re
   let view: View | undefined;
   let serial = 0;
   const notifications: unknown[] = [];
+  let historyItems: unknown[] | undefined;
   const inject = async (method: string, params: Record<string, unknown>) => {
     notifications.push({ id: ++serial, method, params });
-    await writeFile(control, JSON.stringify({ hold: true, notifications }));
+    await writeFile(
+      control,
+      JSON.stringify({ hold: true, notifications, historyItems }),
+    );
   };
   try {
     await writeFile(control, JSON.stringify({ hold: true }));
@@ -148,6 +155,9 @@ test("isolated native notifications through Workspace and real Chord preserve re
     });
     await until(() => detail()?.error === undefined);
     expect(detail()?.workingSince).toBe(since);
+    expect(detail()?.messages.some((m) => m.text.includes("recovered"))).toBe(
+      false,
+    );
     await inject("error", { threadId, turnId, willRetry: true, error });
     await until(() => detail()?.execution?.retrying === true);
     await inject("item/started", {
@@ -185,10 +195,77 @@ test("isolated native notifications through Workspace and real Chord preserve re
       await until(() => detail()?.execution === undefined);
       expect(detail()?.error).toBeUndefined();
       expect(detail()?.workingSince).toBe(since);
+      expect(detail()?.state).toBe("working");
+      expect(detail()?.turnId).toBe(turnId);
+      await until(
+        () => !!detail()?.messages.some((m) => m.id === `recovered-${phase}`),
+      );
       expect(
         detail()?.messages.some((m) => m.id === `recovered-${phase}`),
-      ).toBe(false);
+      ).toBe(true);
     }
+    const completedItem = (itemId: string, text = itemId) => ({
+      type: "agentMessage",
+      id: itemId,
+      text,
+      phase: "commentary",
+      delivery: null,
+      questions: null,
+      memoryCitation: null,
+    });
+    await inject("item/completed", {
+      threadId,
+      turnId,
+      completedAtMs: Date.now(),
+      item: completedItem("recovered-commentary", "Recovered commentary"),
+    });
+    await inject("item/completed", {
+      threadId: "foreign-thread",
+      turnId,
+      completedAtMs: Date.now(),
+      item: completedItem("foreign"),
+    });
+    // A following visible event proves the earlier injected notifications settled.
+    await inject("item/completed", {
+      threadId,
+      turnId,
+      completedAtMs: Date.now(),
+      item: completedItem("notification-barrier"),
+    });
+    await until(
+      () => !!detail()?.messages.some((m) => m.id === "notification-barrier"),
+    );
+    expect(
+      detail()?.messages.filter((m) => m.id === "recovered-commentary"),
+    ).toHaveLength(1);
+    expect(detail()?.messages.some((m) => m.id === "foreign")).toBe(false);
+    const visibleIds = detail()?.messages.map((m) => m.id);
+    historyItems = app.detail(a.id).messages.map((m) => ({
+      turnId: m.turnId,
+      completedAtMs: Date.now(),
+      item:
+        m.role === "assistant"
+          ? completedItem(m.id, m.text)
+          : {
+              type: "userMessage",
+              id: m.id,
+              clientId: m.clientId,
+              content: [{ type: "text", text: m.text, text_elements: [] }],
+            },
+    }));
+    await writeFile(
+      control,
+      JSON.stringify({ hold: true, notifications, historyItems }),
+    );
+    await app.synchronizeDetail(a.id);
+    await until(
+      () => detail()?.readingRevision === app.detail(a.id).readingRevision,
+    );
+    expect(detail()?.messages.map((m) => m.id)).toEqual(visibleIds);
+    expect(
+      detail()?.messages.filter((m) => m.id.startsWith("recovered-")),
+    ).toHaveLength(2);
+    expect(detail()?.state).toBe("working");
     await inject("error", { threadId, turnId, willRetry: false, error });
     await until(() => detail()?.state === "error");
     expect(detail()?.execution).toEqual({ kind: "capacity", retrying: false });
@@ -214,13 +291,29 @@ test("isolated native notifications through Workspace and real Chord preserve re
     ).toBe(true);
     expect(
       app.detail(a.id).messages.some((m) => m.id === "recovered-commentary"),
-    ).toBe(false);
+    ).toBe(true);
+    await inject("item/completed", {
+      threadId,
+      turnId,
+      completedAtMs: Date.now(),
+      item: completedItem("late-completion"),
+    });
+    await inject("turn/completed", {
+      threadId,
+      turn: { id: turnId, status: "failed", items: [], error },
+    });
     // A distinct native turn start resets the old failure; old turn events cannot change it.
     await inject("turn/started", {
       threadId,
       turn: { id: "new-turn", status: "inProgress", items: [], error: null },
     });
     await until(() => detail()?.turnId === "new-turn");
+    expect(detail()?.messages.some((m) => m.id === "late-completion")).toBe(
+      false,
+    );
+    expect(
+      detail()?.messages.filter((m) => m.id.startsWith("recovered-")),
+    ).toHaveLength(2);
     await inject("turn/started", {
       threadId,
       turn: { id: turnId, status: "inProgress", items: [], error: null },
@@ -271,6 +364,27 @@ test("isolated native notifications through Workspace and real Chord preserve re
     await until(() => detail()?.state === "error");
     expect(detail()?.execution).toEqual({ kind: "capacity", retrying: false });
     expect(detail()?.workingSince).toBeUndefined();
+    await inject("turn/started", {
+      threadId,
+      turn: { id: "stop-turn", status: "inProgress", items: [], error: null },
+    });
+    await until(() => detail()?.turnId === "stop-turn");
+    await inject("item/completed", {
+      threadId,
+      turnId: "stop-turn",
+      completedAtMs: Date.now(),
+      item: completedItem("before-stop", "Completed before Stop"),
+    });
+    await until(() => !!detail()?.messages.some((m) => m.id === "before-stop"));
+    await client.call("stop", { id, turnId: "stop-turn" });
+    await inject("turn/completed", {
+      threadId,
+      turn: { id: "stop-turn", status: "interrupted", items: [], error: null },
+    });
+    await until(() => detail()?.state === "idle");
+    expect(
+      detail()?.messages.filter((m) => m.id === "before-stop"),
+    ).toHaveLength(1);
   } finally {
     client?.close();
     service.dispose();

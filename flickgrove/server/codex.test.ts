@@ -75,6 +75,18 @@ test("history uses indexed metadata for both archive states, reads paginated ite
         },
       },
       {
+        turnId: "old-turn",
+        completedAtMs: 1791252150000,
+        item: {
+          type: "agentMessage",
+          id: "old-commentary",
+          text: "Completed progress",
+          phase: "commentary",
+          delivery: null,
+          memoryCitation: null,
+        },
+      },
+      {
         turnId: "question-turn",
         completedAtMs: 1791252180000,
         item: {
@@ -99,7 +111,10 @@ test("history uses indexed metadata for both archive states, reads paginated ite
       new URL("../tests/fake-codex.mjs", import.meta.url),
     ),
     env: {
-      ...process.env,
+      PATH: process.env.PATH!,
+      HOME: join(directory, "home"),
+      XDG_CONFIG_HOME: join(directory, "config"),
+      XDG_DATA_HOME: join(directory, "data"),
       CODEX_HOME: join(directory, "codex-home"),
       FAKE_SERVER_ROOT: directory,
     },
@@ -116,10 +131,15 @@ test("history uses indexed metadata for both archive states, reads paginated ite
       (await runtime.historyMessages("cli-history")).messages.map(
         (m) => m.text,
       ),
-    ).toEqual(["Original question", "Original answer", ""]);
+    ).toEqual([
+      "Original question",
+      "Original answer",
+      "Completed progress",
+      "",
+    ]);
     expect(
       (await runtime.historyMessages("cli-history")).messages.map((m) => m.at),
-    ).toEqual([1791251940000, 1791252120000, 1791252180000]);
+    ).toEqual([1791251940000, 1791252120000, 1791252150000, 1791252180000]);
     const original = structuredClone(controls.historyItems);
     controls.historyItems.forEach((entry) => {
       delete (entry as { startedAtMs?: number }).startedAtMs;
@@ -128,7 +148,7 @@ test("history uses indexed metadata for both archive states, reads paginated ite
     await writeFile(controlPath, JSON.stringify(controls));
     expect(
       (await runtime.historyMessages("cli-history")).messages.map((m) => m.at),
-    ).toEqual([0, 0, 0]);
+    ).toEqual([0, 0, 0, 0]);
     controls.historyItems[0].completedAtMs = 1791252000000;
     controls.historyItems[0].startedAtMs = -1;
     controls.historyItems[1].startedAtMs = 1791252060000;
@@ -136,7 +156,7 @@ test("history uses indexed metadata for both archive states, reads paginated ite
     await writeFile(controlPath, JSON.stringify(controls));
     expect(
       (await runtime.historyMessages("cli-history")).messages.map((m) => m.at),
-    ).toEqual([1791252000000, 1791252060000, 0]);
+    ).toEqual([1791252000000, 1791252060000, 0, 0]);
     controls.historyItems = original;
     await writeFile(controlPath, JSON.stringify(controls));
     const agent: RuntimeAgent = {

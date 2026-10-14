@@ -4,7 +4,7 @@ import type { v2 } from "@jaminzhou/codex-app-server-client/protocol";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-test("installed native start/steer events and opaque per-item cursors preserve client IDs with an isolated local fake provider", async () => {
+test("installed native history excludes deltas, exposes completed commentary during work and preserves client IDs/cursors", async () => {
   const directory = await mkdtemp(join(tmpdir(), "grove-native-wire-"));
   const env = {
     PATH: process.env.PATH!,
@@ -12,11 +12,18 @@ test("installed native start/steer events and opaque per-item cursors preserve c
     CODEX_HOME: join(directory, "codex"),
     XDG_CONFIG_HOME: join(directory, "config"),
     XDG_DATA_HOME: join(directory, "data"),
+    XDG_STATE_HOME: join(directory, "state"),
   };
   for (const p of Object.values(env).slice(1))
     await mkdir(p, { recursive: true });
   let providers = 0;
   const ready = Promise.withResolvers<void>();
+  const finishItem = Promise.withResolvers<void>();
+  const finishResponse = Promise.withResolvers<void>();
+  let deltaSeen = false;
+  let messageCompleted = false;
+  const startedMessages = new Set<string>();
+  let completedMessageId = "";
   const provider = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -31,6 +38,7 @@ test("installed native start/steer events and opaque per-item cursors preserve c
           { type: "output_text", text: "Fixture reply", annotations: [] },
         ],
         status: "completed",
+        phase: "commentary",
       };
       const response = {
         id: "resp_test",
@@ -69,9 +77,20 @@ test("installed native start/steer events and opaque per-item cursors preserve c
         { type: "response.completed", response },
       ];
       return new Response(
-        events
-          .map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`)
-          .join(""),
+        new ReadableStream({
+          async start(controller) {
+            const send = (event: object) =>
+              controller.enqueue(
+                new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`),
+              );
+            events.slice(0, 4).forEach(send);
+            await finishItem.promise;
+            send(events[4]);
+            await finishResponse.promise;
+            send(events[5]);
+            controller.close();
+          },
+        }),
         { headers: { "Content-Type": "text/event-stream" } },
       );
     },
@@ -91,7 +110,17 @@ test("installed native start/steer events and opaque per-item cursors preserve c
       type: "userMessage";
     }
   >[] = [];
+  client.onNotification("item/started", (p) => {
+    if (p.item.type === "agentMessage") startedMessages.add(p.item.id);
+  });
+  client.onNotification("item/agentMessage/delta", () => {
+    deltaSeen = true;
+  });
   client.onNotification("item/completed", (p) => {
+    if (p.item.type === "agentMessage") {
+      messageCompleted = true;
+      completedMessageId = p.item.id;
+    }
     if (p.item.type === "userMessage") users.push(p.item);
   });
   client.onNotification("turn/completed", () => {
@@ -129,6 +158,34 @@ test("installed native start/steer events and opaque per-item cursors preserve c
       input: [{ type: "text", text: "Synthetic one", text_elements: [] }],
     });
     ready.resolve();
+    for (let i = 0; i < 200 && !deltaSeen; i++) await Bun.sleep(20);
+    expect(deltaSeen).toBe(true);
+    const partial = await client.call("thread/items/list", {
+      threadId: a.thread.id,
+      sortDirection: "desc",
+      limit: 100,
+    });
+    expect(
+      partial.data.some(
+        (e) => ("item" in e ? e.item : e).type === "agentMessage",
+      ),
+    ).toBe(false);
+    finishItem.resolve();
+    for (let i = 0; i < 200 && !messageCompleted; i++) await Bun.sleep(20);
+    expect(messageCompleted).toBe(true);
+    expect(startedMessages.has(completedMessageId)).toBe(true);
+    expect(completed).toBe(false);
+    const active = await client.call("thread/items/list", {
+      threadId: a.thread.id,
+      sortDirection: "desc",
+      limit: 100,
+    });
+    expect(
+      active.data
+        .map((e) => ("item" in e ? e.item : e))
+        .filter((i) => i.type === "agentMessage"),
+    ).toMatchObject([{ text: "Fixture reply", phase: "commentary" }]);
+    finishResponse.resolve();
     for (let i = 0; i < 500 && !completed; i++) await Bun.sleep(20);
     expect(completed).toBe(true);
     expect(users.map((i) => i.clientId)).toEqual([
@@ -173,6 +230,8 @@ test("installed native start/steer events and opaque per-item cursors preserve c
     );
   } finally {
     ready.resolve();
+    finishItem.resolve();
+    finishResponse.resolve();
     await client.close();
     provider.stop(true);
     await rm(directory, { recursive: true, force: true });

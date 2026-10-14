@@ -192,14 +192,12 @@ export class FakeRuntime implements Runtime {
       },
     };
   }
-  private pendingNative = new Map<string, Message[]>();
   emit(id: string, event: RuntimeEvent) {
     const thread = this.agents.get(id)?.threadId ?? `thread-${id}`;
     if (
       event.type === "item" &&
       event.item.type === "agentMessage" &&
-      (event.item.text || event.item.questions?.length) &&
-      (event.item.questions?.length || event.item.phase !== "commentary")
+      (event.item.text || event.item.questions?.length)
     ) {
       const m: Message = {
         id: event.item.id,
@@ -208,23 +206,9 @@ export class FakeRuntime implements Runtime {
         text: event.item.text ?? "",
         at: Date.now(),
       };
-      if (event.item.delivery === "async") {
-        const items = this.historyItems.get(thread) ?? [];
-        if (!items.some((v) => v.id === m.id)) items.push(m);
-        this.historyItems.set(thread, items);
-      } else {
-        const items = this.pendingNative.get(id) ?? [];
-        items.push(m);
-        this.pendingNative.set(id, items);
-      }
-    }
-    if (event.type === "completed") {
       const items = this.historyItems.get(thread) ?? [];
-      for (const m of this.pendingNative.get(id) ?? [])
-        if (m.turnId === event.turnId && !items.some((v) => v.id === m.id))
-          items.push(m);
+      if (!items.some((v) => v.id === m.id)) items.push(m);
       this.historyItems.set(thread, items);
-      this.pendingNative.delete(id);
     }
     this.listeners.get(id)?.(event);
   }

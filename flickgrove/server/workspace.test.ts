@@ -49,7 +49,7 @@ test("new Orcs capture defaults and retain their own project and conversation", 
   expect(app.detail(second.id).messages).toEqual([]);
 });
 
-test("ordinary answers appear complete at turn end but async questions appear while working", async () => {
+test("completed answers and async questions appear while working", async () => {
   const { app, runtime } = fixture();
   const a = await app.createOrc("alpha");
   await app.send(a.id, "Build it", "first");
@@ -64,7 +64,10 @@ test("ordinary answers appear complete at turn end but async questions appear wh
       text: "Complete answer.",
     },
   });
-  expect(app.detail(a.id).messages.map((m) => m.text)).toEqual(["Build it"]);
+  expect(app.detail(a.id).messages.map((m) => m.text)).toEqual([
+    "Build it",
+    "Complete answer.",
+  ]);
   const question = {
     type: "item" as const,
     turnId,
@@ -94,8 +97,8 @@ test("ordinary answers appear complete at turn end but async questions appear wh
   runtime.emit(a.id, { type: "completed", turnId, status: "completed" });
   expect(app.detail(a.id).messages.map((m) => m.text)).toEqual([
     "Build it",
-    "Choose a color",
     "Complete answer.",
+    "Choose a color",
   ]);
   expect(app.detail(a.id).state).toBe("idle");
 });
@@ -1515,3 +1518,181 @@ test("a rejected answer retry validates originals already accepted by another op
   );
   expect(runtime.inputs).toHaveLength(count);
 });
+
+async function replayFixture(
+  text = (i: number) => `Message ${i}`,
+  count = 120,
+) {
+  const { app, runtime } = fixture();
+  const a = await app.createOrc("alpha");
+  await app.send(a.id, "Hold", "held");
+  const turnId = app.detail(a.id).turnId!;
+  const complete = (i: number, started = true, turn = turnId) => {
+    if (started) runtime.emit(a.id, { type: "progress", turnId: turn });
+    runtime.emit(a.id, {
+      type: "item",
+      turnId: turn,
+      item: {
+        type: "agentMessage",
+        id: `item-${i}`,
+        text: text(i),
+        phase: "commentary",
+      },
+    });
+  };
+  for (let i = 0; i < count; i++) complete(i);
+  return { app, runtime, a, turnId, complete };
+}
+
+test("started and unannounced evicted replays preserve native suffix while new completions publish immediately", async () => {
+  const { app, runtime, a, complete } = await replayFixture();
+  let reads = 0;
+  runtime.historyMessages = async () => {
+    reads++;
+    throw new Error("Publication must not read history");
+  };
+  const before = Array.from({ length: 100 }, (_, i) => `item-${i + 20}`);
+  expect(app.detail(a.id).messages.map((m) => m.id)).toEqual(before);
+  complete(0);
+  complete(0, false);
+  expect(app.detail(a.id).messages.map((m) => m.id)).toEqual(before);
+  complete(120, false);
+  complete(0);
+  expect(app.detail(a.id).messages.map((m) => m.id)).toEqual(
+    Array.from({ length: 100 }, (_, i) => `item-${i + 21}`),
+  );
+  expect(app.detail(a.id).state).toBe("working");
+  expect(reads).toBe(0);
+});
+
+for (const outcome of ["failed", "interrupted", "replacement"] as const) {
+  test(`completed text survives ${outcome} during a failing history read without reviving state`, async () => {
+    const { app, runtime, a, turnId, complete } = await replayFixture();
+    const gate = Promise.withResolvers<void>(),
+      reading = Promise.withResolvers<void>();
+    runtime.historyMessages = async () => {
+      reading.resolve();
+      await gate.promise;
+      throw new Error("Fixture read failure");
+    };
+    const query = app.agentHistory(a.id).then(
+      () => false,
+      () => true,
+    );
+    await reading.promise;
+    complete(120, false);
+    expect(app.detail(a.id).messages.at(-1)?.id).toBe("item-120");
+    if (outcome === "replacement")
+      runtime.emit(a.id, { type: "working", turnId: "replacement" });
+    else
+      runtime.emit(a.id, {
+        type: "completed",
+        turnId,
+        status: outcome,
+        error: "Fixture failure",
+      });
+    const before = app.detail(a.id);
+    gate.resolve();
+    expect(await query).toBe(true);
+    complete(0);
+    complete(121, false);
+    expect(app.detail(a.id).messages).toEqual(before.messages);
+    expect(app.detail(a.id).state).toBe(before.state);
+    expect(app.detail(a.id).turnId).toBe(before.turnId);
+    expect(app.detail(a.id).workingSince).toBe(before.workingSince);
+    if (outcome === "replacement") {
+      // The new turn has its own identities; former turn identity is released.
+      complete(0, false, "replacement");
+      expect(app.detail(a.id).messages.at(-1)?.id).toBe("item-0");
+    }
+  });
+}
+
+test("byte eviction retains completion identity without caching message bodies", async () => {
+  const { app, a, complete } = await replayFixture(
+    (i) => (i ? "x".repeat(40000) : "Small first message"),
+    13,
+  );
+  const before = app.detail(a.id).messages;
+  expect(before.map((m) => m.id)).not.toContain("item-0");
+  complete(0);
+  expect(app.detail(a.id).messages).toEqual(before);
+  complete(13, false);
+  expect(app.detail(a.id).messages.at(-1)?.id).toBe("item-13");
+});
+
+test("synchronized native history identities survive later window clipping", async () => {
+  const { app, runtime, a, turnId, complete } = await replayFixture(
+    undefined,
+    1,
+  );
+  runtime.historyItems.get(a.threadId!)!.push({
+    id: "item-1",
+    role: "assistant",
+    turnId,
+    text: "Read from native",
+    at: Date.now(),
+  });
+  await app.synchronizeDetail(a.id);
+  expect(app.detail(a.id).messages.some((m) => m.id === "item-1")).toBe(true);
+  const page = await app.agentHistory(a.id);
+  expect(page.messages.some((m) => m.id === "item-1")).toBe(true);
+  for (let i = 2; i < 122; i++) complete(i);
+  const before = app.detail(a.id).messages;
+  complete(1);
+  expect(app.detail(a.id).messages).toEqual(before);
+});
+
+test("an evicted async question replay keeps records without moving the reading end", async () => {
+  const { app, runtime, a, turnId, complete } = await replayFixture();
+  const question = {
+    type: "item" as const,
+    turnId,
+    item: {
+      type: "agentMessage",
+      id: "ask",
+      delivery: "async",
+      text: "Choose",
+      questions: [{ question: "Which option?" }],
+    },
+  };
+  runtime.emit(a.id, question);
+  for (let i = 120; i < 220; i++) complete(i);
+  const before = app.detail(a.id).messages;
+  expect(before.map((m) => m.id)).not.toContain("ask");
+  runtime.emit(a.id, question);
+  expect(app.detail(a.id).messages).toEqual(before);
+  expect(app.detail(a.id).questions).toHaveLength(1);
+  expect(app.detail(a.id).questions[0].state).toBe("unanswered");
+});
+
+for (const path of ["agent", "owning"] as const) {
+  test(`history-before-completion ${path} publishes genuine text immediately`, async () => {
+    const { app, runtime, a, turnId, complete } = await replayFixture();
+    runtime.historyItems.get(a.threadId!)!.push({
+      id: "item-120",
+      role: "assistant",
+      turnId,
+      text: "Message 120",
+      at: Date.now(),
+    });
+    const page =
+      path === "agent"
+        ? await app.agentHistory(a.id)
+        : await app.historyMessages("alpha", a.threadId!);
+    expect(page.messages.some((m) => m.id === "item-120")).toBe(true);
+    complete(120, false);
+    expect(app.detail(a.id).messages.map((m) => m.id)).toEqual(
+      Array.from({ length: 100 }, (_, i) => `item-${i + 21}`),
+    );
+    expect(app.detail(a.id).messages.map((m) => m.text)).toContain(
+      "Message 120",
+    );
+    complete(0);
+    complete(120);
+    expect(app.detail(a.id).messages.map((m) => m.id)).toEqual(
+      Array.from({ length: 100 }, (_, i) => `item-${i + 21}`),
+    );
+    expect(app.detail(a.id).state).toBe("working");
+  });
+}

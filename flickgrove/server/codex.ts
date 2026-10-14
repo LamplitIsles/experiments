@@ -280,6 +280,8 @@ export class CodexRuntime implements Runtime {
       limit: 100,
     });
     const messages: Message[] = [];
+    // thread/items/list materializes completed native items, including commentary.
+    // Starts/deltas are not stored here; optional timestamps are not completion flags.
     for (const entry of response.data) {
       const item = "item" in entry ? entry.item : entry;
       const turnId = "turnId" in entry ? entry.turnId : undefined;
@@ -339,8 +341,7 @@ export class CodexRuntime implements Runtime {
           });
       } else if (
         item.type === "agentMessage" &&
-        (item.text || item.questions?.length) &&
-        (item.questions?.length || item.phase !== "commentary")
+        (item.text || item.questions?.length)
       ) {
         messages.push({
           id: item.id,
@@ -472,7 +473,10 @@ export class CodexRuntime implements Runtime {
       }),
       client.onNotification("item/started", (p) => {
         if (p.threadId === threadId && p.item.type !== "userMessage")
-          dispatch({ type: "progress", turnId: p.turnId });
+          dispatch({
+            type: "progress",
+            turnId: p.turnId,
+          });
       }),
       client.onNotification("item/completed", (p) => {
         if (
