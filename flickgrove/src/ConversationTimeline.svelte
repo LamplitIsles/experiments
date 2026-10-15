@@ -1,14 +1,15 @@
 <script lang="ts">
   import { createVirtualizer, defaultRangeExtractor, observeElementRect, measureElement as measureSize, type Virtualizer } from "@tanstack/svelte-virtual";
   import { onMount, tick, untrack, type Snippet } from "svelte";
+  import { LoaderCircle } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import type { HistoryMessages, Message } from "./contracts";
   import { reading } from "./api";
   import { historyCache, type LoadedHistory } from "./history-cache";
   import { transcriptPositions, saveTranscriptPosition } from "./transcript-state";
   import * as m from "./paraglide/messages";
-  let { syncRevision = 0, agentId, boundary, live, ready, connected, renderMessage, header, footer, onfollow, reports, pinned }: {
-    agentId: string; boundary?: string; syncRevision?: number; live: Message[]; ready: boolean; connected: boolean;
+  let { syncRevision = 0, agentId, boundary, live, ready, connected, detailError = "", renderMessage, header, footer, onfollow, reports, pinned }: {
+    agentId: string; boundary?: string; syncRevision?: number; live: Message[]; ready: boolean; connected: boolean; detailError?: string;
     renderMessage: Snippet<[Message]>; header: Snippet; footer: Snippet<[boolean]>; onfollow: (follow: boolean) => void; reports: Set<string>; pinned?: string;
   } = $props();
   const id = untrack(() => agentId);
@@ -24,6 +25,7 @@
   // Server recovery metadata can refer to native items outside the recent
   // window. Check the first page before presenting those as pending rows.
   const readingSettled = $derived(!boundary || historyLoaded || !!error || !connected);
+  const initialLoading = $derived(connected && !detailError && (!ready || !readingSettled));
   $effect.pre(() => {
     const current = live, revision = syncRevision;
     untrack(() => {
@@ -224,6 +226,7 @@
     };
   });
 </script>
+<div class="conversation-region" aria-busy={initialLoading}>
 <div class="conversation" bind:this={transcript} onscroll={saveReading}>
   <div class="message-timeline" class:historical-messages={!!boundary} style:height={`${$virtualizer.getTotalSize()}px`}>
     <!-- Always mounted, but measured as the leading item so header changes
@@ -241,10 +244,17 @@
         {@render renderMessage(messages[row.index - 1])}
       </div>{/if}
     {/each}
-    <div class="timeline-footer" bind:this={tail} style:top={`${$virtualizer.getTotalSize() - footerHeight - 24}px`}>{#if !readingSettled}<span role="status">{m.loading_history()}</span>{/if}{@render footer(readingSettled)}</div>
+    <div class="timeline-footer" bind:this={tail} style:top={`${$virtualizer.getTotalSize() - footerHeight - 24}px`}>{@render footer(readingSettled)}</div>
   </div>
 </div>
+{#if initialLoading}<div class="conversation-loading" role="status" aria-label={m.loading_conversation()}><LoaderCircle size={28} aria-hidden="true" class="conversation-spinner" /></div>{/if}
+</div>
 <style>
+  .conversation-region { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; }
+  .conversation-loading { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; background: color-mix(in srgb, var(--background) 65%, transparent); color: var(--muted-foreground); }
+  .conversation-loading :global(.conversation-spinner) { animation: conversation-spin 1s linear infinite; }
+  @keyframes conversation-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .conversation-loading :global(.conversation-spinner) { animation: none; } }
   .conversation { padding: 0; overflow-anchor: none; }
   .message-timeline { position: relative; width: 100%; }
   .timeline-message, .timeline-header, .timeline-footer { position: absolute; left: 24px; right: 24px; display: flow-root; }

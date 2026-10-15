@@ -31,6 +31,7 @@ async function observe(page: Page) {
       title: string | null;
       history: string;
       scroll: number;
+      busy: boolean;
       bottom: number;
     }[] = [];
     (window as any).historyFrames = frames;
@@ -43,6 +44,7 @@ async function observe(page: Page) {
           history:
             detail!.querySelector(".historical-messages")?.textContent ?? "",
           scroll: el.scrollTop,
+          busy: !!document.querySelector(".conversation-loading"),
           bottom: el.scrollHeight - el.scrollTop - el.clientHeight,
         });
       if (frames.length < 60) requestAnimationFrame(sample);
@@ -61,11 +63,13 @@ async function assertFrames(
     title: string;
     history: string;
     scroll: number;
+    busy: boolean;
     bottom: number;
   }[];
   const target = frames.filter((frame) => frame.title === title);
   expect(target.length).toBeGreaterThan(0);
   for (const frame of target) {
+    expect(frame.busy).toBe(false);
     expect(frame.history).toContain(text);
     expect(frame.scroll).toBe(scroll);
     expect(frame.bottom).toBeGreaterThan(80);
@@ -346,6 +350,7 @@ for (const completion of ["after return", "while away"])
     const held = await holdHistory(page, id, true);
     await history.getByRole("button", { name: /earlier messages/i }).click();
     await held.arrival;
+    await expect(page.locator(".conversation-loading")).toHaveCount(0);
     const beforeSwitch = await position();
     await choose(page, "Local reports");
     await expect.poll(held.cancelled).toBe(true);

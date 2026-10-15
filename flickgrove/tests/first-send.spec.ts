@@ -77,9 +77,9 @@ for (const width of [1440, 390]) {
       .filter({ hasText: "First owned input after restart" });
     await expect(message).toHaveCount(1);
     // Exact first-input regression: no indefinite Sending for a failed open.
-    await expect(message.getByRole("status")).toHaveText("Needs attention");
+    await expect(message.getByRole("status")).toContainText("Needs attention");
     const settledMs = Date.now() - submittedAt;
-    await expect(page.locator(".delivery-error")).toContainText(
+    await expect(message.getByRole("status")).toContainText(
       "JSON-RPC error -32600: no rollout found for thread id thread-fake",
     );
     const operation = [...calls.values()].find(
@@ -115,7 +115,6 @@ for (const width of [1440, 390]) {
     await expect(page.locator(".history-controls [role=alert]")).toHaveText(
       "JSON-RPC error -32601: thread/items/list is not supported yet",
     );
-    await page.locator(".delivery-error > summary").click();
     await input.fill("Newer draft");
     await expect(
       page.getByRole("button", { name: "Send message", exact: true }),
@@ -124,15 +123,11 @@ for (const width of [1440, 390]) {
       path: `../.scratch/send-freeze-after-questions-card/rejected-${width}.png`,
       animations: "disabled",
     });
-    await page
-      .getByRole("button", { name: "Restore to draft", exact: true })
-      .click();
-    await expect(input).toHaveValue(
-      "Newer draft\n\nFirst owned input after restart",
-    );
-    await expect(page.locator(".delivery-error")).toHaveCount(0);
+    await message.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(message.getByRole("status")).toContainText("Needs attention");
+    await expect(input).toHaveValue("Newer draft");
     await page.reload();
-    await expect(message).toHaveCount(0);
+    await expect(message).toHaveCount(1);
     expect(
       (await requests()).filter(
         (r: { method: string }) => r.method === "turn/start",
@@ -189,7 +184,7 @@ test("attempted input stays unknown across restart and read failure without repl
   const message = page
     .locator(".user-message")
     .filter({ hasText: "Unknown owned input" });
-  await expect(message.getByRole("status")).toHaveText("Sending…");
+  await expect(message.getByRole("status")).toHaveCount(0);
   await expect
     .poll(
       async () =>
@@ -220,7 +215,7 @@ test("attempted input stays unknown across restart and read failure without repl
     200,
   );
   await page.reload();
-  await expect(message.getByRole("status")).toHaveText("Sending…");
+  await expect(message.getByRole("status")).toHaveCount(0);
   await expect.poll(() => lookupResults).toContainEqual(null);
   await expect(page.locator(".delivery-error")).toHaveCount(0);
   await expect(

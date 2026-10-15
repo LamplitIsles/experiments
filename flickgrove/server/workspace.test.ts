@@ -1692,3 +1692,75 @@ for (const path of ["agent", "owning"] as const) {
     expect(app.detail(a.id).state).toBe("working");
   });
 }
+
+test("explicit user retry replaces only its rejected attempt and duplicate tokens never re-admit", async () => {
+  const { app, runtime } = fixture();
+  const a = await app.createOrc("alpha");
+  runtime.sendOverride = async () => {
+    throw new DeliveryRejected("Rejected");
+  };
+  await app.send(a.id, "Original", "logical");
+  const first = { after: "logical", attempt: "retry-1" };
+  await Promise.all([
+    app.send(a.id, "Original", "logical", undefined, first),
+    app.send(a.id, "Original", "logical", undefined, first),
+  ]);
+  expect(runtime.inputs).toHaveLength(2);
+  expect(app.lookup(a.id, "logical")).toMatchObject({
+    state: "rejected",
+    attemptId: "retry-1",
+  });
+  const stale = await app.send(a.id, "Original", "logical", undefined, {
+    after: "logical",
+    attempt: "stale-page-retry",
+  });
+  expect(stale.retryNotAdmitted).toBe("stale-page-retry");
+  expect(stale.deliveries.find((d) => d.id === "logical")).toMatchObject({
+    status: "failed",
+    attemptId: "retry-1",
+  });
+  expect(app.lookup(a.id, "logical")?.attemptId).toBe("retry-1");
+  const duplicate = await app.send(
+    a.id,
+    "Original",
+    "logical",
+    undefined,
+    first,
+  );
+  expect(duplicate.retryNotAdmitted).toBeUndefined();
+  await app.send(a.id, "Original", "logical");
+  expect(runtime.inputs).toHaveLength(2);
+  await expect(
+    app.send(a.id, "Changed", "logical", undefined, {
+      after: "retry-1",
+      attempt: "retry-2",
+    }),
+  ).rejects.toThrow("different content");
+  runtime.sendOverride = undefined;
+  await app.send(a.id, "Original", "logical", undefined, {
+    after: "retry-1",
+    attempt: "retry-2",
+  });
+  expect(runtime.inputs).toHaveLength(3);
+  expect(
+    app.detail(a.id).messages.filter((m) => m.clientId === "logical"),
+  ).toHaveLength(1);
+  await expect(
+    app.send(a.id, "Original", "logical", undefined, {
+      after: "retry-2",
+      attempt: "retry-3",
+    }),
+  ).rejects.toThrow("Only a rejected");
+  expect(app.lookup(a.id, "logical")?.state).toBe("accepted");
+  runtime.sendOverride = async () => {
+    throw new Error("Unconfirmed");
+  };
+  await app.send(a.id, "Unknown", "unknown");
+  await expect(
+    app.send(a.id, "Unknown", "unknown", undefined, {
+      after: "unknown",
+      attempt: "unsafe",
+    }),
+  ).rejects.toThrow("Only a rejected");
+  expect(runtime.inputs).toHaveLength(4);
+});

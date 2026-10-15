@@ -290,11 +290,19 @@ export class HostService {
     text: string,
     operationId: string,
     images?: MessageImage[],
+    retry?: import("../src/chord-contract").RetrySend,
   ) {
-    return qualified(
-      this.local(),
-      await this.workspace.send(this.raw(id), text, operationId, images),
+    const result = await this.workspace.send(
+      this.raw(id),
+      text,
+      operationId,
+      images,
+      retry,
     );
+    return {
+      ...qualified(this.local(), result),
+      retryNotAdmitted: result.retryNotAdmitted,
+    };
   }
   reconcileSettings(id: string) {
     return this.workspace.reconcileSettings(this.raw(id));

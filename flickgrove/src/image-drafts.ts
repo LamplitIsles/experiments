@@ -1,4 +1,4 @@
-import { storagePrefix, readingCache } from "./api";
+import { storagePrefix } from "./api";
 export const IMAGE_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
 export type ImageDraft = { id: string; file: File };
 type Record = { key: string; images: ImageDraft[]; text: string; at: number };
@@ -87,42 +87,6 @@ export function saveImages(
 export const draftKey = (agent: string) => `draft/${agent}`;
 export const operationKey = (agent: string, operation: string) =>
   `operation/${agent}/${operation}`;
-const restoring = new Map<string, Promise<void>>();
-export function restoreImages(
-  agent: string,
-  operation: string,
-  text: string,
-  imageCount = 0,
-) {
-  const key = operationKey(agent, operation);
-  const pending = restoring.get(key);
-  if (pending) return pending;
-  const work = (async () => {
-    const original = await loadImages(operationKey(agent, operation));
-    if ((original?.images.length ?? 0) < imageCount)
-      throw new Error(
-        "Original images are unavailable on this device. Keep the failed message for recovery.",
-      );
-    // A recovery may contain a full older batch alongside a newer batch; no silent
-    // discard. The Composer asks the user to remove images before resubmitting.
-    const textKey = `${storagePrefix}/composer/${agent}`;
-    await saveImages(draftKey(agent), (newer) => [
-      ...newer,
-      ...(original?.images ?? []).filter(
-        (i) => !newer.some((n) => n.id === i.id),
-      ),
-    ]);
-    // Read the newest caption after asynchronous storage, immediately before writing.
-    const newerText = localStorage.getItem(textKey) ?? "";
-    const recovered = newerText.trim() ? `${newerText}\n\n${text}` : text;
-    readingCache.writeDevice(textKey, recovered);
-    window.dispatchEvent(
-      new CustomEvent("grove-image-recovery", { detail: agent }),
-    );
-  })().finally(() => restoring.delete(key));
-  restoring.set(key, work);
-  return work;
-}
 export function intakeError(current: ImageDraft[], files: File[]) {
   if (current.length + files.length > 5)
     return "Choose up to 5 images per message.";

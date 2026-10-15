@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { addOutgoing } from "./outgoing.svelte";
+  import { addOutgoing, acceptReceipt } from "./outgoing.svelte";
   import { navigation, setSurface } from "./navigation.svelte";
   import { Button } from '$lib/components/ui/button/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
@@ -110,8 +110,6 @@
     try { readingCache.writeDevice(`${storagePrefix}/composer/${agentId}`, text); }
     catch(e) { imageError=(e as Error).message; }
   });
-  export function imageRecoveryError(value:string) {imageError=value;}
-  export async function recover(value: string) { cancelVoice(); const next = text.trim() ? `${text}\n\n${value}` : value; readingCache.writeDevice(`${storagePrefix}/composer/${agentId}`,next); text=next; await tick(); input?.focus(); }
   async function restoreInput() { await tick(); input?.focus(); input?.setSelectionRange(insertion.start,insertion.end); }
   async function insertSkill(skill:Skill) {
     if(voiceBusy || composing || stopping || preparing || !connected) return;
@@ -135,7 +133,12 @@
       if(frozen.length) await saveImages(operationKey(agentId,id),frozen,value);
       addOutgoing(agentId,value,id,undefined,undefined,frozen.map(i=>i.id));
       if(frozen.length){
-        await saveImages(draftKey(agentId),current=>JSON.stringify(current.map(i=>i.id))===JSON.stringify(frozen.map(i=>i.id)) ? [] : current);
+        try { await saveImages(draftKey(agentId),current=>JSON.stringify(current.map(i=>i.id))===JSON.stringify(frozen.map(i=>i.id)) ? [] : current); }
+        catch (error) {
+          // Originals and journal are durable, but no send has crossed the seam.
+          acceptReceipt(agentId,{operationId:id,state:"rejected",turnId:null,error:(error as Error).message});
+          throw error;
+        }
       }
       try {
         if(localStorage.getItem(`${storagePrefix}/composer/${agentId}`)?.trim()===value)readingCache.writeDevice(`${storagePrefix}/composer/${agentId}`,'');

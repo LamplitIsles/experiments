@@ -25,8 +25,8 @@ const png = async (name = "screen.png") => ({
     .png()
     .toBuffer(),
 });
-async function setup(page: Page, request: any, width: number) {
-  await request.post(origin + "/fixture/reset", { data: { mode: "long" } });
+async function setup(page: Page, request: any, width: number, mode = "long") {
+  await request.post(origin + "/fixture/reset", { data: { mode } });
   await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
   await page.goto(origin);
   if (width === 390) await page.locator(".session-open").first().click();
@@ -188,6 +188,17 @@ for (const width of [1440, 390]) {
     ).toHaveCount(1);
     await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
     expect(originals).toHaveLength(0);
+    // An ordinary optimistic bubble no longer proves native admission. Wait for
+    // its receipt before testing a viewer whose provisional row can reconcile.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            Object.keys(localStorage).filter((k) => k.includes("/outgoing/"))
+              .length,
+        ),
+      )
+      .toBe(0);
     await page.screenshot({ path: `${shots}/${width}-image-message.png` });
     await page.locator(".message-image").first().click();
     await expect(page.locator(".full-image")).toBeVisible();
@@ -197,7 +208,11 @@ for (const width of [1440, 390]) {
         .evaluate((i: HTMLImageElement) => i.naturalWidth),
     ).toBe(1600);
     await page.screenshot({ path: `${shots}/${width}-image-full.png` });
-    await page.keyboard.press("Escape");
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
+    await expect(page.locator(".full-image")).toHaveCount(0);
     await page.reload();
     await expect(page.locator(".message-image")).toHaveCount(3);
     await expect(
@@ -226,11 +241,11 @@ for (const width of [1440, 390]) {
   });
 }
 
-test("slow upload binds original Peer/conversation while new draft remains isolated; rejection merges complete images", async ({
+test("slow upload binds original Peer/conversation while new draft remains isolated; rejection retains complete images for Retry", async ({
   page,
   request,
 }) => {
-  await setup(page, request, 1440);
+  await setup(page, request, 1440, "no-workers");
   const info = await (await request.get(origin + "/fixture/info")).json();
   let release!: () => void;
   let caught!: () => void;
@@ -245,13 +260,21 @@ test("slow upload binds original Peer/conversation while new draft remains isola
   await composer(page).fill("Original upload");
   await composer(page).press("Enter");
   await arrived;
+  await expect(page.locator(".detail-status")).toContainText("Working");
+  await expect(
+    page.locator('.session-open[aria-current="true"] [aria-label="Working"]'),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Stop Orc", exact: true }),
+  ).toHaveCount(0);
+  expect(
+    (await (await request.get(origin + "/fixture/info")).json()).inputs.length,
+  ).toBe(info.inputs.length);
   await expect(page.locator(".message-image")).toHaveCount(1);
   await expect(
     page.locator(".user-message").filter({ hasText: "Original upload" }),
   ).toHaveCount(1);
-  await expect(page.locator(".user-message [role=status]")).toHaveText([
-    "Sending…",
-  ]);
+  await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
   await page.screenshot({ path: `${shots}/desktop-uploading.png` });
   await page
     .getByRole("group", { name: "Host filter" })
@@ -260,6 +283,7 @@ test("slow upload binds original Peer/conversation while new draft remains isola
   await expect(page.locator(".agent-detail h1")).toHaveText(
     "Reader performance",
   );
+  await expect(page.locator(".detail-status")).not.toContainText("Working");
   await add(page);
   await composer(page).fill("New Peer draft");
   release();
@@ -297,8 +321,43 @@ test("slow upload binds original Peer/conversation while new draft remains isola
   await expect(
     page.locator(".delivery-error").filter({ hasText: "Synthetic rejection" }),
   ).toHaveCount(0);
-  await expect(composer(page)).toHaveValue("Restore full message");
+  const failed = page
+    .locator(".user-message")
+    .filter({ hasText: "Restore full message" });
+  await expect(failed.locator("small.failed")).toContainText(
+    "Synthetic rejection",
+  );
+  await expect(composer(page)).toHaveValue("");
+  await expect(page.locator(".image-draft")).toHaveCount(0);
+  await add(page);
+  await composer(page).fill("New image draft");
+  // This test owns this journal. Revisit a server-only rejected envelope.
+  await page.evaluate(() => {
+    for (const key of Object.keys(localStorage)) {
+      if (
+        key.includes("/outgoing/") &&
+        JSON.parse(localStorage.getItem(key)!).text === "Restore full message"
+      )
+        localStorage.removeItem(key);
+    }
+  });
+  await page.reload();
+  await page
+    .locator(".user-message")
+    .filter({ hasText: "Synthetic rejection" })
+    .getByRole("button", { name: "Read full message", exact: true })
+    .click();
+  await expect(
+    failed.getByRole("button", { name: "Retry", exact: true }),
+  ).toBeVisible();
+  await request.post(origin + "/fixture/change", {
+    data: { sendMode: "accepted" },
+  });
+  await failed.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(failed.locator("small.failed")).toHaveCount(0);
+  await expect(failed.locator(".message-image")).toHaveCount(1);
   await expect(page.locator(".image-draft")).toHaveCount(1);
+  await expect(composer(page)).toHaveValue("New image draft");
   await page.screenshot({ path: `${shots}/desktop-image-failed.png` });
   await request.post(origin + "/fixture/change", {
     data: { sendMode: "uncertain" },
@@ -311,7 +370,7 @@ test("slow upload binds original Peer/conversation while new draft remains isola
   const pending = page
     .locator(".user-message")
     .filter({ hasText: "Unknown original" });
-  await expect(pending.locator("small[role=status]")).toHaveText("Sending…");
+  await expect(pending.locator("small[role=status]")).toHaveCount(0);
   await expect
     .poll(
       async () =>
@@ -322,7 +381,7 @@ test("slow upload binds original Peer/conversation while new draft remains isola
   const before = (await (await request.get(origin + "/fixture/info")).json())
     .inputs.length;
   await page.reload();
-  await expect(pending.locator("small[role=status]")).toHaveText("Sending…");
+  await expect(pending.locator("small[role=status]")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Check receipt", exact: true }),
   ).toHaveCount(0);
@@ -332,7 +391,7 @@ test("slow upload binds original Peer/conversation while new draft remains isola
   await page.screenshot({ path: `${shots}/desktop-image-unknown.png` });
 });
 
-test("storage failure keeps complete editable draft; HTTP rejection merges newer originating draft; long question remains readable", async ({
+test("storage failure keeps complete editable draft; HTTP rejection preserves newer originating draft; long question remains readable", async ({
   page,
   request,
 }) => {
@@ -377,10 +436,22 @@ test("storage failure keeps complete editable draft; HTTP rejection merges newer
   await composer(page).fill("Newer original-session draft");
   release();
   await page.unrouteAll({ behavior: "wait" });
-  await expect(page.locator(".image-draft")).toHaveCount(2);
-  await expect(composer(page)).toHaveValue(
-    "Newer original-session draft\n\nNever discard this",
+  await expect(page.locator(".image-draft")).toHaveCount(1);
+  await expect(composer(page)).toHaveValue("Newer original-session draft");
+  const failed = page
+    .locator(".user-message")
+    .filter({ hasText: "Never discard this" });
+  await expect(failed.locator("small.failed")).toContainText(
+    "Synthetic upload rejection",
   );
+  await page.reload();
+  await expect(
+    failed.getByRole("button", { name: "Retry", exact: true }),
+  ).toBeVisible();
+  await failed.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(failed.locator("small.failed")).toHaveCount(0);
+  await expect(composer(page)).toHaveValue("Newer original-session draft");
+  await expect(page.locator(".image-draft")).toHaveCount(1);
   await expect(page.locator(".delivery-error")).toHaveCount(0);
   await request.post(origin + "/fixture/change", {
     data: {
@@ -397,9 +468,7 @@ test("storage failure keeps complete editable draft; HTTP rejection merges newer
   await page.screenshot({ path: `${shots}/mobile-questions-long.png` });
   await page.keyboard.press("Escape");
   await expect(page.locator(".question-panel")).toHaveCount(0);
-  await expect(composer(page)).toHaveValue(
-    "Newer original-session draft\n\nNever discard this",
-  );
+  await expect(composer(page)).toHaveValue("Newer original-session draft");
 });
 
 async function boundedPreview(page: Page, selector: string) {
@@ -464,13 +533,13 @@ test("bounded local draft/pending/rejected previews retain original and edited r
   await page.keyboard.press("Escape");
   release();
   await page.unrouteAll({ behavior: "wait" });
-  await expect(composer(page)).toHaveValue("Original rejected caption");
-  await boundedPreview(page, ".image-draft img");
-  await expect(page.locator(".message-image")).toHaveCount(0);
+  await expect(composer(page)).toHaveValue("");
+  await boundedPreview(page, ".message-image img");
+  await expect(page.locator(".message-image")).toHaveCount(1);
   await composer(page).fill("Edited recovered caption");
   await page.reload();
   await expect(composer(page)).toHaveValue("Edited recovered caption");
-  await boundedPreview(page, ".image-draft img");
+  await boundedPreview(page, ".message-image img");
   const operationText = await page.evaluate(async () => {
     const name = (await indexedDB.databases()).find((d) =>
       d.name?.endsWith("/images"),
@@ -487,6 +556,39 @@ test("bounded local draft/pending/rejected previews retain original and edited r
     return rows.find((r) => r.key.startsWith("operation/")).text;
   });
   expect(operationText).toBe("Original rejected caption");
+  const failed = page
+    .locator(".user-message")
+    .filter({ hasText: "Original rejected caption" });
+  await page.evaluate(async () => {
+    const name = (await indexedDB.databases()).find((d) =>
+      d.name?.endsWith("/images"),
+    )!.name!;
+    const db = await new Promise<IDBDatabase>((resolve) => {
+      const r = indexedDB.open(name);
+      r.onsuccess = () => resolve(r.result);
+    });
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction("drafts", "readwrite"),
+        store = tx.objectStore("drafts"),
+        r = store.getAll();
+      r.onsuccess = () => {
+        const row = r.result.find((r: any) => r.key.startsWith("operation/"));
+        (window as any).retryOriginal = row;
+        store.delete(row.key);
+      };
+      tx.oncomplete = () => resolve();
+    });
+    db.close();
+  });
+  await failed.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(failed.locator("small.failed")).toContainText(
+    "Original images are unavailable",
+  );
+  await expect(composer(page)).toHaveValue("Edited recovered caption");
+  expect(
+    (await (await request.get(origin + "/fixture/info")).json()).inputs.length,
+  ).toBe(info.inputs.length);
+  await expect(failed.locator(".message-image")).toHaveCount(1);
   await page.screenshot({ path: `${shots}/review-edited-recovery.png` });
 });
 
@@ -586,11 +688,16 @@ for (const failure of [
       }),
     );
     await composer(page).press("Enter");
-    await expect(page.locator(".agent-detail [role=alert]")).toContainText(
+    await expect(page.locator(".user-message small.failed")).toContainText(
       failure.expected,
     );
-    await expect(composer(page)).toHaveValue("Preserve failed upload");
-    await expect(page.locator(".image-draft")).toHaveCount(1);
+    await expect(composer(page)).toHaveValue("");
+    await expect(page.locator(".image-draft")).toHaveCount(0);
+    await expect(
+      page
+        .locator(".user-message")
+        .getByRole("button", { name: "Retry", exact: true }),
+    ).toBeVisible();
     expect(
       (await (await request.get(origin + "/fixture/info")).json()).inputs
         .length,
@@ -729,7 +836,7 @@ for (const width of [1440, 390]) {
     const image = page
       .locator(".user-message")
       .filter({ hasText: "Image awaiting native receipt" });
-    await expect(image.locator("small[role=status]")).toHaveText("Sending…");
+    await expect(image.locator("small[role=status]")).toHaveCount(0);
     await expect
       .poll(
         async () =>
@@ -767,10 +874,14 @@ for (const width of [1440, 390]) {
     await request.post(origin + "/fixture/change", {
       data: { sendMode: "rejected" },
     });
-    await expect(composer(page)).toHaveValue(
-      "Newer image draft\n\nRejected image caption",
-    );
-    await expect(page.locator(".image-draft")).toHaveCount(2);
+    await expect(composer(page)).toHaveValue("Newer image draft");
+    await expect(page.locator(".image-draft")).toHaveCount(1);
+    await expect(
+      page
+        .locator(".user-message")
+        .filter({ hasText: "Rejected image caption" })
+        .getByRole("button", { name: "Retry", exact: true }),
+    ).toBeVisible();
     await expect(page.locator(".delivery-error")).toHaveCount(0);
     await page.screenshot({
       path: `../.scratch/flickgrove-results/image-rejected-${width}.png`,
@@ -809,19 +920,20 @@ for (const width of [1440, 390]) {
       });
     });
     await page.reload(); // Apply interception to a new socket; retain drafts and image blobs.
-    await expect(composer(page)).toHaveValue(
-      "Newer image draft\n\nRejected image caption",
-    );
+    await expect(composer(page)).toHaveValue("Newer image draft");
     await composer(page).fill("Uploaded image without native confirmation");
+    await expect(
+      page.getByRole("button", { name: "Send message", exact: true }),
+    ).toBeEnabled();
     await composer(page).press("Enter");
     await expect.poll(() => dropped).toBe(true);
     const pending = page
       .locator(".user-message")
       .filter({ hasText: "Uploaded image without native confirmation" });
-    await expect(pending.locator("small[role=status]")).toHaveText("Sending…");
+    await expect(pending.locator("small[role=status]")).toHaveCount(0);
     await page.reload();
-    await expect(pending.locator("small[role=status]")).toHaveText("Sending…");
-    await expect(pending.locator(".message-image")).toHaveCount(2);
+    await expect(pending.locator("small[role=status]")).toHaveCount(0);
+    await expect(pending.locator(".message-image")).toHaveCount(1);
     await expect(composer(page)).toHaveValue("");
     await expect(page.locator(".image-draft")).toHaveCount(0); // Null did not authorize recovery.
     expect(calls).toEqual([operationId]);
@@ -841,36 +953,24 @@ for (const width of [1440, 390]) {
   });
 }
 
-test("server image ownership rejection restores fully before deleting; failed recovery retains evidence", async ({
+test("server image ownership rejection keeps originals and Retry preserves newer draft/images", async ({
   page,
   request,
 }) => {
-  let release!: () => void;
-  let arrived!: () => void;
-  const gate = new Promise<void>((r) => (release = r));
-  const arrival = new Promise<void>((r) => (arrived = r));
-  let exactError = false;
+  let reject = true;
   await page.routeWebSocket("**/api/socket", (ws) => {
     const server = ws.connectToServer();
-    ws.onMessage(async (raw) => {
-      const frame = JSON.parse(String(raw));
-      if (frame.call?.member === "send" && frame.call.args[0].images?.length) {
-        arrived();
-        await gate;
-        frame.call.args[0].text += " changed"; // Real validation refusal, no forged result.
-        server.send(JSON.stringify(frame));
-      } else server.send(raw);
-    });
-    server.onMessage((raw) => {
+    ws.onMessage((raw) => {
       const frame = JSON.parse(String(raw));
       if (
-        frame.type === "error" &&
-        frame.error ===
-          "Images do not belong to this conversation and operation"
+        reject &&
+        frame.call?.member === "send" &&
+        frame.call.args[0].images?.length
       )
-        exactError = true;
-      ws.send(raw);
+        frame.call.args[0].text += " changed";
+      server.send(JSON.stringify(frame));
     });
+    server.onMessage((raw) => ws.send(raw));
   });
   await setup(page, request, 1440);
   const before = (await (await request.get(origin + "/fixture/info")).json())
@@ -878,106 +978,33 @@ test("server image ownership rejection restores fully before deleting; failed re
   await add(page);
   await composer(page).fill("Original\ncaption");
   await composer(page).press("Enter");
-  await arrival;
-  await add(page);
-  await composer(page).fill("Newer draft");
-  await page.evaluate(() => {
-    const put = IDBObjectStore.prototype.put;
-    (window as any).allowRecovery = () => (IDBObjectStore.prototype.put = put);
-    IDBObjectStore.prototype.put = function (value: any, ...args: any[]) {
-      if (value.key.startsWith("draft/"))
-        throw new DOMException(
-          "Synthetic recovery failure",
-          "QuotaExceededError",
-        );
-      return put.call(this, value, ...(args as []));
-    };
-  });
-  release();
-  await expect.poll(() => exactError).toBe(true);
-  await expect(page.locator(".user-message [role=status]")).toHaveText(
-    "Needs attention",
-  );
-  await expect(composer(page)).toHaveValue("Newer draft");
-  await expect(page.locator(".image-draft")).toHaveCount(1);
-  await expect(page.locator(".delivery-error")).toContainText(
+  const failed = page.locator(".user-message").filter({ hasText: "Original" });
+  await expect(failed.locator("small.failed")).toContainText(
     "Images do not belong",
   );
-  const failDeletion = () => {
-    const remove = Storage.prototype.removeItem;
-    (window as any).allowDeletion = false;
-    Storage.prototype.removeItem = function (key) {
-      if (key.includes("/outgoing/") && !(window as any).allowDeletion)
-        throw new DOMException(
-          "Synthetic deletion failure",
-          "QuotaExceededError",
-        );
-      return remove.call(this, key);
-    };
-  };
-  await page.addInitScript(failDeletion);
-  await page.evaluate(failDeletion);
-  await page.evaluate(() => (window as any).allowRecovery());
-  await page.locator(".delivery-error summary").click();
-  await page.getByRole("button", { name: "Restore to draft" }).dblclick();
-  await expect(composer(page)).toHaveValue("Newer draft\n\nOriginal\ncaption");
-  await expect(page.locator(".image-draft")).toHaveCount(2);
-  await expect(page.locator(".delivery-error")).toHaveCount(1);
-  await composer(page).fill("Newer draft\n\nOriginal\ncaption\nLater edit");
-  await page.getByLabel("Choose message images").setInputFiles({
-    ...(await png()),
-    name: "later.png",
-  });
-  await expect(page.locator(".image-draft")).toHaveCount(3);
-  await page.getByRole("button", { name: "Restore to draft" }).click();
-  await expect(composer(page)).toHaveValue(
-    "Newer draft\n\nOriginal\ncaption\nLater edit\n\nOriginal\ncaption",
-  );
-  await expect(page.locator(".image-draft")).toHaveCount(3);
+  await add(page);
+  await composer(page).fill("Newer draft");
   await page.reload();
-  await expect(composer(page)).toHaveValue(
-    "Newer draft\n\nOriginal\ncaption\nLater edit\n\nOriginal\ncaption",
-  );
-  await page.locator(".delivery-error summary").click();
-  await page.evaluate(() => ((window as any).allowDeletion = true));
-  await page.getByRole("button", { name: "Restore to draft" }).click();
-  await expect(composer(page)).toHaveValue(
-    "Newer draft\n\nOriginal\ncaption\nLater edit\n\nOriginal\ncaption\n\nOriginal\ncaption",
-  );
-  await expect(page.locator(".delivery-error")).toHaveCount(0);
-  await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
-  await expect(page.locator(".host-outage")).toHaveCount(0);
-  await page.screenshot({
-    path: "../.scratch/flickgrove-image-ownership/screenshots/recovered-1440.png",
-  });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({
-    path: "../.scratch/flickgrove-image-ownership/screenshots/recovered-390.png",
-  });
-  await page.reload();
-  await expect(composer(page)).toHaveValue(
-    "Newer draft\n\nOriginal\ncaption\nLater edit\n\nOriginal\ncaption\n\nOriginal\ncaption",
-  );
-  await expect(page.locator(".image-draft")).toHaveCount(3);
-  await expect(page.locator(".delivery-error")).toHaveCount(0);
-  // Automatic image restoration also deletes only after successful recovery.
-  await page.evaluate(() => ((window as any).allowDeletion = true));
-  await composer(page).press("Enter");
+  await expect(
+    failed.getByRole("button", { name: "Retry", exact: true }),
+  ).toBeVisible();
+  reject = false;
+  await failed.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(failed.locator("small.failed")).toHaveCount(0);
   await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          Object.keys(localStorage).filter((k) => k.includes("/outgoing/"))
-            .length,
-      ),
+    .poll(
+      async () =>
+        (await (await request.get(origin + "/fixture/info")).json()).inputs
+          .length,
     )
-    .toBe(0);
-  await expect(composer(page)).toHaveValue(
-    "Newer draft\n\nOriginal\ncaption\nLater edit\n\nOriginal\ncaption\n\nOriginal\ncaption",
-  );
-  await expect(page.locator(".image-draft")).toHaveCount(3);
-  await expect(page.locator(".delivery-error")).toHaveCount(0);
-  expect(
-    (await (await request.get(origin + "/fixture/info")).json()).inputs,
-  ).toHaveLength(before);
+    .toBe(before + 1);
+  await expect(failed).toHaveCount(1);
+  await expect(failed.locator(".message-image")).toHaveCount(1);
+  await expect(composer(page)).toHaveValue("Newer draft");
+  await expect(page.locator(".image-draft")).toHaveCount(1);
+  const last = (
+    await (await request.get(origin + "/fixture/info")).json()
+  ).inputs.at(-1);
+  expect(last.text).toBe("Original\ncaption");
+  expect(last.images).toHaveLength(1);
 });

@@ -8,9 +8,12 @@ import {
 import { z } from "zod";
 import type { Detail, Snapshot } from "./contracts";
 
+// Returned only by the explicit send call; never published as reading state.
+export type SendResult = Detail & { retryNotAdmitted?: string };
 export type View = { snapshot: Snapshot; details: Record<string, Detail> };
 export type Receipt = {
   operationId: string;
+  attemptId?: string;
   state: "accepted" | "rejected";
   turnId: string | null;
   error: string | null;
@@ -33,6 +36,8 @@ export const settingsSchema = z.object({
   orc: defaults,
   worker: defaults,
 });
+export const retrySendSchema = z.object({ after: id, attempt: id }).strict();
+export type RetrySend = z.infer<typeof retrySendSchema>;
 export const inputs = {
   select: z.object({ ids: z.array(id).max(100) }),
   identity: z.object({}),
@@ -66,6 +71,7 @@ export const inputs = {
       text: z.string().trim().max(100_000),
       images: z.array(imageSchema).max(5).optional(),
       operationId: z.string().min(1).max(120),
+      retry: retrySendSchema.optional(),
     })
     .strict()
     .refine(
@@ -112,6 +118,7 @@ export type GroveContract = Methods & {
 };
 export const Grove = defineService<GroveContract>("flickgrove.workspace.v1");
 export const receiptSchema = z.object({
+  attemptId: id.optional(),
   operationId: id,
   state: z.enum(["accepted", "rejected"]),
   turnId: z.string().nullable(),
@@ -180,6 +187,7 @@ const agent = z.object({
     .optional(),
 });
 export const deliverySchema = z.object({
+  attemptId: id.optional(),
   recoveryRef: z.boolean().optional(),
   id,
   text: z.string(),

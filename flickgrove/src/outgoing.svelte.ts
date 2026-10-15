@@ -13,6 +13,7 @@ const confirmed = new Set<string>();
 const key = (o: Outgoing) =>
   `${prefix}${encodeURIComponent(o.agentId)}/${encodeURIComponent(o.id)}`;
 const entry = z.object({
+  attemptId: z.string().optional(),
   agentId: z.string(),
   id: z.string(),
   text: z.string(),
@@ -61,7 +62,7 @@ for (const storageKey of Object.keys(localStorage)) {
   }
 }
 export const outgoing = $state<{ entries: Outgoing[] }>({ entries: saved });
-function persist(o: Outgoing) {
+function persist(o: Outgoing, required = false) {
   // Each operation owns its record; an unrelated tab cannot erase its journal.
   if (receiptAlreadyAccepted(o.agentId, o.id)) {
     o.status = "accepted";
@@ -91,7 +92,7 @@ function persist(o: Outgoing) {
   } catch (error) {
     // A new submission must be durable before sending. An existing journal or
     // owner-confirmed receipt can still converge in memory when storage is full.
-    if (!raw) throw error;
+    if (!raw || required) throw error;
   }
 }
 export function addOutgoing(
@@ -172,7 +173,11 @@ export function observeOutgoing(detail: Detail) {
       return false;
     }
     const d = detail.deliveries.find((d) => d.id === o.id);
-    if (d && o.status !== "accepted") {
+    if (
+      d &&
+      o.status !== "accepted" &&
+      (d.status === "sent" || (d.attemptId ?? o.id) === (o.attemptId ?? o.id))
+    ) {
       o.status = submissionResult(d);
       if (o.status === "accepted") rememberAccepted(o.agentId, o.id);
       o.error = d.error;
@@ -180,6 +185,29 @@ export function observeOutgoing(detail: Detail) {
     }
     return o.status !== "accepted";
   });
+}
+// A declined explicit retry can adopt the owner's current rejection. Unsolicited
+// receipts keep their attempt filter; late results cannot replace a newer call.
+export function observeSendResult(
+  detail: import("./chord-contract").SendResult,
+  operationId: string,
+  attemptId?: string,
+) {
+  const local = outgoing.entries.find(
+    (o) => o.agentId === detail.id && o.id === operationId,
+  );
+  const current = detail.deliveries.find((d) => d.id === operationId);
+  if (
+    attemptId &&
+    detail.retryNotAdmitted === attemptId &&
+    local?.attemptId === attemptId &&
+    local.status === "pending" &&
+    current?.source === "user" &&
+    current.status === "failed" &&
+    !receiptAlreadyAccepted(detail.id, operationId)
+  )
+    local.attemptId = current.attemptId;
+  observeOutgoing(detail);
 }
 export function acceptReceipt(agentId: string, raw: Receipt | null) {
   const receipt = lookupSchema.parse(raw);
@@ -194,16 +222,37 @@ export function acceptReceipt(agentId: string, raw: Receipt | null) {
   const o = outgoing.entries.find(
     (o) => o.agentId === agentId && o.id === receipt.operationId,
   );
-  if (!o || o.status === "accepted") return;
+  if (
+    !o ||
+    o.status === "accepted" ||
+    (receipt.state !== "accepted" &&
+      (receipt.attemptId ?? o.id) !== (o.attemptId ?? o.id))
+  )
+    return;
   o.status = receipt.state === "accepted" ? "accepted" : "rejected";
   o.error = receipt.error ?? undefined;
   persist(o);
   if (o.status === "accepted")
     outgoing.entries = outgoing.entries.filter((entry) => entry !== o);
 }
+export function beginRetry(agentId: string, id: string, attemptId: string) {
+  const o = outgoing.entries.find((o) => o.agentId === agentId && o.id === id);
+  if (!o || o.status !== "rejected" || receiptAlreadyAccepted(agentId, id))
+    throw new Error("Only a rejected user submission can be retried");
+  const previous = { ...o };
+  o.attemptId = attemptId;
+  o.status = "pending";
+  o.error = undefined;
+  try {
+    persist(o, true);
+  } catch (error) {
+    Object.assign(o, previous);
+    throw error;
+  }
+}
 export function unknownOutgoing(agentId: string, id: string, error: string) {
   const o = outgoing.entries.find((o) => o.agentId === agentId && o.id === id);
-  if (o && o.status !== "accepted" && !receiptAlreadyAccepted(agentId, id)) {
+  if (o && o.status === "pending" && !receiptAlreadyAccepted(agentId, id)) {
     o.status = "pending";
     o.error = error;
     persist(o);
@@ -277,6 +326,7 @@ export function withOutgoing(detail: Detail): Detail {
         ),
       ...local.map((o) => ({
         id: o.id,
+        attemptId: o.attemptId,
         text: o.text,
         images: o.images,
         status: journalStatus(o.status),

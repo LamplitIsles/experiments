@@ -101,6 +101,7 @@ export interface Question {
 }
 export type Answer = { questionId: string; answer: string };
 export interface Delivery {
+  attemptId?: string;
   recoveryRef?: boolean;
   images?: MessageImage[];
   answers?: Answer[];

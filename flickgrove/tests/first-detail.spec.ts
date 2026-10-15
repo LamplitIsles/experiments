@@ -59,7 +59,7 @@ for (const width of [1440, 390])
     });
     await choose(page, "Reader performance");
     const input = page.getByRole("textbox", { name: "Message Orc" });
-    await expect(page.locator(".detail-loading")).toBeVisible();
+    await expect(page.locator(".conversation-loading")).toBeVisible();
     await input.fill("first pending draft");
     await input.evaluate((el: HTMLTextAreaElement) => {
       el.focus();
@@ -88,7 +88,7 @@ for (const width of [1440, 390])
     await page.screenshot({
       path: `../.scratch/flickgrove-first-detail-tree-fast/${width}-pending.png`,
     });
-    await expect(page.locator(".detail-loading")).toBeHidden({
+    await expect(page.locator(".conversation-loading")).toBeHidden({
       timeout: 10000,
     });
     await expect(
@@ -166,6 +166,7 @@ test("first-open failure retains target and draft, explicit Retry fills same fra
   await expect(page.locator(".detail-loading")).toContainText(
     "Synthetic detail unavailable",
   );
+  await expect(page.locator(".conversation-loading")).toHaveCount(0);
   await page.screenshot({
     path: "../.scratch/flickgrove-first-detail-tree-fast/1440-detail-error.png",
   });
@@ -174,7 +175,7 @@ test("first-open failure retains target and draft, explicit Retry fills same fra
     .locator(".detail-loading")
     .getByRole("button", { name: "Retry", exact: true })
     .click();
-  await expect(page.locator(".detail-loading")).toBeHidden();
+  await expect(page.locator(".conversation-loading")).toBeHidden();
   await expect(input).toHaveValue("recoverable draft");
   await change(page, { detailDelay: 800 });
   await choose(page, "Streaming voice input");
@@ -191,6 +192,7 @@ test("first-open failure retains target and draft, explicit Retry fills same fra
   await change(page, { outage: true });
   await choose(page, "Reader performance");
   await expect(input).toHaveValue("recoverable draft");
+  await expect(page.locator(".conversation-loading")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Send message", exact: true }),
   ).toBeDisabled();
@@ -230,7 +232,7 @@ test("390 pending Worker remains read-only and Back dismisses it before late det
     "aria-label",
     "Reader implementation",
   );
-  await expect(page.locator(".detail-loading")).toBeVisible();
+  await expect(page.locator(".conversation-loading")).toBeVisible();
   await expect(page.locator(".read-only")).toBeVisible();
   await expect(page.locator(".composer")).toHaveCount(0);
   await expect(
@@ -239,6 +241,9 @@ test("390 pending Worker remains read-only and Back dismisses it before late det
   await page.screenshot({
     path: "../.scratch/flickgrove-first-detail-tree-fast/390-worker-pending.png",
   });
+  await change(page, { outage: true });
+  await expect(page.locator(".conversation-loading")).toHaveCount(0);
+  await expect(page.locator(".host-outage")).toBeVisible();
   await page.getByRole("button", { name: "‹ Sessions", exact: true }).click();
   await expect(page.locator(".agent-detail")).toHaveCount(0);
   await page.waitForTimeout(1800);

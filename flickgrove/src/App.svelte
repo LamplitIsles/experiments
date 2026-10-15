@@ -9,7 +9,7 @@
   import { X, Plus, History, Settings as SettingsIcon } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { navigation, initializeNavigation, resumeFilePreview, openConversation, setSurface, back, validateNavigation } from "./navigation.svelte";
-  import { readingCache } from "./api";
+  import { readingCache, reading } from "./api";
   import { retainTranscriptPositions } from "./transcript-state";
   import { Peers, preferences } from "./peers";
   import { onMount, tick, untrack } from "svelte";
@@ -17,10 +17,10 @@
   import { api, editable, setClient } from "./api";
   import { RequestRejected } from "./chord-client";
   import { lookupSchema, abandonCloseSchema, type Receipt } from "./chord-contract";
-  import { addOutgoing, observeOutgoing, outgoing, withOutgoing, acceptReceipt, unknownOutgoing, submissionResult } from "./outgoing.svelte";
+  import { addOutgoing, observeOutgoing, outgoing, withOutgoing, acceptReceipt, unknownOutgoing, submissionResult, beginRetry, observeSendResult } from "./outgoing.svelte";
   import { imageSchema } from "./chord-contract";
-  import { restoreImages, type ImageDraft } from "./image-drafts";
-  import { receiptAlreadyAccepted, setOutgoingImages, deleteRejectedOutgoing, clearClosedPending, closeRecovery, rememberCloseRecovery, forgetCloseRecovery } from "./outgoing.svelte";
+  import { loadImages, operationKey, type ImageDraft } from "./image-drafts";
+  import { receiptAlreadyAccepted, setOutgoingImages, clearClosedPending, closeRecovery, rememberCloseRecovery, forgetCloseRecovery } from "./outgoing.svelte";
   import { observeQuestions, questionPanels, setQuestionPanel } from "./question-state.svelte";
   import HostFilter from "./HostFilter.svelte";
   import Hosts from "./Hosts.svelte";
@@ -98,7 +98,7 @@
   const unansweredHosts = $derived(new Set(snapshot.agents.filter(a => (a.unansweredCount ?? a.questions.filter(q => q.state === "unanswered").length) > 0).map(a => a.hostId).filter((id): id is string => !!id)));
   const selectedHost = $derived(hosts.find(h => h.id === shownDetail?.hostId));
   const hostConnected = $derived(!!selectedHost?.connected);
-  const visibleAgents = $derived(snapshot.agents.filter(a => a.hostId === hostFilter));
+  const visibleAgents = $derived(snapshot.agents.filter(a => a.hostId === hostFilter).map(a => optimistic(a.id) && a.state !== "working" && a.state !== "stopping" ? {...a,state:"working" as const} : a));
   $effect(() => { if (navigationReady) preferences.selection = { host: hostFilter, sessions: $state.snapshot(remembered) }; });
   async function chooseHost(id: string) {
     createHost = id; preferences.host = id; projectId = ""; projects = []; const seq = ++catalogSequence;
@@ -259,12 +259,13 @@
   async function lookup(agentId: string, operationId: string) {
     if(!client || !connected || hosts.find(h => h.id === agentId.split(':')[0])?.connected === false) return;
     const key=agentId+"/"+operationId;if(lookups.has(key))return;lookups.add(key);
+    const attempt=outgoing.entries.find(o=>o.agentId===agentId && o.id===operationId)?.attemptId;
     try {
       const receipt = lookupSchema.parse(await client.call<Receipt | null>('lookup',{id:agentId,operationId}));
       if (receipt && receipt.operationId !== operationId) throw new Error("Receipt operation identity changed");
       acceptReceipt(agentId, receipt);
     }
-    catch(e) { unknownOutgoing(agentId,operationId,e instanceof Error?e.message:m.load_failure()); }
+    catch(e) { if(outgoing.entries.find(o=>o.agentId===agentId && o.id===operationId)?.attemptId===attempt) unknownOutgoing(agentId,operationId,e instanceof Error?e.message:m.load_failure()); }
     finally{lookups.delete(key);}
   }
   async function retryDelivery(operationId: string) {
@@ -277,63 +278,87 @@
   async function reconcilePending() {
     for(const pending of outgoing.entries) if(pending.status === 'pending') void lookup(pending.agentId,pending.id);
   }
-  let recoveryFailure = $state<{agentId:string; operationId:string; message:string} | null>(null);
-  function recoveryFailed(agentId:string,operationId:string,e:unknown) {
-    if(selectedId===agentId)recoveryFailure={agentId,operationId,message:(e as Error).message};
-  }
-  function recovered(agentId:string,operationId:string) {
-    if(recoveryFailure?.agentId===agentId && recoveryFailure.operationId===operationId)recoveryFailure=null;
-  }
-  async function deleteFailedSubmission(id:string,operationId:string) {
-    if(!client)throw new Error("Connect to the owning host to delete the failed submission.");
-    if(receiptAlreadyAccepted(id,operationId))throw new Error("Accepted submissions cannot be deleted");
-    const result=await client.call<Detail>("deleteFailedSubmission",{id,operationId});
-    observeOutgoing(result);
-    deleteRejectedOutgoing(id,operationId);
-    if(detail?.id===id)detail=result;
-  }
-  async function recoverImageRejection(id:string, operationId:string, text:string, count:number) {
-    await restoreImages(id,operationId,text,count);
-    await deleteFailedSubmission(id,operationId);
-    recovered(id,operationId);
+  let dispatches = $state<{key:string; token:string; admitting:boolean}[]>([]);
+  let retryErrors = $state<Record<string,string>>({});
+  const dispatchKey = (id:string, operation:string) => id + "/" + operation;
+  const dispatchActive = (dispatch: typeof dispatches[number]) => {
+    const local = outgoing.entries.find(o => dispatchKey(o.agentId,o.id) === dispatch.key);
+    return !dispatch.admitting || local?.status === "pending";
+  };
+  const optimistic = (id:string) => dispatches.some(d => d.key.startsWith(id + "/") && dispatchActive(d)) && !!hosts.find(h => h.id === id.split(":")[0])?.connected;
+  async function retryUser(id:string, operationId:string, older?:import("./contracts").Delivery) {
+    const key = dispatchKey(id,operationId);
+    if (!client || dispatches.some(d=>d.key===key && dispatchActive(d)) || receiptAlreadyAccepted(id,operationId)) return;
+    const d = (detail?.id === id ? withOutgoing(detail).deliveries.find(d => d.id === operationId) : undefined) ?? older;
+    if (!d || d.source !== "user" || submissionResult(d) !== "rejected") return;
+    const token=crypto.randomUUID();
+    dispatches = [...dispatches,{key,token,admitting:false}];
+    retryErrors = {...retryErrors,[key]:""};
+    try {
+      let original = outgoing.entries.find(o => o.agentId === id && o.id === operationId);
+      if (!original) {
+        const envelope = d.recoveryRef ? await reading<import("./contracts").Delivery>(`/recovery?${new URLSearchParams({agent:id,operation:operationId})}`, id) : d;
+        if (receiptAlreadyAccepted(id,operationId)) return;
+        addOutgoing(id,envelope.text,operationId,undefined,envelope.images);
+        original = outgoing.entries.find(o => o.agentId === id && o.id === operationId)!;
+        original.attemptId = envelope.attemptId;
+        acceptReceipt(id,{operationId, attemptId:envelope.attemptId, state:"rejected", turnId:null, error:envelope.error ?? null});
+      }
+      let images:ImageDraft[] = [];
+      if (original.localImageIds?.length && !original.images?.length) {
+        const stored = await loadImages(operationKey(id,operationId));
+        images = stored?.images ?? [];
+        if (images.length !== original.localImageIds.length || images.some((image,i) => image.id !== original!.localImageIds![i])) throw new Error("Original images are unavailable on this device. Reconnect to the original device and retry.");
+      }
+      await dispatch(id,original.text,operationId,images,{after:original.attemptId ?? operationId,attempt:token});
+    } catch(e) {
+      retryErrors = {...retryErrors,[key]:(e as Error).message};
+      const original = outgoing.entries.find(o => o.agentId === id && o.id === operationId);
+      acceptReceipt(id,{operationId,attemptId:original?.attemptId,state:"rejected",turnId:null,error:(e as Error).message});
+    } finally { dispatches = dispatches.filter(d => d.token !== token); }
   }
   async function send(id: string, text: string, operationId: string, images: ImageDraft[] = []) {
     if (detail?.id !== id) return false;
-    if (!client || !hosts.find(h=>h.id===id.split(':')[0])?.connected) {
-      acceptReceipt(id,{operationId,state:"rejected",turnId:null,error:"Execution host disconnected before submission"});
-      try{await recoverImageRejection(id,operationId,text,images.length);}catch(e){recoveryFailed(id,operationId,e);}
-      return false;
-    }
-    const connection = client;
     addOutgoing(id,text,operationId,undefined,undefined,images.map(i=>i.id));
-    let submitted=false;
+    const key=dispatchKey(id,operationId);
+    dispatches=[...dispatches,{key,token:operationId,admitting:false}];
+    try { await dispatch(id,text,operationId,images); }
+    finally { dispatches=dispatches.filter(d=>d.token!==operationId); }
+    return true;
+  }
+  async function dispatch(id:string,text:string,operationId:string,images:ImageDraft[],retry?:import("./chord-contract").RetrySend) {
+    const connection = client;
+    let submitted=false, attemptId=outgoing.entries.find(o=>o.agentId===id && o.id===operationId)?.attemptId;
+    const previousAttempt=attemptId;
     try {
-      let refs;
-      if(images.length){
-        // Multipart string fields normalize newlines; JSON preserves the Chord caption exactly.
+      if (!connection || !hosts.find(h=>h.id===id.split(":")[0])?.connected) throw new RequestRejected("Execution host disconnected before submission");
+      let refs=outgoing.entries.find(o=>o.agentId===id && o.id===operationId)?.images;
+      if(images.length && !refs?.length){
         const form=new FormData();form.set('text',JSON.stringify(text));for(const image of images)form.append('images',image.file,image.file.name);
         const response=await connection.media(id,`/api/images?agent=${encodeURIComponent(id)}&operation=${encodeURIComponent(operationId)}`,{method:'POST',body:form});
         const upload=await response.json();
-        if(upload.agent!==id || upload.operation!==operationId)throw new Error("Image operation identity changed");
-        refs=upload.images.map((i:unknown)=>imageSchema.parse(i));setOutgoingImages(id,operationId,refs);
+        if(upload.agent!==id || upload.operation!==operationId)throw new Error(upload.error ?? "Image operation identity changed");
+        refs=upload.images.map((i:unknown)=>imageSchema.parse(i));setOutgoingImages(id,operationId,refs!);
       }
+      if (receiptAlreadyAccepted(id,operationId)) return;
+      if(retry){beginRetry(id,operationId,retry.attempt);attemptId=retry.attempt;}
       submitted=true;
-      const result=await connection.call<Detail>('send',{id,text,operationId,...(refs ? {images:refs} : {})});
-      const delivery=result.deliveries.find(d=>d.id===operationId);
-      observeOutgoing(result);
-      if(images.length && delivery && submissionResult(delivery)==='rejected' && !receiptAlreadyAccepted(id,operationId) && !detail?.messages.some(m=>m.id===operationId || m.clientId===operationId)) {
-        try { await recoverImageRejection(id,operationId,text,images.length); if(selectedId===id)error=delivery.error ?? m.load_failure(); }
-        catch(e){recoveryFailed(id,operationId,e);}
-      }
-      if(!result.deliveries.some(d=>d.id===operationId))unknownOutgoing(id,operationId,m.sending());
+      const active=dispatches.find(d=>d.token===(retry?.attempt ?? operationId));if(active)active.admitting=true;
+      const result=await connection.call<import("./chord-contract").SendResult>('send',{id,text,operationId,...(refs ? {images:refs} : {}),...(retry ? {retry} : {})});
+      observeSendResult(result,operationId,retry?.attempt);
+      if(outgoing.entries.find(o=>o.agentId===id && o.id===operationId)?.attemptId===attemptId && !result.deliveries.some(d=>d.id===operationId))unknownOutgoing(id,operationId,"");
     }catch(e){
+      const current=outgoing.entries.find(o=>o.agentId===id && o.id===operationId);
+      if(current?.attemptId!==attemptId)return;
       if((!submitted || e instanceof RequestRejected) && !receiptAlreadyAccepted(id,operationId)){
-        acceptReceipt(id,{operationId,state:"rejected",turnId:null,error:e instanceof Error?e.message:m.load_failure()});
-        if(images.length)try{await recoverImageRejection(id,operationId,text,images.length);if(selectedId===id)error=e instanceof Error?e.message:m.load_failure();}catch(recovery){recoveryFailed(id,operationId,recovery);}
+        // An RPC rejection did not enter the owning queue. Keep the predecessor
+        // token so the next explicit retry can still replace that rejection.
+        const o=outgoing.entries.find(o=>o.agentId===id && o.id===operationId);
+        if(o && retry && e instanceof RequestRejected){o.attemptId=previousAttempt;attemptId=previousAttempt;}
+        acceptReceipt(id,{operationId,attemptId,state:"rejected",turnId:null,error:e instanceof Error?e.message:m.load_failure()});
       }else unknownOutgoing(id,operationId,e instanceof Error?e.message:m.load_failure());
     }
     if(submitted)void lookup(id,operationId);
-    return true;
   }
   let closingId = $state<string | null>(null);
   let closeError = $state<{ id: string; reason: string } | null>(null);
@@ -556,7 +581,7 @@
   </SessionList>
   {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !shownDetail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
   {#if error && !modal && !shownDetail}<div class="app-error" role="alert"><span>{error}</span><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => error = ""}><X /></Button></div>{/if}
-  {#if shownDetail && selectedId}{#key selectedId}<AgentDetail detail={shownDetail!} ready={!!detail} tree={shownDetail!.role === "orc" ? target : owner} {owner} {skills} {now} connected={hostConnected} mediaConnected={connected && hostConnected} entryId={snapshot.entryId} entryConnected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} onstop={stop} onupdate={result => { if (selectedId === result.id) detail = result; snapshot = { ...snapshot, agents: snapshot.agents.map(a => a.id === result.id ? { ...a, model: result.model, effort: result.effort, serviceTier: result.serviceTier } : a) }; }} onrename={rename} onrefresh={load} onrecovered={recovered} ondeletefailed={deleteFailedSubmission} actionError={error || (recoveryFailure?.agentId===selectedId ? recoveryFailure.message : "")} closeError={closeError?.id === shownDetail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} />{/key}{/if}
+  {#if shownDetail && selectedId}{#key selectedId}<AgentDetail detail={shownDetail!} ready={!!detail} tree={shownDetail!.role === "orc" ? target : owner} {owner} {skills} {now} connected={hostConnected} mediaConnected={connected && hostConnected} entryId={snapshot.entryId} entryConnected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} onstop={stop} onupdate={result => { if (selectedId === result.id) detail = result; snapshot = { ...snapshot, agents: snapshot.agents.map(a => a.id === result.id ? { ...a, model: result.model, effort: result.effort, serviceTier: result.serviceTier } : a) }; }} onrename={rename} onrefresh={load} onretryuser={retryUser} {retryErrors} dispatching={dispatches.filter(d=>d.key.startsWith(selectedId + "/") && dispatchActive(d)).map(d=>d.key.slice(selectedId!.length+1))} optimisticWorking={optimistic(selectedId)} actionError={error} closeError={closeError?.id === shownDetail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} />{/key}{/if}
 </main>
 
 {#if closeRecovery.entries.some(i => modal !== "abandon-close" || abandon?.id !== i.agentId)}

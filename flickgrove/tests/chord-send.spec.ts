@@ -33,11 +33,8 @@ for (const [name, viewport] of [
         page.locator(".user-message").filter({ hasText: text }),
       ).toHaveCount(1);
     }
-    await expect(page.locator(".user-message [role=status]")).toHaveText([
-      "Sending…",
-      "Sending…",
-      "Sending…",
-    ]);
+    await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
+    await expect(page.locator(".detail-status")).toContainText("Working");
     await input.fill("A newer editable draft");
     await expect
       .poll(
@@ -49,7 +46,7 @@ for (const [name, viewport] of [
       )
       .toBe(1);
     await page.screenshot({
-      path: `../.scratch/flickgrove-results/send-pending-${name}.png`,
+      path: `../.scratch/conversation-region-spinner/${viewport.width}-optimistic.png`,
       animations: "disabled",
     });
     await request.post(origin + "/fixture/change", {
@@ -95,7 +92,7 @@ for (const [name, viewport] of [
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(viewport.width);
   });
-  test(`${name}: rejected content restores beside new draft; pending survives null lookup across refresh`, async ({
+  test(`${name}: rejected content retries beside new draft; pending survives null lookup across refresh`, async ({
     page,
     request,
   }) => {
@@ -122,62 +119,69 @@ for (const [name, viewport] of [
         .locator(".user-message")
         .filter({ hasText: "Rejected content" })
         .getByRole("status"),
-    ).toHaveText("Needs attention");
-    await expect(page.locator(".delivery-error summary")).toHaveText(
+    ).toContainText("Needs attention");
+    const failed = page
+      .locator(".user-message")
+      .filter({ hasText: "Rejected content" });
+    await expect(failed.getByRole("status")).toContainText(
       "Synthetic rejection",
     );
-    if (name === "desktop") {
-      const failDeletion = () => {
-        const remove = Storage.prototype.removeItem;
-        (window as any).allowDeletion = false;
-        Storage.prototype.removeItem = function (key) {
-          if (key.includes("/outgoing/") && !(window as any).allowDeletion)
-            throw new DOMException(
-              "Synthetic deletion failure",
-              "QuotaExceededError",
-            );
-          return remove.call(this, key);
-        };
-      };
-      await page.addInitScript(failDeletion);
-      await page.evaluate(failDeletion);
-    }
-    await page.locator(".delivery-error summary").click();
-    await page.getByRole("button", { name: "Restore to draft" }).click();
-    await expect(input).toHaveValue("New draft\n\nRejected content");
-    if (name === "desktop") {
-      await expect(page.locator(".delivery-error")).toHaveCount(1);
-      await input.fill("New draft\n\nRejected content\nLater edit");
-      await page.getByRole("button", { name: "Restore to draft" }).click();
-      await expect(input).toHaveValue(
-        "New draft\n\nRejected content\nLater edit\n\nRejected content",
-      );
-      await page.reload();
-      await expect(input).toHaveValue(
-        "New draft\n\nRejected content\nLater edit\n\nRejected content",
-      );
-      await page.locator(".delivery-error summary").click();
-      await page.evaluate(() => ((window as any).allowDeletion = true));
-      await page.getByRole("button", { name: "Restore to draft" }).click();
-      await expect(input).toHaveValue(
-        "New draft\n\nRejected content\nLater edit\n\nRejected content\n\nRejected content",
-      );
-    }
-    await expect(page.locator(".delivery-error")).toHaveCount(0);
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () =>
-            Object.keys(localStorage).filter((k) => k.includes("/outgoing/"))
-              .length,
-        ),
-      )
-      .toBe(0);
-    await page.reload();
-    await expect(page.locator(".delivery-error")).toHaveCount(0);
+    const retry = failed.getByRole("button", { name: "Retry", exact: true });
+    await expect(retry).toBeVisible();
+    const bubble = await failed.boundingBox(),
+      button = await retry.boundingBox();
+    expect(button!.x + button!.width).toBeLessThanOrEqual(bubble!.x);
     await page.screenshot({
-      path: `../.scratch/flickgrove-results/send-rejected-${name}.png`,
-      animations: "disabled",
+      path: `../.scratch/conversation-region-spinner/${viewport.width}-failed-send.png`,
+    });
+    await page.reload();
+    await expect(retry).toBeVisible();
+    await expect(input).toHaveValue("New draft");
+    await retry.click();
+    await expect(failed.getByRole("status")).toContainText(
+      "Synthetic rejection",
+    );
+    await expect(failed).toHaveCount(1);
+    await request.post(origin + "/fixture/change", {
+      data: { sendMode: "held" },
+    });
+    await input.evaluate((el: HTMLTextAreaElement) => {
+      el.focus();
+      el.setSelectionRange(1, 3);
+    });
+    // Duplicate pointer dispatches must admit only the one explicit attempt.
+    await retry.evaluate((el) => {
+      (el as HTMLButtonElement).click();
+      (el as HTMLButtonElement).click();
+    });
+    await expect(retry).toHaveCount(0);
+    await expect(failed.getByRole("status")).toHaveCount(0);
+    await expect(page.locator(".detail-status")).toContainText("Working");
+    await expect(input).toHaveValue("New draft");
+    await page.screenshot({
+      path: `../.scratch/conversation-region-spinner/${viewport.width}-retrying.png`,
+    });
+    await request.post(origin + "/fixture/change", {
+      data: { sendMode: "accepted" },
+    });
+    await expect
+      .poll(
+        async () =>
+          (await (await request.get(origin + "/fixture/info")).json()).inputs
+            .length,
+      )
+      .toBe(3);
+    await expect(failed).toHaveCount(1);
+    await expect(failed.getByRole("status")).toHaveCount(0);
+    await expect(input).toHaveValue("New draft");
+    expect(
+      await input.evaluate((el: HTMLTextAreaElement) => [
+        el.selectionStart,
+        el.selectionEnd,
+      ]),
+    ).toEqual([1, 3]);
+    await page.screenshot({
+      path: `../.scratch/conversation-region-spinner/${viewport.width}-retried.png`,
     });
     await request.post(origin + "/fixture/change", {
       data: { sendMode: "uncertain" },
@@ -187,10 +191,10 @@ for (const [name, viewport] of [
     const pending = page
       .locator(".user-message")
       .filter({ hasText: "Unknown content" });
-    await expect(pending.getByRole("status")).toHaveText("Sending…");
+    await expect(pending.getByRole("status")).toHaveCount(0);
     await expect(page.locator(".delivery-error")).toHaveCount(0);
     await page.reload();
-    await expect(pending.getByRole("status")).toHaveText("Sending…");
+    await expect(pending.getByRole("status")).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Check receipt" }),
     ).toHaveCount(0);
@@ -199,7 +203,7 @@ for (const [name, viewport] of [
     ).toHaveCount(1);
     expect(
       (await (await request.get(origin + "/fixture/info")).json()).inputs,
-    ).toHaveLength(2);
+    ).toHaveLength(4);
     await page.screenshot({
       path: `../.scratch/flickgrove-results/send-null-pending-${name}.png`,
       animations: "disabled",
@@ -399,4 +403,68 @@ test("two tabs cannot erase an unadmitted operation before its owner has a recei
     (await (await request.get(origin + "/fixture/info")).json()).inputs,
   ).toHaveLength(0);
   await second.close();
+});
+
+test("late original rejection cannot replace an active retry or its eventual native acceptance", async ({
+  page,
+  request,
+}) => {
+  await request.post(origin + "/fixture/reset", {
+    data: { mode: "no-workers" },
+  });
+  await request.post(origin + "/fixture/change", {
+    data: { sendMode: "rejected" },
+  });
+  let late: (() => void) | undefined,
+    first = "";
+  await page.routeWebSocket("**/api/socket", (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((raw) => {
+      const f = JSON.parse(String(raw));
+      if (f.call?.member === "send" && !first) first = f.id;
+      server.send(raw);
+    });
+    server.onMessage((raw) => {
+      const f = JSON.parse(String(raw));
+      if (f.type === "result" && f.id === first) {
+        late = () => ws.send(raw);
+        return;
+      }
+      ws.send(raw);
+    });
+  });
+  await page.goto(origin);
+  await page
+    .getByRole("button", { name: "Open Streaming voice input Orc" })
+    .click();
+  const input = page.getByRole("textbox", { name: "Message Orc" });
+  await input.fill("Stable logical message");
+  await input.press("Enter");
+  const bubble = page
+    .locator(".user-message")
+    .filter({ hasText: "Stable logical message" });
+  await expect(bubble.locator("small.failed")).toContainText(
+    "Synthetic rejection",
+  );
+  await expect.poll(() => !!late).toBe(true);
+  await request.post(origin + "/fixture/change", {
+    data: { sendMode: "held" },
+  });
+  await bubble.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(bubble.locator("small.failed")).toHaveCount(0);
+  late!();
+  await expect(bubble).toHaveCount(1);
+  await expect(bubble.locator("small.failed")).toHaveCount(0);
+  await request.post(origin + "/fixture/change", {
+    data: { sendMode: "accepted" },
+  });
+  await expect
+    .poll(
+      async () =>
+        (await (await request.get(origin + "/fixture/info")).json()).inputs
+          .length,
+    )
+    .toBe(2);
+  await expect(bubble).toHaveCount(1);
+  await expect(bubble.locator("small.failed")).toHaveCount(0);
 });

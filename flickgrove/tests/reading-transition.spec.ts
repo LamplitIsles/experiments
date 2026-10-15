@@ -7,7 +7,7 @@ for (const [width, source] of [
   test(`${width} first reading checks server submissions before displaying recovery rows`, async ({
     page,
   }) => {
-    await page.setViewportSize({ width, height: 900 });
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.request.post(origin + "/fixture/reset");
     const { id, provisional } = await (
       await page.request.post(origin + "/fixture/reading-transition", {
@@ -43,7 +43,7 @@ for (const [width, source] of [
         })
         .click();
       await entered.promise;
-      // Native recent content is readable while server-only recovery is checked.
+      // Native rows remain mounted beneath the bounded loading layer.
       await expect(
         page.locator(`[data-message-id="${provisional}"]`),
       ).toHaveCount(0);
@@ -51,9 +51,41 @@ for (const [width, source] of [
         page.locator('[data-message-id="transition-native-2"]'),
       ).toBeVisible();
       await expect(page.locator(".delivery-error")).toHaveCount(0);
-      await expect(
-        page.locator(".timeline-footer [role=status]"),
-      ).toBeVisible();
+      await expect(page.locator(".conversation-loading")).toBeVisible();
+      await expect(page.locator(".conversation-region")).toHaveAttribute(
+        "aria-busy",
+        "true",
+      );
+      await expect(page.locator(".timeline-footer")).not.toContainText(
+        "Loading conversation",
+      );
+      const bounds = await page.locator(".conversation-loading").boundingBox();
+      expect(bounds).toEqual(await page.locator(".conversation").boundingBox());
+      const seat = await page.locator(".input-seat").boundingBox();
+      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(seat!.y);
+      const spinner = await page.locator(".conversation-spinner").boundingBox();
+      expect(
+        Math.abs(
+          spinner!.x + spinner!.width / 2 - bounds!.x - bounds!.width / 2,
+        ),
+      ).toBeLessThan(1);
+      expect(
+        Math.abs(
+          spinner!.y + spinner!.height / 2 - bounds!.y - bounds!.height / 2,
+        ),
+      ).toBeLessThan(1);
+      await page.locator(".conversation").evaluate((el) => {
+        el.scrollTop = 0;
+      });
+      expect(await page.locator(".conversation-loading").boundingBox()).toEqual(
+        bounds,
+      );
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      expect(
+        await page
+          .locator(".conversation-spinner")
+          .evaluate((el) => getComputedStyle(el).animationName),
+      ).toBe("none");
       const input = page.getByRole("textbox", {
         name: "Message Orc",
         exact: true,
@@ -63,7 +95,7 @@ for (const [width, source] of [
         page.getByRole("button", { name: "Send message", exact: true }),
       ).toBeEnabled();
       await page.screenshot({
-        path: `../.scratch/first-conversation-reading-transition/${width}-pending.png`,
+        path: `../.scratch/conversation-region-spinner/${width}-pending.png`,
       });
       const completed = page.waitForResponse(
         (r) =>
@@ -90,11 +122,13 @@ for (const [width, source] of [
         page.locator(`[data-message-id="${provisional}"]`),
       ).toHaveCount(0);
       await expect(input).toHaveValue("Retain this draft");
-      await expect(page.locator(".timeline-footer [role=status]")).toHaveCount(
-        0,
+      await expect(page.locator(".conversation-loading")).toHaveCount(0);
+      await expect(page.locator(".conversation-region")).toHaveAttribute(
+        "aria-busy",
+        "false",
       );
       await page.screenshot({
-        path: `../.scratch/first-conversation-reading-transition/${width}-ready.png`,
+        path: `../.scratch/conversation-region-spinner/${width}-ready.png`,
       });
     } finally {
       release.resolve();
@@ -102,122 +136,146 @@ for (const [width, source] of [
     }
   });
 }
-test("first-page failure keeps local pending and server recovery available; Retry checks identities without replay", async ({
-  page,
-}) => {
-  await page.request.post(origin + "/fixture/reset");
-  const { id, provisional } = await (
-    await page.request.post(origin + "/fixture/reading-transition", {
-      data: {},
-    })
-  ).json();
-  await page.addInitScript(
-    ({ id }) => {
-      localStorage.setItem(
-        `flickgrove/${location.origin}/outgoing/${encodeURIComponent(id)}/local-pending`,
-        JSON.stringify({
-          agentId: id,
-          id: "local-pending",
-          text: "Local pending stays readable",
-          at: 100,
-          status: "uncertain",
-        }),
-      );
-      localStorage.setItem(
-        `flickgrove/${location.origin}/outgoing/${encodeURIComponent(id)}/local-failed`,
-        JSON.stringify({
-          agentId: id,
-          id: "local-failed",
-          text: "Local failed remains recoverable",
-          at: 101,
-          status: "failed",
-          error: "Fixture local rejection",
-        }),
-      );
-    },
-    { id },
-  );
-  const entered = Promise.withResolvers<void>(),
-    release = Promise.withResolvers<void>();
-  let first = true;
-  await page.route("**/api/read/messages?**", async (route) => {
-    if (
-      new URL(route.request().url()).searchParams.get("agent") === id &&
-      first
-    ) {
-      first = false;
-      entered.resolve();
-      await release.promise;
-      await route.fulfill({
-        status: 503,
-        json: { error: "Fixture initial history unavailable" },
-      });
-    } else await route.continue().catch(() => {});
-  });
-  try {
-    await page.goto(origin);
-    await page
-      .getByRole("button", {
-        name: "Open First reading transition Orc",
-        exact: true,
+for (const width of [1440, 390])
+  test(`${width} first-page failure keeps local pending and server recovery available; Retry checks identities without replay`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.request.post(origin + "/fixture/reset");
+    const { id, provisional } = await (
+      await page.request.post(origin + "/fixture/reading-transition", {
+        data: {},
       })
-      .click();
-    await entered.promise;
-    await expect(
-      page.locator('[data-message-id="local-pending"]'),
-    ).toContainText("Local pending stays readable");
-    await expect(page.locator(".delivery-error")).toHaveCount(1);
-    await page.locator(".delivery-error summary").click();
-    await expect(
-      page.getByRole("button", { name: "Restore to draft", exact: true }),
-    ).toBeEnabled();
-    await expect(
-      page.locator(`[data-message-id="${provisional}"]`),
-    ).toHaveCount(0);
-    release.resolve();
-    await expect(page.locator(".history-controls [role=alert]")).toHaveText(
-      "Fixture initial history unavailable",
+    ).json();
+    await page.addInitScript(
+      ({ id }) => {
+        localStorage.setItem(
+          `flickgrove/${location.origin}/outgoing/${encodeURIComponent(id)}/local-pending`,
+          JSON.stringify({
+            agentId: id,
+            id: "local-pending",
+            text: "Local pending stays readable",
+            at: 100,
+            status: "uncertain",
+          }),
+        );
+        localStorage.setItem(
+          `flickgrove/${location.origin}/outgoing/${encodeURIComponent(id)}/local-failed`,
+          JSON.stringify({
+            agentId: id,
+            id: "local-failed",
+            text: "Local failed remains recoverable",
+            at: 101,
+            status: "failed",
+            error: "Fixture local rejection",
+          }),
+        );
+      },
+      { id },
     );
-    await expect(
-      page.locator(`[data-message-id="${provisional}"]`),
-    ).toBeVisible();
-    await expect(page.locator(".delivery-error")).toHaveCount(2);
-    const input = page.getByRole("textbox", {
-      name: "Message Orc",
-      exact: true,
+    const entered = Promise.withResolvers<void>(),
+      release = Promise.withResolvers<void>();
+    const retryEntered = Promise.withResolvers<void>(),
+      retryRelease = Promise.withResolvers<void>();
+    let first = true;
+    await page.route("**/api/read/messages?**", async (route) => {
+      if (
+        new URL(route.request().url()).searchParams.get("agent") === id &&
+        first
+      ) {
+        first = false;
+        entered.resolve();
+        await release.promise;
+        await route.fulfill({
+          status: 503,
+          json: { error: "Fixture initial history unavailable" },
+        });
+      } else {
+        retryEntered.resolve();
+        await retryRelease.promise;
+        await route.continue().catch(() => {});
+      }
     });
-    await input.fill("Failure draft");
-    await expect(
-      page.getByRole("button", { name: "Send message", exact: true }),
-    ).toBeEnabled();
-    await page
-      .locator(".history-controls")
-      .getByRole("button", { name: "Retry", exact: true })
-      .click();
-    await expect(page.locator(".history-controls [role=alert]")).toHaveCount(0);
-    await expect(
-      page.locator(`[data-message-id="${provisional}"]`),
-    ).toHaveCount(0);
-    await expect(
-      page.locator('[data-message-id="local-pending"]'),
-    ).toContainText("Local pending stays readable");
-    await expect(input).toHaveValue("Failure draft");
-    expect(
-      await page.evaluate(
-        ({ id }) =>
-          JSON.parse(
-            localStorage.getItem(
-              `flickgrove/${location.origin}/outgoing/${encodeURIComponent(id)}/local-pending`,
-            )!,
-          ).status,
-        { id },
-      ),
-    ).toBe("uncertain");
-  } finally {
-    release.resolve();
-    await page.unrouteAll({ behavior: "wait" });
-  }
-});
+    try {
+      await page.goto(origin);
+      await page
+        .getByRole("button", {
+          name: "Open First reading transition Orc",
+          exact: true,
+        })
+        .click();
+      await entered.promise;
+      await expect(
+        page.locator('[data-message-id="local-pending"]'),
+      ).toContainText("Local pending stays readable");
+      await expect(page.locator(".delivery-error")).toHaveCount(0);
+      await expect(page.locator(".conversation-loading")).toBeVisible();
+      await expect(
+        page.locator(`[data-message-id="${provisional}"]`),
+      ).toHaveCount(0);
+      release.resolve();
+      await expect(page.locator(".history-controls [role=alert]")).toHaveText(
+        "Fixture initial history unavailable",
+      );
+      await expect(
+        page.locator(`[data-message-id="${provisional}"]`),
+      ).toBeVisible();
+      await expect(page.locator(".delivery-error")).toHaveCount(1);
+      await expect(page.locator(".conversation-loading")).toHaveCount(0);
+      await expect(
+        page
+          .locator('[data-message-id="local-failed"]')
+          .getByRole("button", { name: "Retry", exact: true }),
+      ).toBeEnabled();
+      await page.locator(".conversation").evaluate((el) => {
+        el.scrollTop = 0;
+      });
+      await page.screenshot({
+        path: `../.scratch/conversation-region-spinner/${width}-error.png`,
+      });
+      const input = page.getByRole("textbox", {
+        name: "Message Orc",
+        exact: true,
+      });
+      await input.fill("Failure draft");
+      await expect(
+        page.getByRole("button", { name: "Send message", exact: true }),
+      ).toBeEnabled();
+      await page
+        .locator(".history-controls")
+        .getByRole("button", { name: "Retry", exact: true })
+        .click();
+      await retryEntered.promise;
+      await expect(page.locator(".conversation-loading")).toBeVisible();
+      retryRelease.resolve();
+      await expect(page.locator(".conversation-loading")).toHaveCount(0);
+      await expect(page.locator(".history-controls [role=alert]")).toHaveCount(
+        0,
+      );
+      await expect(
+        page.locator(`[data-message-id="${provisional}"]`),
+      ).toHaveCount(0);
+      await expect(
+        page.locator('[data-message-id="local-pending"]'),
+      ).toContainText("Local pending stays readable");
+      await expect(input).toHaveValue("Failure draft");
+      expect(
+        await page.evaluate(
+          ({ id }) =>
+            JSON.parse(
+              localStorage.getItem(
+                `flickgrove/${location.origin}/outgoing/${encodeURIComponent(id)}/local-pending`,
+              )!,
+            ).status,
+          { id },
+        ),
+      ).toBe("uncertain");
+    } finally {
+      retryRelease.resolve();
+      release.resolve();
+      await page.unrouteAll({ behavior: "wait" });
+    }
+  });
 
 test("successful history without client identity keeps server reports unresolved and fully readable", async ({
   page,
@@ -235,7 +293,7 @@ test("successful history without client identity keeps server reports unresolved
       exact: true,
     })
     .click();
-  await expect(page.locator(".timeline-footer > [role=status]")).toHaveCount(0);
+  await expect(page.locator(".conversation-loading")).toHaveCount(0);
   await expect(page.locator(".delivery-error")).toHaveCount(3);
   const report = page.locator(
     `[data-message-id="${provisional}"] .worker-report`,

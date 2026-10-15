@@ -1386,6 +1386,7 @@ export class Workspace {
     if (!d || (d.status !== "sent" && d.status !== "failed")) return null;
     return {
       operationId,
+      attemptId: d.attemptId,
       state:
         d.status === "sent" ? ("accepted" as const) : ("rejected" as const),
       turnId: d.turnId ?? null,
@@ -1429,7 +1430,13 @@ export class Workspace {
       return this.detail(id);
     });
   }
-  send(id: string, text: string, requestId: string, images?: MessageImage[]) {
+  send(
+    id: string,
+    text: string,
+    requestId: string,
+    images?: MessageImage[],
+    retry?: import("../src/chord-contract").RetrySend,
+  ): Promise<import("../src/chord-contract").SendResult> {
     return this.serialize(id, async () => {
       const a = this.agent(id);
       if (a.role !== "orc") throw new Error("Send instructions through Orc");
@@ -1441,12 +1448,40 @@ export class Workspace {
           JSON.stringify(previous.images ?? []) !== JSON.stringify(images ?? [])
         )
           throw new Error("Operation ID is bound to different content");
-        return this.detail(id);
+        // The logical operation/native clientId stays fixed. A fresh attempt
+        // may replace only the exact rejected predecessor, inside this queue.
+        // Repeated or delayed tokens return the current outcome without admission.
+        if (!retry || previous.attemptId === retry.attempt)
+          return this.detail(id);
+        if ((previous.attemptId ?? requestId) !== retry.after)
+          return { ...this.detail(id), retryNotAdmitted: retry.attempt };
+        if (
+          previous.status !== "failed" ||
+          a.messages.some(
+            (m) =>
+              m.role === "user" &&
+              (m.id === requestId || m.clientId === requestId),
+          )
+        )
+          throw new Error("Only a rejected user submission can be retried");
+        previous.attemptId = retry.attempt;
+        this.save();
+        if (a.state === "stopping") return this.detail(id);
+        return this.deliver(
+          a,
+          previous.text,
+          requestId,
+          "user",
+          [],
+          undefined,
+          previous.images,
+        );
       }
       if (images?.length) this.images.validate(a.id, requestId, text, images);
       if (a.state === "stopping") {
         a.deliveries.push({
           id: requestId,
+          attemptId: retry?.attempt,
           text,
           source: "user",
           status: "failed",
@@ -1457,6 +1492,18 @@ export class Workspace {
         });
         this.save();
         return this.detail(id);
+      }
+      if (retry) {
+        a.deliveries.push({
+          id: requestId,
+          attemptId: retry.attempt,
+          text,
+          source: "user",
+          status: "failed",
+          questionIds: [],
+          images,
+          at: Date.now(),
+        });
       }
       return this.deliver(a, text, requestId, "user", [], undefined, images);
     });

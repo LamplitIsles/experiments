@@ -42,7 +42,7 @@ export async function invoke(app: HostService, member: Method, input: unknown) {
     }
     case "send": {
       const p = parse(member);
-      return await app.send(p.id, p.text, p.operationId, p.images);
+      return await app.send(p.id, p.text, p.operationId, p.images, p.retry);
     }
     case "retryDelivery": {
       const p = parse(member);
