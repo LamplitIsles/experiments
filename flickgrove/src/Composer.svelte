@@ -17,6 +17,8 @@
   let input = $state<HTMLTextAreaElement | null>(null);
   let composing = false;
   let images = $state<ImageDraft[]>([]); let previews = $state<string[]>([]); let imageError=$state(""); let preparing=$state(false); let ready=$state(false); let imageStorage=$state(true); let picker: HTMLInputElement; let active=true;
+  // Image intake may run while typing; submission still locks its frozen draft.
+  let submitting = $state(false);
   let revision=0;
   let voiceStatus = $state<VoiceRecordingStatus>("idle");
   let voiceAvailable = $state(false); let voiceReason = $state("Checking voice availability…");
@@ -88,15 +90,15 @@
     return()=>{disposed=true;urls.forEach(url=>URL.revokeObjectURL(url));};
   });
   let intake=Promise.resolve();
-  function addFiles(files:File[]) { if(voiceBusy)return Promise.resolve(); const task=intake.catch(()=>{}).then(()=>performAdd(files));intake=task;return task; }
-  async function performAdd(files: File[]) {
+  function addFiles(files:File[]) { if(voiceBusy)return Promise.resolve(); const key=draftKey(agentId); const task=intake.catch(()=>{}).then(()=>performAdd(files,key));intake=task;return task; }
+  async function performAdd(files: File[], key: string) {
     if(voiceBusy || !files.length)return;
     imageError=intakeError(images,files);if(imageError)return;
     preparing=true;
     try {
       for(const file of files){ const bitmap=await createImageBitmap(file); const valid=bitmap.width*bitmap.height<=40_000_000 && bitmap.width<=16383 && bitmap.height<=16383;bitmap.close();if(!valid)throw new Error("Image exceeds 40 megapixels or 16383 pixels per side."); }
       const added=files.map(file=>({id:crypto.randomUUID(),file}));
-      const next=await saveImages(draftKey(agentId),current=>[...current,...added]); if(active){images=next;revision++;}
+      const next=await saveImages(key,current=>[...current,...added]); if(active){images=next;revision++;}
     }catch(e){imageError=(e as Error).message;}finally{if(active)preparing=false;}
   }
   function removeImage(id:string) {
@@ -128,7 +130,7 @@
     if(suspended || voiceBusy || composing || (!text.trim() && !images.length) || !connected || stopping || preparing || !ready) return;
     if(images.length){imageError=intakeError([],images.map(i=>i.file));if(imageError)return;}
     const value=text.trim(); const frozen=$state.snapshot(images);const version=revision;const id=crypto.randomUUID();
-    preparing=true;
+    submitting=true;preparing=true;
     try {
       if(frozen.length) await saveImages(operationKey(agentId,id),frozen,value);
       addOutgoing(agentId,value,id,undefined,undefined,frozen.map(i=>i.id));
@@ -146,7 +148,7 @@
       if(active && version===revision){ images=[];text='';revision++; }
       void onsend(agentId,value,id,frozen);
       await tick(); input?.focus();
-    } catch(e){imageError=(e as Error).message;}finally{if(active)preparing=false;}
+    } catch(e){imageError=(e as Error).message;}finally{if(active){submitting=false;preparing=false;}}
   }
   function openSkills() {
     if(voiceBusy || navigation.surfaces.length || !input || composing || stopping || preparing || !connected) return false;
@@ -172,7 +174,7 @@
     {#if images.length}<div class="image-drafts">{#each images as image,index (image.id)}<div class="image-draft"><img src={previews[index]} alt={image.file.name} /><Button variant="secondary" size="icon-sm" disabled={voiceBusy} aria-label={`Remove image ${index+1}`} onclick={()=>removeImage(image.id)}><X /></Button></div>{/each}</div>{/if}
     {#if imageError}<p class="inline-error" role="alert">{imageError}</p>{/if}
     {#if preparing}<p role="status">Preparing images…</p>{/if}
-    <Textarea onpaste={paste} bind:ref={input} bind:value={text} aria-label={m.message_orc()} placeholder={m.message_placeholder()} readonly={voiceBusy} disabled={stopping || preparing} rows={2} oncompositionstart={() => { composing = true; }} oncompositionend={() => { composing = false; }} onkeydown={keydown} />
+    <Textarea onpaste={paste} bind:ref={input} bind:value={text} aria-label={m.message_orc()} placeholder={m.message_placeholder()} readonly={voiceBusy} disabled={stopping || submitting} rows={2} oncompositionstart={() => { composing = true; }} oncompositionend={() => { composing = false; }} onkeydown={keydown} />
     {#if voiceError}<p class="inline-error" role="alert">{voiceError}</p>{/if}
     <div class="composer-bottom">
       <div class="composer-tools">

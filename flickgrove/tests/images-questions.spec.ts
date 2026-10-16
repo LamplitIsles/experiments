@@ -75,6 +75,210 @@ async function clipboard(page: Page, kind: "paste" | "drop") {
     { data, kind },
   );
 }
+// Hold the real decoder boundary, not Composer state, to exercise editing during intake.
+async function holdImageDecode(page: Page) {
+  await page.evaluate(() => {
+    const decode = window.createImageBitmap.bind(window);
+    const state = window as typeof window & { releaseImageDecode?: () => void };
+    const gate = new Promise<void>((resolve) => {
+      state.releaseImageDecode = resolve;
+    });
+    window.createImageBitmap = (async (source: ImageBitmapSource) => {
+      await gate;
+      return decode(source);
+    }) as typeof createImageBitmap;
+  });
+}
+async function releaseImageDecode(page: Page) {
+  await page.evaluate(() =>
+    (
+      window as typeof window & { releaseImageDecode?: () => void }
+    ).releaseImageDecode?.(),
+  );
+}
+for (const width of [1440, 390]) {
+  for (const failure of [false, true]) {
+    test(`image preparation retains usable caret with failure=${failure} at ${width}`, async ({
+      page,
+      request,
+    }) => {
+      await setup(page, request, width);
+      const before = (
+        await (await request.get(origin + "/fixture/info")).json()
+      ).inputs.length;
+      await holdImageDecode(page);
+      await composer(page).fill("before selected after");
+      await composer(page).evaluate((input: HTMLTextAreaElement) =>
+        input.setSelectionRange(7, 15),
+      );
+      if (failure) {
+        await page.evaluate(() => {
+          const transfer = new DataTransfer();
+          transfer.items.add(
+            new File(["invalid"], "bad.png", { type: "image/png" }),
+          );
+          document.querySelector(".composer textarea")!.dispatchEvent(
+            new ClipboardEvent("paste", {
+              clipboardData: transfer,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        });
+      } else await clipboard(page, "paste");
+      await expect(
+        page.getByText("Preparing images…", { exact: true }),
+      ).toBeVisible();
+      await expect(composer(page)).toBeFocused();
+      expect(
+        await composer(page).evaluate((input: HTMLTextAreaElement) => [
+          input.selectionStart,
+          input.selectionEnd,
+        ]),
+      ).toEqual([7, 15]);
+      await page.keyboard.type("typed");
+      await page.keyboard.press("Enter"); // Preparation must still guard submission.
+      await expect(composer(page)).toHaveValue("before typed after");
+      await expect(
+        page.getByRole("button", { name: "Send message", exact: true }),
+      ).toBeDisabled();
+      await releaseImageDecode(page);
+      await expect(
+        page.getByText("Preparing images…", { exact: true }),
+      ).toHaveCount(0);
+      await expect(page.locator(".image-draft")).toHaveCount(failure ? 0 : 1);
+      if (failure) await expect(page.getByRole("alert")).toBeVisible();
+      await expect(composer(page)).toBeFocused();
+      expect(
+        await composer(page).evaluate((input: HTMLTextAreaElement) => [
+          input.selectionStart,
+          input.selectionEnd,
+        ]),
+      ).toEqual([12, 12]);
+      await page.keyboard.type(" again");
+      await expect(composer(page)).toHaveValue("before typed again after");
+      expect(
+        (await (await request.get(origin + "/fixture/info")).json()).inputs,
+      ).toHaveLength(before);
+      await page.screenshot({
+        path: `../.scratch/image-paste-focus/${width}-${failure ? "failure" : "success"}.png`,
+      });
+    });
+  }
+  for (const escape of [false, true]) {
+    test(`image completion respects deliberate focus escape=${escape} at ${width}`, async ({
+      page,
+      request,
+    }) => {
+      await setup(page, request, width, "host-selection");
+      await holdImageDecode(page);
+      await composer(page).fill("owned draft");
+      await clipboard(page, "paste");
+      await expect(
+        page.getByText("Preparing images…", { exact: true }),
+      ).toBeVisible();
+      if (escape) {
+        if (width === 390) {
+          await page.keyboard.press("Escape");
+          await expect(composer(page)).toHaveCount(0);
+        }
+        await page.locator(".session-open").last().click();
+        await composer(page).fill("other draft");
+      } else {
+        await page
+          .getByRole("button", { name: "Edit title", exact: true })
+          .click();
+        await page
+          .getByRole("textbox", { name: "Session title", exact: true })
+          .focus();
+      }
+      await releaseImageDecode(page);
+      if (escape) {
+        // Wait for the old intake's durable write while another Orc owns focus.
+        await expect
+          .poll(() =>
+            page.evaluate(async () => {
+              const name = (await indexedDB.databases()).find((db) =>
+                db.name?.endsWith("/images"),
+              )!.name!;
+              return new Promise<number>((resolve, reject) => {
+                const open = indexedDB.open(name);
+                open.onerror = () => reject(open.error);
+                open.onsuccess = () => {
+                  const db = open.result;
+                  const read = db
+                    .transaction("drafts")
+                    .objectStore("drafts")
+                    .getAll();
+                  read.onsuccess = () => {
+                    db.close();
+                    resolve(
+                      read.result.reduce(
+                        (count, record) => count + record.images.length,
+                        0,
+                      ),
+                    );
+                  };
+                  read.onerror = () => {
+                    db.close();
+                    reject(read.error);
+                  };
+                };
+              });
+            }),
+          )
+          .toBe(1);
+        await expect(composer(page)).toBeFocused();
+        await page.keyboard.type(" continued");
+        await expect(page.locator(".image-draft")).toHaveCount(0);
+        await expect(composer(page)).toHaveValue("other draft continued");
+        if (width === 390) await page.keyboard.press("Escape");
+        await page.locator(".session-open").first().click();
+        await expect(page.locator(".image-draft")).toHaveCount(1);
+        await expect(composer(page)).toHaveValue("owned draft");
+      } else {
+        await expect(
+          page.getByText("Preparing images…", { exact: true }),
+        ).toHaveCount(0);
+        await expect(
+          page.getByRole("textbox", { name: "Session title", exact: true }),
+        ).toBeFocused();
+        await page.keyboard.press("Escape");
+        await expect(page.locator(".image-draft")).toHaveCount(1);
+        await expect(composer(page)).toHaveValue("owned draft");
+      }
+    });
+  }
+}
+for (const width of [1440, 390]) {
+  test(`image paste preserves focused selection and continued typing at ${width}`, async ({
+    page,
+    request,
+  }) => {
+    await setup(page, request, width);
+    const before = (await (await request.get(origin + "/fixture/info")).json())
+      .inputs.length;
+    await composer(page).fill("before selected after");
+    await composer(page).evaluate((input: HTMLTextAreaElement) =>
+      input.setSelectionRange(7, 15),
+    );
+    await expect(composer(page)).toBeFocused();
+    await clipboard(page, "paste");
+    await expect(page.locator(".image-draft")).toHaveCount(1);
+    await expect(composer(page)).toBeFocused();
+    expect(
+      await composer(page).evaluate((input: HTMLTextAreaElement) => [
+        input.selectionStart,
+        input.selectionEnd,
+      ]),
+    ).toEqual([7, 15]);
+    await page.keyboard.type("typed");
+    await expect(composer(page)).toHaveValue("before typed after");
+    expect(
+      (await (await request.get(origin + "/fixture/info")).json()).inputs,
+    ).toHaveLength(before);
+  });
+}
 for (const width of [1440, 390]) {
   test(`multiline image caption survives browser HTTP upload and Chord send at ${width}`, async ({
     page,
