@@ -1,3 +1,4 @@
+import { browserOrigin } from "./browser-origin";
 import type { HostService } from "./hosts";
 export function authorizeRead(
   request: Request,
@@ -6,11 +7,7 @@ export function authorizeRead(
   methods = ["GET"],
 ) {
   const url = new URL(request.url);
-  const origin =
-    request.headers.get("origin") ??
-    (request.headers.get("sec-fetch-site") === "same-origin"
-      ? url.origin
-      : null);
+  const origin = browserOrigin(request, origins);
   const headers = new Headers({
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",

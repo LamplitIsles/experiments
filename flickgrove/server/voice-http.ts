@@ -1,3 +1,4 @@
+import { browserOrigin } from "./browser-origin";
 import type { Server } from "bun";
 import type { HostService } from "./hosts";
 import type { SocketData } from "./chord-socket";
@@ -17,9 +18,7 @@ export async function voiceHttp(
   const protocols = (request.headers.get("sec-websocket-protocol") ?? "")
     .split(",")
     .map((p) => p.trim());
-  const origin =
-    request.headers.get("origin") ??
-    (request.headers.get("sec-fetch-site") === "same-origin" ? url.origin : "");
+  const origin = browserOrigin(request, origins);
   const headers = new Headers({
     "Cache-Control": "no-store",
     "X-Grove-Peer": service.identity.id,

@@ -13,3 +13,9 @@ Local Orc, Worker, Reviewer and Researcher lifecycle and authorization stay with
 ## Evidence boundary
 
 Isolated handler/socket regressions demonstrate that a stale supplied Peer token previously rejected same-origin access. They do not establish the cause of the reported intermittent live error. No live reproduction, restart or deployment is part of this change.
+
+## HTTPS termination
+
+For browser HTTP admission, an explicit Origin must exactly match a configured origin and the request Host. Without Origin, `Sec-Fetch-Site: same-origin` and a configured Host are required; the matching configured origin supplies the public scheme. Fetch Metadata that indicates another site is denied even with an allowed Origin. Forwarded headers never grant access. Socket admission still requires explicit Origin. Preview creation returns the admitted public origin; Markdown capability links are relative to the serving origin so TLS termination does not produce HTTP links.
+
+Spec #4143 adds real Bun listener regressions with HTTP backend/public HTTPS Host and absent Origin. Earlier checks covered explicit Origin and direct HTTP, omitting this production request shape. This confirms and repairs that request-shape defect; the user's exact original browser action remains unknown. Tests use owned state and do not establish deployment or a live user outcome.

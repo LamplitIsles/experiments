@@ -1,3 +1,4 @@
+import { browserOrigin } from "./browser-origin";
 import { previewMarkdown } from "./preview-markdown";
 import { constants } from "node:fs";
 import { open, realpath } from "node:fs/promises";
@@ -113,7 +114,7 @@ export function filePreview(service: HostService, now = Date.now) {
               file.bytes.toString("utf8"),
               grant.root,
               resolve(grant.root, path),
-              `${url.origin}/preview/${match![1]}/`,
+              `/preview/${match![1]}/`,
             )
           : file.bytes;
         if (markdown) headers.set("Content-Type", "text/html; charset=utf-8");
@@ -123,12 +124,8 @@ export function filePreview(service: HostService, now = Date.now) {
           headers,
         });
       }
-      const origin =
-        request.headers.get("origin") ??
-        (request.headers.get("sec-fetch-site") === "same-origin"
-          ? url.origin
-          : "");
-      if (!origins.includes(origin))
+      const origin = browserOrigin(request, origins);
+      if (!origin)
         return fail("Open FlickGrove from its configured address", 403);
       if (request.headers.get("x-grove-peer") !== service.identity.id)
         return fail("Peer identity changed", 403);
@@ -192,7 +189,7 @@ export function filePreview(service: HostService, now = Date.now) {
       grants.set(id, { root, expires: now() + PREVIEW_TTL });
       return Response.json(
         {
-          url: `${url.origin}/preview/${id}/${encodeURIComponent(basename(target))}${link.fragment}`,
+          url: `${origin}/preview/${id}/${encodeURIComponent(basename(target))}${link.fragment}`,
           kind: localFile(target)!.kind,
         },
         { headers },
