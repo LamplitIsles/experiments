@@ -1,3 +1,4 @@
+import { browserOrigin } from "./browser-origin";
 import { readingHttp } from "./reading-http";
 import { filePreview } from "./file-preview";
 import { voiceHttp } from "./voice-http";
@@ -33,7 +34,8 @@ export function createUpgrade(workspace: Workspace, options: Options) {
     const origins = [origin, options.localOrigin?.()].filter(
       (value): value is string => !!value,
     );
-    const local = origins.includes(request.headers.get("origin") ?? "");
+    const local =
+      request.headers.has("origin") && !!browserOrigin(request, origins);
     if (
       request.method !== "GET" ||
       !origins.some((value) => url.host === new URL(value).host)

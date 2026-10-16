@@ -129,7 +129,7 @@ test("real HTTP admits current execution-Peer project roots with canonical conta
       );
     if (href.endsWith(".md"))
       expect(await resource.text()).toContain(
-        url.replace("note.md", "plot.png"),
+        new URL(url.replace("note.md", "plot.png")).pathname,
       );
     else
       expect(await resource.text()).toContain(
@@ -283,7 +283,7 @@ test("canonical cwd/root, traversal, symlinks, special files, supported types an
   const base = url.slice(0, url.lastIndexOf("/") + 1);
   expect((await fetch(base + "sub/data.json")).status).toBe(200);
   expect(await (await fetch(base + "sub/nested.md")).text()).toContain(
-    base + "sub/plot.png",
+    new URL(base + "sub/plot.png").pathname,
   );
   for (const path of [
     "%2e%2e%2fprivate.json",
