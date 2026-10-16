@@ -43,8 +43,8 @@ function fixture() {
   const request = (path: string, headers: Record<string, string> = {}) =>
     fetch(origin + "/api/read" + path, {
       headers: {
-        Origin: "http://other-peer.example",
-        Authorization: `Bearer ${service.credential}`,
+        Origin: origin,
+        Authorization: "Bearer stale",
         "X-Grove-Peer": service.identity.id,
         ...headers,
       },
@@ -159,21 +159,21 @@ test("actual owning-Peer HTTP rejects unauthorized/mismatched reads, admits pref
   }));
   f.runtime.historyItems.set(a.threadId!, messages);
   const path = `/messages?agent=${encodeURIComponent(id)}`;
-  expect((await f.request(path, { Authorization: "" })).status).toBe(401);
+  expect(
+    (await f.request(path, { Origin: "https://foreign.invalid" })).status,
+  ).toBe(403);
   expect((await f.request(path, { "X-Grove-Peer": "wrong" })).status).toBe(403);
   expect((await f.request(`/messages?agent=other:${a.id}`)).status).toBe(400);
   const preflight = await fetch(f.origin + "/api/read" + path, {
     method: "OPTIONS",
     headers: {
-      Origin: "http://other-peer.example",
+      Origin: f.origin,
       "Access-Control-Request-Method": "GET",
       "Access-Control-Request-Headers": "authorization,x-grove-peer",
     },
   });
-  expect(preflight.status).toBe(204);
-  expect(preflight.headers.get("Access-Control-Allow-Origin")).toBe(
-    "http://other-peer.example",
-  );
+  expect(preflight.status).toBe(405);
+  expect(preflight.headers.get("Access-Control-Allow-Origin")).toBeNull();
   expect((await f.request(path, { Origin: "null" })).status).toBe(403);
   let cursor: string | null = null;
   let combined: Message[] = [],

@@ -21,7 +21,10 @@ export async function createSession(page: Page) {
   const previous = await page.evaluate(() =>
     history.state?.grove?.details.at(-1),
   );
-  await page.getByRole("button", { name: /Create on/ }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "New session", exact: true })
+    .click();
   await expect(page.getByRole("dialog")).toBeHidden();
   await expect
     .poll(() => page.evaluate(() => history.state?.grove?.details.at(-1)))
@@ -29,10 +32,4 @@ export async function createSession(page: Page) {
   await expect(
     page.getByRole("textbox", { name: "Message Orc", exact: true }),
   ).toBeFocused();
-}
-
-export async function openHosts(page: Page) {
-  if (await page.locator(".mobile-back > button").isVisible())
-    await page.getByRole("button", { name: "‹ Sessions" }).click();
-  await page.getByRole("button", { name: "Hosts", exact: true }).click();
 }

@@ -2,7 +2,7 @@
   import { untrack } from "svelte";
   import { ExternalLink, X } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { peers } from "./api";
+  import { connection } from "./api";
   import { localFile } from "./local-file";
   import * as m from "./paraglide/messages";
   let { agent, href, connected, onclose }: { agent: string; href: string; connected: boolean; onclose: () => void } = $props();
@@ -17,7 +17,7 @@
     const selected = ++generation;
     url = ""; error = ""; loading = true;
     try {
-      const response = await peers().media(agent, "/api/file-preview", {
+      const response = await connection().media(agent, "/api/file-preview", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agent, href }),
       });
       const result = await response.json();

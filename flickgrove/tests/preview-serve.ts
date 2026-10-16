@@ -6,7 +6,8 @@ import sharp from "sharp";
 import { Workspace } from "../server/workspace";
 import { HostService } from "../server/hosts";
 import { createHandler, createUpgrade } from "../server/http";
-import { groveWebsocket } from "../server/chord-socket";
+import type { ServerWebSocket } from "bun";
+import { groveWebsocket, type SocketData } from "../server/chord-socket";
 import { FakeRuntime } from "../server/testing";
 const directory = await mkdtemp(join(tmpdir(), "grove-file-browser-"));
 const assets = resolve(
@@ -216,33 +217,27 @@ async function unit(name: string, color: string, origin: () => string) {
     patch,
   };
 }
-let peerOrigin = "http://127.0.0.1:14321";
-let remote = await unit("Remote", "#367153", () => peerOrigin);
-function servePeer() {
-  return Bun.serve({
-    hostname: "127.0.0.1",
-    port: 14321,
-    websocket: groveWebsocket,
-    fetch(request, server) {
-      const upgraded = createUpgrade(remote.app, {
-        service: remote.service,
-        origin: () => peerOrigin,
-      })(request, server);
-      return upgraded === true
-        ? undefined
-        : (upgraded ?? remote.handler(request));
-    },
-  });
-}
-let peerServer = servePeer();
-peerOrigin = peerServer.url.origin;
 const origin = "http://127.0.0.1:14320";
+let offline = false;
+const sockets = new Set<ServerWebSocket<SocketData>>();
 let local = await unit("Local", "#355d98", () => origin);
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: 14320,
-  websocket: groveWebsocket,
+  websocket: {
+    ...groveWebsocket,
+    open(socket) {
+      sockets.add(socket);
+      groveWebsocket.open(socket);
+    },
+    close(socket) {
+      sockets.delete(socket);
+      groveWebsocket.close(socket);
+    },
+  },
   async fetch(request, server) {
+    if (offline && new URL(request.url).pathname.startsWith("/api/"))
+      return new Response("Synthetic outage", { status: 503 });
     const upgraded = createUpgrade(local.app, {
       service: local.service,
       origin: () => origin,
@@ -302,19 +297,17 @@ const server = Bun.serve({
       });
     }
     if (url.pathname === "/fixture/reset" && request.method === "POST") {
-      peerServer.stop(true);
-      for (const unit of [local, remote]) {
+      offline = false;
+      for (const unit of [local]) {
         unit.service.dispose();
         unit.app.dispose();
       }
-      remote = await unit("Remote", "#367153", () => peerOrigin);
       local = await unit("Local", "#355d98", () => origin);
-      peerServer = servePeer();
       return Response.json({ ok: true });
     }
     if (url.pathname === "/fixture/history" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
-      const target = body.peer === "remote" ? remote : local;
+      const target = local;
       const title = body.title ?? "Historical reports";
       const project = target.app.detail(target.agent.id).project;
       const threadId = crypto.randomUUID();
@@ -382,7 +375,7 @@ const server = Bun.serve({
       request.method === "POST"
     ) {
       const body = await request.json();
-      const target = body.peer === "remote" ? remote : local;
+      const target = local;
       if (body.delay !== undefined) target.history.delay = body.delay;
       if (body.fail !== undefined) target.history.fail = body.fail;
       return Response.json(target.history);
@@ -395,9 +388,7 @@ const server = Bun.serve({
         input = "Live input",
         report,
       } = await request.json();
-      const target = id.startsWith(remote.service.identity.id + ":")
-        ? remote
-        : local;
+      const target = local;
       const agentId = id.split(":")[1];
       if (stream) {
         target.patch(id, text);
@@ -442,19 +433,18 @@ const server = Bun.serve({
       }
       return Response.json({ ok: true });
     }
-    if (url.pathname === "/fixture/offline" && request.method === "POST") {
-      peerServer.stop(true);
-      return Response.json({ ok: true });
-    }
-    if (url.pathname === "/fixture/online" && request.method === "POST") {
-      peerServer = servePeer();
+    if (
+      ["/fixture/offline", "/fixture/online"].includes(url.pathname) &&
+      request.method === "POST"
+    ) {
+      offline = url.pathname === "/fixture/offline";
+      if (offline)
+        for (const socket of sockets) socket.close(1001, "Synthetic outage");
       return Response.json({ ok: true });
     }
     if (url.pathname === "/fixture/info")
       return Response.json({
         local: local.service.identity.id + ":" + local.agent.id,
-        remote: remote.service.identity.id + ":" + remote.agent.id,
-        remoteOrigin: peerOrigin,
       });
     if (url.pathname === "/fixture/change" && request.method === "POST") {
       const body = await request.json();
@@ -486,31 +476,17 @@ const server = Bun.serve({
       return Response.json({ ok: true });
     }
     if (url.pathname === "/") {
-      const config = [
-        {
-          id: remote.service.identity.id,
-          name: "Remote",
-          url: peerOrigin,
-          credential: remote.service.credential,
-        },
-      ];
-      const script = `<script>localStorage.setItem('flickgrove/'+location.origin+'/peers',${JSON.stringify(JSON.stringify(config))});</script>`;
-      return new Response(
-        (await Bun.file(join(assets, "index.html")).text()).replace(
-          "<head>",
-          "<head>" + script,
-        ),
-        { headers: { "Content-Type": "text/html" } },
-      );
+      return new Response(await Bun.file(join(assets, "index.html")).text(), {
+        headers: { "Content-Type": "text/html" },
+      });
     }
     return local.handler(request);
   },
 });
 async function cleanup() {
   server.stop(true);
-  peerServer.stop(true);
   cdn.stop(true);
-  for (const unit of [local, remote]) {
+  for (const unit of [local]) {
     unit.service.dispose();
     unit.app.dispose();
   }

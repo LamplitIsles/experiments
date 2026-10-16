@@ -10,10 +10,7 @@ async function control(page: Page, body = {}) {
     await page.request.post(origin + "/fixture/history-control", { data: body })
   ).json();
 }
-async function choose(page: Page, title: string, host = "Local") {
-  const filter = page.getByRole("button", { name: host, exact: true });
-  if (!(await filter.isVisible())) await page.keyboard.press("Escape");
-  await filter.click();
+async function choose(page: Page, title: string) {
   const button = page.getByRole("button", {
     name: `Open ${title} Orc`,
     exact: true,
@@ -225,12 +222,12 @@ async function uniqueVisibleMessages(page: Page) {
     );
   expect(new Set(ids).size).toBe(ids.length);
 }
-test("delayed real Chord history is deduplicated across rapid switches and isolated from another Peer", async ({
+test("delayed real Chord history is deduplicated across rapid switches and isolated from another local conversation", async ({
   page,
 }) => {
   await page.request.post(origin + "/fixture/reset");
   const { id } = await fixture(page, { count: 75 });
-  await fixture(page, { peer: "remote", title: "Remote history", count: 35 });
+  await fixture(page, { title: "Remote history", count: 35 });
   await page.goto(origin);
   await choose(page, "Local reports");
   const held = await holdHistory(page, id, false);
@@ -239,7 +236,7 @@ test("delayed real Chord history is deduplicated across rapid switches and isola
   await expect(page.locator(".conversation")).toContainText(
     "Historical reports item 74",
   );
-  await choose(page, "Remote history", "Remote");
+  await choose(page, "Remote history");
   await expect.poll(held.cancelled).toBe(true);
   await expect(page.locator(".historical-messages")).toContainText(
     "Remote history item 34",
@@ -252,7 +249,7 @@ test("delayed real Chord history is deduplicated across rapid switches and isola
   await expect(page.locator(".conversation")).not.toContainText(
     "Remote history item",
   );
-  await choose(page, "Remote history", "Remote");
+  await choose(page, "Remote history");
   await expect(page.locator(".historical-messages")).toContainText(
     "Remote history item 34",
   );
@@ -285,7 +282,7 @@ test("delayed real Chord history is deduplicated across rapid switches and isola
   );
   await uniqueVisibleMessages(page);
   await page.request.post(origin + "/fixture/offline");
-  await choose(page, "Remote history", "Remote");
+  await choose(page, "Remote history");
   await expect(page.locator(".conversation .host-outage")).toBeVisible();
   await expect(page.locator(".historical-messages")).toContainText(
     "Remote history item",

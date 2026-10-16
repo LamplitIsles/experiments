@@ -6,12 +6,6 @@ const active = (page: Page) =>
 const title = (page: Page) => page.locator(".agent-detail h1");
 const composer = (page: Page) =>
   page.getByRole("textbox", { name: "Message Orc", exact: true });
-async function filter(page: Page, name: string) {
-  await page
-    .getByRole("group", { name: "Host filter" })
-    .getByRole("button", { name, exact: true })
-    .click();
-}
 
 test("persistent selection, circular physical shortcuts, visible numeric index and guarded drafts", async ({
   page,
@@ -87,15 +81,6 @@ test("persistent selection, circular physical shortcuts, visible numeric index a
   await page.keyboard.press("Meta+2");
   await expect(title(page)).toHaveText("Streaming voice input");
   await page.keyboard.press("Escape");
-  await filter(page, "Neil’s Mac");
-  await expect(title(page)).toHaveText("Reader performance");
-  await composer(page).press("Meta+9");
-  await expect(title(page)).toHaveText("Reader performance");
-  await page.locator(".role-project").click();
-  await page.keyboard.press("ArrowDown");
-  await expect(title(page)).toHaveText("Reader performance");
-  await filter(page, "NUC");
-  await expect(title(page)).toHaveText("Streaming voice input");
   await page.locator(".role-project").click();
   await page.keyboard.press("ArrowDown");
   await expect(title(page)).toHaveText("Voice input");
@@ -106,30 +91,6 @@ test("persistent selection, circular physical shortcuts, visible numeric index a
   await expect(title(page)).toHaveText("Streaming voice input");
 });
 
-test("filter and close choose valid neighbors; empty range stays empty", async ({
-  page,
-  request,
-}) => {
-  await request.post(`${origin}/fixture/reset`, {
-    data: { mode: "no-workers" },
-  });
-  await page.goto(origin);
-  await expect(title(page)).toHaveText("Streaming voice input");
-  await expect(page.getByRole("group", { name: "Host filter" })).toBeVisible();
-  await filter(page, "NUC");
-  await page.keyboard.press("Alt+x");
-  await expect(page.locator(".agent-detail")).toHaveCount(0);
-  await expect(page.locator(".detail-empty")).toBeVisible();
-  await page.keyboard.press("Meta+1");
-  await page.keyboard.press("Alt+j");
-  await expect(page.locator(".agent-detail")).toHaveCount(0);
-  await page.screenshot({ path: `${shots}/desktop-empty.png` });
-  await filter(page, "Neil’s Mac");
-  await expect(title(page)).toHaveText("Reader performance");
-  await filter(page, "NUC");
-  await expect(page.locator(".agent-detail")).toHaveCount(0);
-});
-
 test("closing a middle visible session selects its next neighbor and collapsing selected Worker selects Orc", async ({
   page,
   request,
@@ -138,9 +99,12 @@ test("closing a middle visible session selects its next neighbor and collapsing 
   await page.goto(origin);
   await expect(title(page)).toHaveText("Streaming voice input");
   await page.keyboard.press("Meta+3");
-  await expect(title(page)).toHaveText("Additional task 2");
+  await expect(title(page)).toHaveText("Additional task 1");
+  await expect(
+    page.getByRole("button", { name: "Session settings", exact: true }),
+  ).toBeEnabled();
   await page.keyboard.press("Alt+x");
-  await expect(title(page)).toHaveText("Additional task 3");
+  await expect(title(page)).toHaveText("Additional task 2");
   await page.keyboard.press("Meta+1");
   await page.getByRole("button", { name: "Expand Workers" }).first().click();
   await page.keyboard.press("Meta+2");

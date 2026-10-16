@@ -102,10 +102,7 @@ for (const width of [1440, 390]) {
         .click();
       await page.locator(".session-open").first().click();
     } else {
-      await page
-        .getByRole("button", { name: "Neil’s Mac", exact: true })
-        .click();
-      await page.getByRole("button", { name: /^NUC/ }).click();
+      await page.reload();
     }
     await expect(panel(page).locator("textarea")).toHaveValue(
       "Second answer\n",

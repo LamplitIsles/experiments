@@ -71,9 +71,7 @@ const server = servePeer(app, {
   hostname: values.listen!,
   port,
 });
-console.log(
-  `FlickGrove Peer is available at ${origin}; private access credential: ${join(directory, "hosts.json")}`,
-);
+console.log(`FlickGrove is available at ${origin}`);
 let stopping = false;
 const stop = async () => {
   if (stopping) return;

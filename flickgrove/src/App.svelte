@@ -11,7 +11,7 @@
   import { navigation, initializeNavigation, resumeFilePreview, openConversation, setSurface, back, validateNavigation } from "./navigation.svelte";
   import { readingCache, reading } from "./api";
   import { retainTranscriptPositions } from "./transcript-state";
-  import { Peers, preferences } from "./peers";
+  import { LocalConnection, preferences } from "./connection";
   import { onMount, tick, untrack } from "svelte";
   import type { Answer, Agent, Detail, HistorySession, Model, Project, Settings, Skill, Snapshot } from "./contracts";
   import { api, editable, setClient } from "./api";
@@ -22,8 +22,6 @@
   import { loadImages, operationKey, type ImageDraft } from "./image-drafts";
   import { receiptAlreadyAccepted, setOutgoingImages, clearClosedPending, closeRecovery, rememberCloseRecovery, forgetCloseRecovery } from "./outgoing.svelte";
   import { observeQuestions, questionPanels, setQuestionPanel } from "./question-state.svelte";
-  import HostFilter from "./HostFilter.svelte";
-  import Hosts from "./Hosts.svelte";
   import Weekly from "./Weekly.svelte";
   import SessionList from "./SessionList.svelte";
   import { historyCache } from "./history-cache";
@@ -35,7 +33,7 @@
   $effect(() => {
     if (!navigation.surfaces.includes("file-preview")) untrack(() => observeQuestions(snapshot.agents, selectedId));
   });
-  let client: Peers | undefined;
+  let client: LocalConnection | undefined;
   let composing = false;
   let snapshot = $state<Snapshot>({ agents: [], settings: null, revision: 0 });
   const savedSelection = preferences.selection;
@@ -43,66 +41,52 @@
   $effect(() => { preferences.treeOrder = $state.snapshot(treeOrder); });
   let remembered = $state<Record<string, string>>(savedSelection.sessions);
   let selectedId = $state<string | null>(savedSelection.sessions[savedSelection.host] ?? null);
-  let navigationReady = $state(false); let peersReady = $state(false); let switchingHost = $state(false);
+  let navigationReady = $state(false); let connectionReady = $state(false);
   let detail = $state<Detail | null>(null); let skills = $state<Skill[]>([]);
   let projects = $state<Project[]>([]); let models = $state<Model[]>(preferences.models);
   let connected = $state(false); let loading = $state(true); let error = $state("");
   let now = $state(Date.now()); let sessionList: { visibleIds(): string[]; keydown(event: KeyboardEvent): Promise<void>; expandFocused(): void; reveal(id: string): Promise<void>; closeTarget(): string | null; navigate(offset: number, index?: number): Promise<string | null> };
-  let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | "hosts" | "abandon-close" | null>(null);
+  let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | "abandon-close" | null>(null);
   let search = $state(""); let projectId = $state(""); let saving = $state(false);
   let settings = $state<Settings | null>(null); let sequence = 0; let focusCreatedId = $state<string | null>(null);
   let install = $state<(Event & { prompt: () => Promise<void> }) | null>(null);
-  let hostFilter = $state(savedSelection.host);
+  let instanceId = $state(savedSelection.host);
   let desktop = $state(matchMedia("(min-width: 701px)").matches);
   let previousVisible: string[] = [];
   let lostSelection: string | null = null;
   $effect(() => {
     const ids = visibleAgents.map(a => a.id);
     const current = navigation.details.at(-1);
-    if (!navigationReady || switchingHost || navigation.surfaces.length) return;
-    if (peersReady && hostFilter !== (hosts[0]?.id ?? "") && !hosts.some(h => h.id === hostFilter)) {
-      void selectHost(hosts[0]?.id ?? "", !!current || desktop);
+    if (!navigationReady || navigation.surfaces.length) return;
+    if (connectionReady && instanceId !== (snapshot.entryId ?? "")) {
+      instanceId = snapshot.entryId ?? "";
       return;
     }
-    // Browser history and explicit cross-device navigation take precedence.
-    if (current && hosts.some(h => current.startsWith(h.id + ":")) && !current.startsWith(hostFilter + ":")) {
-      hostFilter = current.split(":")[0];
-      return;
-    }
-    const host = hosts.find(h => h.id === hostFilter);
-    if (host?.connected && remembered[hostFilter] && !ids.includes(remembered[hostFilter])) {
-      const next = { ...remembered }; delete next[hostFilter]; remembered = next;
+    const host = hosts.find(h => h.id === instanceId);
+    if (host?.connected && remembered[instanceId] && !ids.includes(remembered[instanceId])) {
+      const next = { ...remembered }; delete next[instanceId]; remembered = next;
     }
     if (host?.connected && !loading && (desktop || lostSelection) && (!current || !ids.includes(current))) {
       const position = previousVisible.indexOf(current ?? lostSelection ?? "");
       const adjacent = previousVisible.slice(position + 1).find(id => ids.includes(id)) ?? previousVisible.slice(0, Math.max(0, position)).reverse().find(id => ids.includes(id));
-      const next = remembered[hostFilter] ?? adjacent ?? visibleAgents.find(a => a.role === "orc")?.id ?? null;
+      const next = remembered[instanceId] ?? adjacent ?? visibleAgents.find(a => a.role === "orc")?.id ?? null;
       void openConversation(next);
     }
     previousVisible = sessionList?.visibleIds() ?? visibleAgents.filter(a => a.role === "orc").map(a => a.id);
     lostSelection = null;
   });
-  async function selectHost(id: string, restore = true) {
-    switchingHost = true; hostFilter = id;
-    const host = hosts.find(h => h.id === id);
-    const rememberedId = remembered[id];
-    const next = rememberedId && (!host?.connected || snapshot.agents.some(a => a.id === rememberedId)) ? rememberedId : snapshot.agents.find(a => a.hostId === id && a.role === "orc")?.id ?? null;
-    try { if (restore) await openConversation(next); }
-    finally { switchingHost = false; }
-  }
-  let createHost = $state(preferences.host); let catalogSequence = 0;
+  const createHost = $derived(snapshot.entryId ?? ""); let catalogSequence = 0;
   const target = $derived(snapshot.agents.find(a => a.id === selectedId));
   // Snapshot identity is display-only; detail remains the write authority.
   const shownDetail = $derived(detail ? withOutgoing(detail) : target ? { ...target, messages: [], deliveries: [] } : null);
   const hosts = $derived(snapshot.hosts ?? []);
-  const unansweredHosts = $derived(new Set(snapshot.agents.filter(a => (a.unansweredCount ?? a.questions.filter(q => q.state === "unanswered").length) > 0).map(a => a.hostId).filter((id): id is string => !!id)));
   const selectedHost = $derived(hosts.find(h => h.id === shownDetail?.hostId));
   const hostConnected = $derived(!!selectedHost?.connected);
-  const visibleAgents = $derived(snapshot.agents.filter(a => a.hostId === hostFilter).map(a => optimistic(a.id) && a.state !== "working" && a.state !== "stopping" ? {...a,state:"working" as const} : a));
-  $effect(() => { if (navigationReady) preferences.selection = { host: hostFilter, sessions: $state.snapshot(remembered) }; });
-  async function chooseHost(id: string) {
-    createHost = id; preferences.host = id; projectId = ""; projects = []; const seq = ++catalogSequence;
-    try { const registered = await api<Project[]>(`/projects?host=${encodeURIComponent(id)}`); if (seq === catalogSequence) { projects = registered; projectId = registered[0]?.alias ?? ""; } }
+  const visibleAgents = $derived(snapshot.agents.map(a => optimistic(a.id) && a.state !== "working" && a.state !== "stopping" ? {...a,state:"working" as const} : a));
+  $effect(() => { if (navigationReady) preferences.selection = { host: instanceId, sessions: $state.snapshot(remembered) }; });
+  async function loadProjects() {
+    projectId = ""; projects = []; const seq = ++catalogSequence;
+    try { const registered = await api<Project[]>("/projects"); if (seq === catalogSequence) { projects = registered; projectId = registered[0]?.alias ?? ""; } }
     catch(e) { if (seq === catalogSequence) error = e instanceof Error ? e.message : m.load_failure(); }
   }
   const roots = $derived(snapshot.agents.filter(a => a.role === "orc"));
@@ -118,7 +102,7 @@
     if (id !== selectedId) { ++sequence; selectedId = id; detail = null; skills = []; error = ""; if (id) void restoreDetail(id); else { void client?.call("select", {ids:[]}).catch(() => {}); } }
   });
   $effect(() => {
-    const kind = navigation.surfaces.find(s => s === "new" || s === "settings" || s === "keys" || s === "hosts" || s === "abandon-close") ?? null;
+    const kind = navigation.surfaces.find(s => s === "new" || s === "settings" || s === "keys" || s === "abandon-close") ?? null;
     if (kind !== modal) { modal = kind; modalOpen = !!kind; if (kind) void prepareModal(kind); }
   });
   async function refreshDetail(id: string) {
@@ -130,11 +114,11 @@
   }
   function open(id: string, fromDetail = false) { openConversation(id, fromDetail, snapshot.agents.find(a => a.id === id)?.ownerId); }
   async function restoreDetail(id: string) {
-    error = ""; selectedId = id; observeQuestions(snapshot.agents,id,true);
+    error = ""; selectedId = id;
     const host = id.split(":")[0];
-    // Unwinding nested history can briefly restore the previous host's owner.
-    if (!switchingHost || host === hostFilter) remembered = { ...remembered, [host]: id };
-    if (!switchingHost) hostFilter = host;
+    if (host !== (snapshot.entryId ?? instanceId)) { detail = null; return; }
+    observeQuestions(snapshot.agents,id,true);
+    remembered = { ...remembered, [host]: id };
     if (detail?.id !== id) detail = readingCache.readDetail(id); skills = [];
     if (hosts.find(h=>h.id===id.split(":")[0])?.connected) {
       void client?.call('select', {ids:[id]}).catch(e => { if(selectedId === id) error = e instanceof Error ? e.message : m.load_failure(); });
@@ -146,7 +130,7 @@
   }
   function adopt(value: Snapshot, authoritative = false) {
     if (!authoritative && value.revision < snapshot.revision) return;
-    // Retain read-only state until each Peer supplies an authoritative snapshot.
+    // Retain local read-only state until the instance supplies an authoritative snapshot.
     const retained = snapshot.agents.filter(a => value.hosts?.some(h => h.id === a.hostId && !h.connected) && !value.agents.some(next => next.hostId === a.hostId));
     value = { ...value, agents: [...value.agents, ...retained], hosts: value.hosts?.map(h => !h.connected && !h.lastSeen ? { ...h, lastSeen: snapshot.hosts?.find(old => old.id === h.id)?.lastSeen } : h) };
     observeQuestions(value.agents, selectedId);
@@ -172,7 +156,7 @@
     historyCache.retain(new Set(value.agents.map(a => a.id)));
     const valid = new Set(value.agents.map(a => a.id));
     for (const id of [...navigation.details, ...Object.values(remembered)]) {
-      if (!peersReady || value.hosts?.some(h => !h.connected && id.startsWith(h.id + ":"))) valid.add(id);
+      if (id.startsWith(value.entryId + ":") && (!connectionReady || value.hosts?.some(h => !h.connected))) valid.add(id);
     }
     validateNavigation(valid);
 
@@ -202,9 +186,8 @@
       notification.onclick = () => { window.focus(); void open(a.ownerId ?? a.id); notification.close(); };
     }
   }
-  let hostsReturnFocus: HTMLElement | null = null;
-  function show(kind: "new" | "settings" | "keys" | "hosts") { if (kind === "hosts") hostsReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null; setSurface(kind, true); }
-  async function prepareModal(kind: "new" | "settings" | "keys" | "hosts" | "abandon-close") {
+  function show(kind: "new" | "settings" | "keys") { setSurface(kind, true); }
+  async function prepareModal(kind: "new" | "settings" | "keys" | "abandon-close") {
     error = "";
     if (kind === "abandon-close" && !abandon) {
       const intent = closeRecovery.entries.find(i => i.agentId === selectedId);
@@ -212,7 +195,7 @@
       abandon = { id: intent.agentId, title: snapshot.agents.find(a => a.id === intent.agentId)?.title ?? "Orc", unknownOperationIds: intent.unknownOperationIds };
       closeUnknown = true;
     }
-    if (kind === "new") { search = ""; void chooseHost(hostFilter || preferences.host || snapshot.entryId || ""); }
+    if (kind === "new") { search = ""; void loadProjects(); }
     if (kind === "settings") {
       const saved=preferences.settings;
       const fallback=models.find(m=>m.isDefault) ?? models[0];
@@ -227,7 +210,7 @@
   }
   async function closeModal() { const kind = modal; while (kind && navigation.surfaces.includes(kind)) await back(); }
   async function resumeHistory(session: HistorySession, project: string) {
-    const agent = await api<Agent>(`/history/resume?host=${encodeURIComponent(createHost)}`, { project, threadId: session.threadId, archived: session.archived, settings: await creationSettings() });
+    const agent = await api<Agent>("/history/resume", { project, threadId: session.threadId, archived: session.archived, settings: await creationSettings() });
     adopt(await api<Snapshot>("/snapshot"));
     focusCreatedId = agent.id;
     await openConversation(agent.id);
@@ -245,7 +228,7 @@
   }
   async function create() {
     if (!projectId || saving || !connected) return; saving = true;
-    try { const agent = await api<Agent>(`/agents?host=${encodeURIComponent(createHost)}`, { project: projectId, settings: await creationSettings() }); await closeModal(); adopt(await api<Snapshot>("/snapshot")); focusCreatedId = agent.id; open(agent.id); await sessionList?.reveal(agent.id); }
+    try { const agent = await api<Agent>("/agents", { project: projectId, settings: await creationSettings() }); await closeModal(); adopt(await api<Snapshot>("/snapshot")); focusCreatedId = agent.id; open(agent.id); await sessionList?.reveal(agent.id); }
     catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { saving = false; }
   }
@@ -370,11 +353,11 @@
   async function checkPendingClose(id: string, showConfirmation = false) {
     if (closingId === id || checkingCloses.includes(id) || !hosts.some(h => id.startsWith(h.id + ":") && h.connected)) return;
     checkingCloses = [...checkingCloses, id];
-    const visit = selectedId; const device = hostFilter; const generation = sequence;
+    const visit = selectedId; const device = instanceId; const generation = sequence;
     try {
       const state = await readAbandon(id);
       if (state.closed) await finishAbandon(id);
-      else if (showConfirmation && selectedId === visit && hostFilter === device && sequence === generation && !navigation.surfaces.length) {
+      else if (showConfirmation && selectedId === visit && instanceId === device && sequence === generation && !navigation.surfaces.length) {
         abandon = { id, title: snapshot.agents.find(a => a.id === id)?.title ?? "Orc", unknownOperationIds: state.unknownOperationIds };
         closeUnknown = false; abandonError = ""; setSurface("abandon-close", true);
       }
@@ -428,7 +411,7 @@
     closeError = null;
     if (!connected || hosts.find(h => h.id === snapshot.agents.find(a => a.id === id)?.hostId)?.connected === false) { closeError = { id, reason: m.host_offline() }; return; }
     closingId = id;
-    const visit = selectedId; const device = hostFilter; const generation = sequence;
+    const visit = selectedId; const device = instanceId; const generation = sequence;
     try {
       await api(`/agents/${id}/close`, {});
       toast.success(m.tree_closed(), { duration: 3000 });
@@ -437,7 +420,7 @@
       closeError = { id, reason: e instanceof Error ? e.message : m.load_failure() };
       try {
         const state = await readAbandon(id);
-        if (!state.closed && selectedId === visit && hostFilter === device && sequence === generation && !navigation.surfaces.length) {
+        if (!state.closed && selectedId === visit && instanceId === device && sequence === generation && !navigation.surfaces.length) {
           abandon = { id, title: snapshot.agents.find(a => a.id === id)?.title ?? "Orc", unknownOperationIds: state.unknownOperationIds };
           closeUnknown = false; abandonError = ""; setSurface("abandon-close", true);
         }
@@ -483,16 +466,6 @@
   function keydown(event: KeyboardEvent) {
     if (event.defaultPrevented || composing || event.isComposing || event.keyCode === 229) return;
     const optionMove = event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && ["KeyJ", "KeyK"].includes(event.code);
-    const hostMove = event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && ["KeyH", "KeyL"].includes(event.code);
-    if (hostMove) {
-      if (navigation.surfaces.length) return;
-      event.preventDefault();
-      if (hosts.length < 2 || switchingHost) return;
-      const index = hosts.findIndex(host => host.id === hostFilter);
-      const offset = event.code === "KeyH" ? -1 : 1;
-      void selectHost(hosts[(index + offset + hosts.length) % hosts.length].id);
-      return;
-    }
     const numberMove = event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && /^Digit[1-9]$/.test(event.code);
     if (optionMove || numberMove) {
       if (navigation.surfaces.length) return;
@@ -521,17 +494,17 @@
     else if (event.key === "?") { event.preventDefault(); void show("keys"); }
   }
   onMount(() => {
-    const cached = readingCache.readSnapshot(); if (cached) snapshot={...cached,hosts:cached.hosts?.map(h=>({...h,connected:false}))};
-    if (selectedId) detail = readingCache.readDetail(selectedId);
+    const cached = readingCache.readSnapshot(); if (cached) snapshot={...cached,agents:cached.agents.filter(a=>a.hostId===cached.entryId),hosts:cached.hosts?.filter(h=>h.id===cached.entryId).map(h=>({...h,connected:false}))};
+    if (selectedId && selectedId.startsWith((snapshot.entryId ?? "") + ":")) detail = readingCache.readDetail(selectedId);
     const cleanupNavigation = initializeNavigation(selectedId);
     navigationReady = true;
     const initialId = navigation.details.at(-1);
-    if (initialId) { hostFilter = initialId.split(":")[0]; remembered = { ...remembered, [hostFilter]: initialId }; }
+    if (initialId) { instanceId = initialId.split(":")[0]; remembered = { ...remembered, [instanceId]: initialId }; }
     const media = matchMedia("(min-width: 701px)");
     const resize = () => desktop = media.matches;
     media.addEventListener("change", resize);
     let disposed=false;
-    client=new Peers(value=>{
+    client=new LocalConnection(value=>{
       if(disposed)return;
       const before=snapshot;
       const entryWasConnected=before.hosts?.find(h=>h.id===value.snapshot.entryId)?.connected;
@@ -548,13 +521,13 @@
       if(selectedId){const id=selectedId.split(":")[0];if(!before.hosts?.find(h=>h.id===id)?.connected&&value.snapshot.hosts?.find(h=>h.id===id)?.connected)void restoreDetail(selectedId);}
       if(!entryWasConnected&&value.snapshot.hosts?.find(h=>h.id===value.snapshot.entryId)?.connected){
         void load();
-        if(modal==="new"&&!hosts.some(h=>h.id===createHost))void chooseHost(preferences.host&&hosts.some(h=>h.id===preferences.host)?preferences.host:value.snapshot.entryId!);
+        if(modal==="new")void loadProjects();
       }
     },id=>{
       for(const pending of outgoing.entries)if(pending.agentId.startsWith(id+":")&&pending.status==='pending')unknownOutgoing(pending.agentId,pending.id,m.sending());
     });
     setClient(client);
-    void client.start().then(()=>{peersReady=true;return load();}).catch(e=>{loading=false;error=e.message;});
+    void client.start().then(()=>{connectionReady=true;return load();}).catch(e=>{loading=false;error=e.message;});
     const compositionStart = () => composing = true;
     const compositionEnd = () => composing = false;
     window.addEventListener("compositionstart", compositionStart);
@@ -571,12 +544,12 @@
 
 <Toaster theme="dark" position="bottom-center" />
 <header class="app-header" class:has-selection={!!selectedId}><strong>{m.product()}</strong><span class="session-count">{m.session_count({ count: roots.length })}</span>
-  <HostFilter {hosts} {unansweredHosts} value={hostFilter} onselect={selectHost} onmanage={() => show("hosts")} />
+
   <div class="header-actions"><Weekly hostId={snapshot.entryId} connected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} /><Button variant="ghost" size="icon-sm" aria-label={m.settings()} onclick={() => show("settings")}><SettingsIcon /></Button></div>
 </header>
 <div class:close-recovery-layout={closeRecovery.entries.some(i => modal !== "abandon-close" || abandon?.id !== i.agentId)}>
 <main class:with-detail={!!selectedId}>
-  <SessionList bind:this={sessionList} agents={visibleAgents} rootOrder={treeOrder[hostFilter] ?? []} onreorder={ids => treeOrder = { ...treeOrder, [hostFilter]: ids }} {hosts} {selectedId} {loading} {connected} {closingId} closeError={selectedId === closeError?.id ? null : closeError} onclosetree={closeTree} onopen={open} onnew={() => show("new")}>
+  <SessionList bind:this={sessionList} agents={visibleAgents} rootOrder={treeOrder[instanceId] ?? []} onreorder={ids => treeOrder = { ...treeOrder, [instanceId]: ids }} {hosts} {selectedId} {loading} {connected} {closingId} closeError={selectedId === closeError?.id ? null : closeError} onclosetree={closeTree} onopen={open} onnew={() => show("new")}>
     {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
   </SessionList>
   {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !shownDetail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
@@ -586,12 +559,12 @@
 
 {#if closeRecovery.entries.some(i => modal !== "abandon-close" || abandon?.id !== i.agentId)}
   <div class="close-recovery flex-col items-start" role="status" aria-label={m.abandon_close_recovery()}>
-    {#each closeRecovery.entries.filter(i => modal !== "abandon-close" || abandon?.id !== i.agentId) as intent (intent.agentId)}<div class="flex flex-wrap items-center gap-2 min-w-0"><div class="min-w-0"><strong>{m.abandon_close_recovery()}</strong><p class="break-all text-xs">{intent.agentId}</p>{#if closeRecoveryErrors[intent.agentId]}<p role="alert" class="break-words">{closeRecoveryErrors[intent.agentId]}</p>{/if}</div><Button variant="ghost" size="sm" disabled={closingId === intent.agentId || checkingCloses.includes(intent.agentId) || !hosts.some(h => intent.agentId.startsWith(h.id + ":") && h.connected)} onclick={() => checkPendingClose(intent.agentId, true)}>{m.abandon_close_check()}</Button></div>{/each}
+    {#each closeRecovery.entries.filter(i => i.agentId.startsWith(snapshot.entryId + ":") && (modal !== "abandon-close" || abandon?.id !== i.agentId)) as intent (intent.agentId)}<div class="flex flex-wrap items-center gap-2 min-w-0"><div class="min-w-0"><strong>{m.abandon_close_recovery()}</strong><p class="break-all text-xs">{intent.agentId}</p>{#if closeRecoveryErrors[intent.agentId]}<p role="alert" class="break-words">{closeRecoveryErrors[intent.agentId]}</p>{/if}</div><Button variant="ghost" size="sm" disabled={closingId === intent.agentId || checkingCloses.includes(intent.agentId) || !hosts.some(h => intent.agentId.startsWith(h.id + ":") && h.connected)} onclick={() => checkPendingClose(intent.agentId, true)}>{m.abandon_close_check()}</Button></div>{/each}
   </div>
 {/if}
 </div>
 <Dialog.Root open={modalOpen} onOpenChange={value => { if (!value && modal) void closeModal(); }}>
-  <Dialog.Content showCloseButton={false} class={`grove-dialog ${modal === "new" ? "new-modal" : modal === "settings" ? "settings-modal" : ""}`} onOpenAutoFocus={e => { e.preventDefault(); if (modal === "new") projectSearch?.focus(); }} onCloseAutoFocus={e => { e.preventDefault(); if (hostsReturnFocus?.isConnected) hostsReturnFocus.focus(); hostsReturnFocus = null; }}><Button class="modal-close" variant="ghost" size="icon-sm" aria-label={m.close()} onclick={closeModal}><X /></Button>
+  <Dialog.Content showCloseButton={false} class={`grove-dialog ${modal === "new" ? "new-modal" : modal === "settings" ? "settings-modal" : ""}`} onOpenAutoFocus={e => { e.preventDefault(); if (modal === "new") projectSearch?.focus(); }}><Button class="modal-close" variant="ghost" size="icon-sm" aria-label={m.close()} onclick={closeModal}><X /></Button>
     {#if modal === "abandon-close" && abandon}
       <Dialog.Title>{m.abandon_close_title()}</Dialog.Title>
       <Dialog.Description>{m.abandon_close_help()}</Dialog.Description>
@@ -602,10 +575,8 @@
     {:else if modal === "new"}
       <Dialog.Title>{navigation.surfaces.includes("history") ? m.open_session() : m.new_session()}</Dialog.Title>
       {#if navigation.surfaces.includes("history") && projects.find(p => p.alias === projectId)}
-        {#key createHost + ":" + projectId}<SessionHistory hostId={createHost} hostName={hosts.find(h => h.id === createHost)?.name ?? ""} project={projects.find(p => p.alias === projectId)!} connected={connected && !!hosts.find(h => h.id === createHost)?.connected} onresume={resumeHistory} />{/key}
+        {#key createHost + ":" + projectId}<SessionHistory hostId={createHost} project={projects.find(p => p.alias === projectId)!} connected={connected && !!hosts.find(h => h.id === createHost)?.connected} onresume={resumeHistory} />{/key}
       {:else}
-      <p class="modal-help">{m.host_project_help()}</p>
-      <p class="form-section-label">{m.execution_host()}</p><div class="host-choices" aria-label={m.execution_host()}>{#each hosts as host}<button class:selected={createHost === host.id} disabled={!host.connected} onclick={() => chooseHost(host.id)}><strong>{host.name}</strong><span>{host.connected ? m.connected_host() : m.disconnected_host()}</span></button>{/each}</div>
       <p class="form-section-label">{m.project_label()}</p><Input bind:ref={projectSearch} class="project-search" aria-label={m.search_projects()} placeholder={m.search_projects()} bind:value={search} onkeydown={e => {
         if (e.isComposing) return;
         if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); const i = filteredProjects.findIndex(p => p.alias === projectId); projectId = filteredProjects[Math.max(0, Math.min(filteredProjects.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))]?.alias ?? ""; }
@@ -614,16 +585,14 @@
       <div class="project-list">{#each filteredProjects as project}<button class:selected={project.alias === projectId} onclick={() => projectId = project.alias} aria-label={project.name}><strong>{project.name}</strong>{#if project.name !== project.alias}<span>{project.path}</span>{/if}</button>{:else}<p>{m.no_projects()}</p>{/each}</div>
       {#if snapshot.settings}<p class="defaults-note">{m.new_defaults({ model: snapshot.settings.orc.model, effort: snapshot.settings.orc.effort, tier: snapshot.settings.fast ? m.fast_mode() : "Default" })}</p>{/if}
       <p class="project-keyboard">{m.project_keyboard()}</p>
-      <div class="modal-action"><Button variant="ghost" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !projectId} onclick={() => setSurface("history", true)}><History />{m.find_history()}</Button><Button variant="default" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !filteredProjects.some(p => p.alias === projectId)} onclick={create}>{saving ? m.sending() : m.create_host({ host: hosts.find(h => h.id === createHost)?.name ?? "" })}</Button></div>
+      <div class="modal-action"><Button variant="ghost" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !projectId} onclick={() => setSurface("history", true)}><History />{m.find_history()}</Button><Button variant="default" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !filteredProjects.some(p => p.alias === projectId)} onclick={create}>{saving ? m.sending() : m.new_session()}</Button></div>
       {/if}
     {:else if modal === "settings"}
       <Dialog.Title>{m.settings()}</Dialog.Title><p class="modal-help">{m.settings_help()}</p>
       {#if settings}{#each ["orc", "worker"] as role}{@const key = role as "orc" | "worker"}<section class="role-settings"><h3>{key === "orc" ? m.orc() : m.worker()}</h3><div class="model-fields"><label>{m.model()}<NativeSelect class="model-select" bind:value={settings[key].model} onchange={() => { if (settings) settings[key].effort = models.find(model => model.id === settings![key].model)?.defaultEffort ?? ""; if (settings && !models.find(model => model.id === settings![key].model)?.fastTier) settings.fast = false; }}>{#each models as model}<option value={model.id}>{model.name}</option>{/each}</NativeSelect></label><label>{m.effort()}<NativeSelect class="model-select" bind:value={settings[key].effort}>{#each models.find(model => model.id === settings![key].model)?.efforts ?? [] as effort}<option value={effort}>{effort}</option>{/each}</NativeSelect></label></div></section>{/each}<label class="fast-setting"><span><strong>{m.fast_mode()}</strong><small>{fastAvailable ? m.fast_help() : m.fast_unavailable()}</small></span><Switch aria-label={m.fast_mode()} bind:checked={settings.fast} disabled={!fastAvailable} /></label>{/if}
       <p class="settings-scope">{m.settings_scope()}</p><div class="modal-action">{#if install}<button class="install-link" onclick={() => install?.prompt()}>{m.install_app()}</button>{/if}<Button variant="default" size="sm" disabled={!settings || saving} onclick={saveSettings}>{saving ? m.sending() : m.save_changes()}</Button></div>
-    {:else if modal === "hosts"}
-      <Dialog.Title>{m.hosts()}</Dialog.Title><Hosts {hosts} sessionCount={roots.length} onadopt={value => adopt(value, true)} />
     {:else if modal === "keys"}
-      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Option + J / K", m.key_session_loop()], ["Option/Alt + H / L", m.key_host_loop()], ["⌘ 1–9", m.key_visible_session()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Option/Alt + S", m.search_skills()], ["Option/Alt + X", m.close_tree()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
+      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Option + J / K", m.key_session_loop()], ["⌘ 1–9", m.key_visible_session()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Option/Alt + S", m.search_skills()], ["Option/Alt + X", m.close_tree()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
     {/if}
     {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
   </Dialog.Content>

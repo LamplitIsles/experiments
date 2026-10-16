@@ -370,10 +370,6 @@ test("two tabs cannot erase an unadmitted operation before its owner has a recei
   await input.press("Enter");
   await expect.poll(() => operationId).not.toBe("");
   await second
-    .getByRole("group", { name: "Host filter" })
-    .getByRole("button", { name: "Neil’s Mac", exact: true })
-    .click();
-  await second
     .getByRole("button", { name: "Open Reader performance Orc" })
     .click();
   await expect(

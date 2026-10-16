@@ -13,8 +13,8 @@
   import MessageTime from "./MessageTime.svelte";
   import Markdown from "./Markdown.svelte";
   import * as m from "./paraglide/messages";
-  let { hostId, hostName, project, connected, onresume }: {
-    hostId: string; hostName: string; project: Project; connected: boolean;
+  let { hostId, project, connected, onresume }: {
+    hostId: string; project: Project; connected: boolean;
     onresume: (session: HistorySession, project: string) => Promise<void>;
   } = $props();
   let query = $state(""); let sessions = $state<HistorySession[]>([]); let cursor = $state<string | null>(null);
@@ -31,7 +31,7 @@
   const previewOpen = $derived(navigation.surfaces.includes("history-preview") && !!selected);
   $effect(() => { if (!previewOpen) record = null; });
   $effect(() => { if (!previewOpen) void tick().then(() => { if (results) results.scrollTop = listScroll; }); });
-  function params(alias = project.alias) { return new URLSearchParams({ host: hostId, project: alias }); }
+  function params(alias = project.alias) { return new URLSearchParams({ project: alias }); }
   async function search(more = false) {
     const seq = ++sequence; loading = true; error = ""; retryOperation = "search";
     const p = params(); p.set("query", query.trim()); if (more && cursor) p.set("cursor", cursor);
@@ -94,7 +94,7 @@
 
 <div class="session-history">
   <div class="history-heading"><Button variant="ghost" size="icon-sm" aria-label={m.back_history()} onclick={() => back()}><ArrowLeft /></Button><strong>{previewOpen ? m.session_preview() : m.find_history()}</strong></div>
-  <p class="history-context">{hostName} <span>›</span> {!previewOpen || previewProject === project.alias ? project.name : previewProject}</p>
+  <p class="history-context">{!previewOpen || previewProject === project.alias ? project.name : previewProject}</p>
   {#if !previewOpen}
     <div class="history-controls">
     <Input bind:ref={input} bind:value={query} aria-label={m.search_history()} placeholder={m.search_history()} onkeydown={e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); void search(); } }} />

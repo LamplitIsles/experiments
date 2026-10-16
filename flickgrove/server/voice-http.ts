@@ -29,39 +29,11 @@ export async function voiceHttp(
     Response.json(value, { status, headers });
   if (!origins.some((o) => new URL(o).host === url.host))
     return respond({ error: "Wrong Peer address" }, 403);
-  try {
-    if (!/^https?:\/\//.test(origin) || new URL(origin).origin !== origin)
-      return respond({ error: "Browser origin required" }, 403);
-  } catch {
-    return respond({ error: "Browser origin required" }, 403);
-  }
-  headers.set("Access-Control-Allow-Origin", origin);
-  headers.set("Access-Control-Expose-Headers", "X-Grove-Peer");
-  if (request.method === "OPTIONS" && !stream) {
-    const requested = (
-      request.headers.get("access-control-request-headers") ?? ""
-    )
-      .toLowerCase()
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (
-      request.headers.get("access-control-request-method") !== "GET" ||
-      requested.some((h) => !["authorization", "x-grove-peer"].includes(h))
-    )
-      return respond({ error: "Preflight denied" }, 403);
-    headers.set("Access-Control-Allow-Methods", "GET");
-    headers.set("Access-Control-Allow-Headers", "Authorization, X-Grove-Peer");
-    return new Response(null, { status: 204, headers });
-  }
-  const token = stream
-    ? protocols.find((p) => p.startsWith("grove-auth."))?.slice(11)
-    : /^Bearer (.+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
-  if (
-    (token && token !== service.credential) ||
-    (!origins.includes(origin) && token !== service.credential)
-  )
-    return respond({ error: "Peer authorization required" }, 401);
+  if (!origin || !origins.includes(origin))
+    return respond(
+      { error: "Open FlickGrove from its configured address" },
+      403,
+    );
   const peerId = stream
     ? protocols.find((p) => p.startsWith("grove-peer."))?.slice(11)
     : request.headers.get("x-grove-peer");

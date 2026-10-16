@@ -208,7 +208,7 @@ test("real HTTP creates only origin/auth/identity-bound grants and serves bounde
   expect(
     (await f.create("reports/page.html", {}, { Origin: "https://other.test" }))
       .status,
-  ).toBe(401);
+  ).toBe(403);
   expect(
     (await f.create("reports/page.html", {}, { "X-Grove-Peer": "wrong" }))
       .status,
@@ -220,14 +220,14 @@ test("real HTTP creates only origin/auth/identity-bound grants and serves bounde
     "reports/page.html",
     {},
     {
-      Origin: "https://other.test",
-      Authorization: `Bearer ${f.service.credential}`,
+      Origin: f.origin,
+      Authorization: "Bearer stale",
     },
   );
   expect(response.status).toBe(200);
   const value = await response.json();
   expect(value.url).not.toContain(f.cwd);
-  expect(value.url).not.toContain(f.service.credential);
+  expect(value.url).not.toContain("stale");
   const resource = await fetch(value.url, { headers: { Origin: "null" } });
   expect(resource.status).toBe(200);
   expect(await resource.text()).toContain("interactive");
@@ -252,7 +252,7 @@ test("real HTTP creates only origin/auth/identity-bound grants and serves bounde
       throw new Error("Must not upgrade");
     },
   });
-  expect((denied as Response).status).toBe(401);
+  expect((denied as Response).status).toBe(403);
 });
 test("canonical cwd/root, traversal, symlinks, special files, supported types and per-file limits", async () => {
   const f = await fixture();
@@ -355,7 +355,7 @@ test("bounded grants, preflight, stream intake and replaced resource roots", asy
     "Access-Control-Request-Method": "POST",
     "Access-Control-Request-Headers": "authorization,content-type,x-grove-peer",
   });
-  expect(allowed.status).toBe(204);
+  expect(allowed.status).toBe(403);
   expect(allowed.headers.get("access-control-allow-credentials")).toBeNull();
   expect(
     (
@@ -368,11 +368,11 @@ test("bounded grants, preflight, stream intake and replaced resource roots", asy
   expect(
     (
       await request("OPTIONS", {
-        Origin: "https://browser.test",
+        Origin: f.origin,
         "Access-Control-Request-Method": "PUT",
       })
     ).status,
-  ).toBe(405);
+  ).toBe(403);
   const big = new ReadableStream({
     start(controller) {
       controller.enqueue(new TextEncoder().encode("x".repeat(9000)));

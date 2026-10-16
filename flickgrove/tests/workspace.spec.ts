@@ -66,7 +66,7 @@ test("Worker reports stay in the timeline as one folded incoming card, including
   await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
 });
 
-test("create, delegate, read a Worker, insert a skill and close the tree through Orc", async ({
+test("create, delegate, read a Worker, insert a skill and close an idle tree", async ({
   page,
 }) => {
   await page.goto("/");
@@ -99,15 +99,6 @@ test("create, delegate, read a Worker, insert a skill and close the tree through
   await expect(page.getByRole("option", { name: /to-orc-impl/ })).toBeVisible();
   await page.getByRole("combobox", { name: "Search skills…" }).press("Tab");
   await expect(input).toHaveValue("$to-orc-impl ");
-  await page.keyboard.press("Alt+x");
-  await expect(page.getByRole("alert")).toContainText(
-    "Workers, Reviewers and Researchers first",
-  );
-  await input.fill("Close the workers");
-  await input.press("Enter");
-  await expect(
-    page.getByText("Workers are closed.", { exact: true }),
-  ).toBeVisible();
   await page.keyboard.press("Alt+x");
   await expect(page.getByText("A place for your next task.")).toBeVisible();
 });
@@ -248,7 +239,11 @@ test("N focuses creation, I focuses Composer, and list navigation survives detai
   await expect(
     page.getByRole("button", { name: "Beta", exact: true }),
   ).toHaveClass(/selected/);
-  await expect(page.getByRole("button", { name: /Create on/ })).toBeEnabled();
+  await expect(
+    page
+      .getByRole("dialog")
+      .getByRole("button", { name: "New session", exact: true }),
+  ).toBeEnabled();
   await page.keyboard.press("Enter");
   await expect(
     page.getByRole("textbox", { name: "Message Orc" }),
@@ -544,7 +539,9 @@ test("ordinary tree Close preflights a running child and releases an open idle c
       );
     })
     .toBe(false);
-  await expect(input).toHaveCount(0);
+  await expect(
+    page.locator(`.session-open[data-agent-id="${root.id}"]`),
+  ).toHaveCount(0);
   await page.screenshot({
     path: "../.scratch/close-quiescent-tree/browser-closed.png",
   });

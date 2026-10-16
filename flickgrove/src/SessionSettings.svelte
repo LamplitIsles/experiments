@@ -28,7 +28,7 @@
   async function catalogue() {
     if (!connected) { catalogueError = m.session_offline(); return; }
     try {
-      const result = await api<Model[]>(`/models?host=${encodeURIComponent(detail.hostId!)}`);
+      const result = await api<Model[]>("/models");
       catalogues.set(detail.hostId!, result);
       if (alive) { choices = result; catalogueError = ""; }
     } catch (e) { if (alive) catalogueError = e instanceof Error ? e.message : m.load_failure(); }

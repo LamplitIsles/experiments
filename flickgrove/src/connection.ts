@@ -11,28 +11,6 @@ const identitySchema = z.object({
     .refine((id) => !id.includes(":")),
   name: z.string().min(1).max(120),
 });
-const peerSchema = identitySchema.extend({
-  url: z
-    .string()
-    .url()
-    .refine((url) => {
-      try {
-        const parsed = new URL(url);
-        return (
-          ["http:", "https:"].includes(parsed.protocol) && parsed.origin === url
-        );
-      } catch {
-        return false;
-      }
-    }),
-  credential: z.string().regex(/^[A-Za-z0-9_-]*$/),
-});
-export type PeerConnection = {
-  id: string;
-  name: string;
-  url: string;
-  credential: string;
-};
 const prefix = `flickgrove/${location.origin}`;
 function read<T>(key: string, fallback: T): T {
   try {
@@ -78,10 +56,14 @@ export const preferences = {
     if (!result.success)
       return { host: "", sessions: {} as Record<string, string> };
     return {
-      host: result.data.host,
+      host:
+        identitySchema.safeParse(read<unknown>("entry", null)).data?.id ?? "",
       sessions: Object.fromEntries(
-        Object.entries(result.data.sessions).filter(([host, id]) =>
-          id.startsWith(host + ":"),
+        Object.entries(result.data.sessions).filter(
+          ([host, id]) =>
+            id.startsWith(host + ":") &&
+            host ===
+              identitySchema.safeParse(read<unknown>("entry", null)).data?.id,
         ),
       ),
     };
@@ -103,15 +85,9 @@ export const preferences = {
   set settings(value: Settings | null) {
     readingCache.writeDevice(`${prefix}/preferences`, JSON.stringify(value));
   },
-  get host() {
-    return localStorage.getItem(`${prefix}/create-host`) ?? "";
-  },
-  set host(value: string) {
-    readingCache.writeDevice(`${prefix}/create-host`, value);
-  },
 };
 type Link = {
-  config: PeerConnection;
+  config: { id: string; name: string };
   host: Host;
   agents: Agent[];
   client?: GroveClient;
@@ -121,9 +97,9 @@ type Link = {
   probe?: ReturnType<typeof setInterval>;
   probing?: boolean;
 };
-export class Peers {
+export class LocalConnection {
   entryId = "";
-  private links = new Map<string, Link>();
+  private link?: Link;
   private disposed = false;
   private revision = 0;
   private selected: string | null = null;
@@ -137,8 +113,8 @@ export class Peers {
       entryId: this.entryId,
       revision: this.revision,
       settings: preferences.settings,
-      hosts: [...this.links.values()].map((l) => ({ ...l.host })),
-      agents: [...this.links.values()].flatMap((l) => l.agents),
+      hosts: this.link ? [{ ...this.link.host }] : [],
+      agents: this.link?.agents ?? [],
     };
   }
   private publish() {
@@ -150,31 +126,25 @@ export class Peers {
       read<unknown>("entry", null),
     );
     const local = storedIdentity.success ? storedIdentity.data : null;
-    const parsed = z.array(peerSchema).safeParse(read<unknown>("peers", []));
-    const configs = parsed.success ? parsed.data : [];
     if (local) {
       this.entryId = local.id;
-      this.add({ ...local, url: location.origin, credential: "" });
-      for (const config of configs)
-        if (config.id !== local.id) this.add(config);
+      this.add(local);
     }
     try {
       const response = await fetch("/api/identity", {
         signal: AbortSignal.timeout(8000),
       });
-      if (!response.ok) throw new Error("Peer identity unavailable");
+      if (!response.ok) throw new Error("Instance identity unavailable");
       const actual = identitySchema.parse(await response.json());
       if (this.disposed) return;
       if (local && local.id !== actual.id) {
-        for (const link of this.links.values()) this.stop(link);
-        this.links.clear();
+        if (this.link) this.stop(this.link);
+        this.link = undefined;
         this.details = {};
       }
       if (!local || local.id !== actual.id) {
         this.entryId = actual.id;
-        this.add({ ...actual, url: location.origin, credential: "" });
-        for (const config of configs)
-          if (config.id !== actual.id) this.add(config);
+        this.add(actual);
       }
       readingCache.writeDevice(`${prefix}/entry`, JSON.stringify(actual));
     } catch (error) {
@@ -182,17 +152,7 @@ export class Peers {
     }
     this.publish();
   }
-  private persist() {
-    readingCache.writeDevice(
-      `${prefix}/peers`,
-      JSON.stringify(
-        [...this.links.values()]
-          .filter((l) => l.config.id !== this.entryId)
-          .map((l) => l.config),
-      ),
-    );
-  }
-  private add(config: PeerConnection) {
+  private add(config: { id: string; name: string }) {
     const raw = readingCache.readPeerSnapshot(config.id);
     const stored = {
       agents: raw.agents.filter((a) => a.hostId === config.id),
@@ -203,14 +163,14 @@ export class Peers {
       host: {
         id: config.id,
         name: config.name,
-        url: config.url,
+        url: location.origin,
         connected: false,
         lastSeen: stored.lastSeen,
       },
       agents: stored.agents,
       generation: 0,
     };
-    this.links.set(config.id, link);
+    this.link = link;
     void this.connect(link);
   }
   private async connect(link: Link) {
@@ -218,7 +178,7 @@ export class Peers {
     link.probing = false;
     const generation = ++link.generation;
     let closed = false;
-    const socket = this.socket(link.config);
+    const socket = this.socket();
     link.socket = socket;
     const offline = () => {
       if (closed || this.disposed || generation !== link.generation) return;
@@ -226,7 +186,7 @@ export class Peers {
       clearInterval(link.probe);
       link.client = undefined;
       link.host.connected = false;
-      link.host.error = "Peer disconnected. Reconnecting automatically.";
+      link.host.error = "Instance disconnected. Reconnecting automatically.";
       this.offline(link.config.id);
       this.publish();
       link.retry = setTimeout(() => void this.connect(link), 1000);
@@ -240,21 +200,17 @@ export class Peers {
             view.snapshot.entryId !== link.config.id ||
             view.snapshot.agents.some((a) => a.hostId !== link.config.id)
           ) {
-            link.host.error = "Peer identity changed";
-            socket.close(1008, "Peer identity changed");
+            link.host.error = "Instance identity changed";
+            socket.close(1008, "Instance identity changed");
             return;
           }
-          link.agents = view.snapshot.agents.map((a) => ({
-            ...a,
-            hostName: link.config.name,
-          }));
+          link.agents = view.snapshot.agents;
           const active = new Set(link.agents.map((a) => a.id));
           for (const id of Object.keys(this.details))
             if (id.startsWith(link.config.id + ":") && !active.has(id))
               delete this.details[id];
           for (const [id, detail] of Object.entries(view.details))
-            if (active.has(id))
-              this.details[id] = { ...detail, hostName: link.config.name };
+            if (active.has(id)) this.details[id] = detail;
           link.host.lastSeen = Date.now();
           readingCache.savePeerSnapshot(
             link.config.id,
@@ -272,7 +228,7 @@ export class Peers {
       }
       const identity = await client.call<{ id: string }>("identity", {});
       if (identity.id !== link.config.id)
-        throw new Error("Peer identity changed");
+        throw new Error("Instance identity changed");
       if (closed || this.disposed || generation !== link.generation) {
         client.close();
         return;
@@ -291,7 +247,7 @@ export class Peers {
         let deadline: ReturnType<typeof setTimeout>;
         const timeout = new Promise<never>((_, reject) => {
           deadline = setTimeout(
-            () => reject(new Error("Peer heartbeat timed out")),
+            () => reject(new Error("Instance heartbeat timed out")),
             10_000,
           );
         });
@@ -314,117 +270,34 @@ export class Peers {
       offline();
     }
   }
-  private socket(config: PeerConnection) {
-    const url = new URL("/api/socket", config.url);
+  private socket() {
+    const url = new URL("/api/socket", location.origin);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    return new WebSocket(
-      url,
-      config.credential
-        ? ["grove.v1", `grove-auth.${config.credential}`]
-        : ["grove.v1"],
-    );
-  }
-  async register(input: {
-    id?: string;
-    name: string;
-    url: string;
-    credential: string;
-  }) {
-    const url = new URL(input.url);
-    if (
-      !["http:", "https:"].includes(url.protocol) ||
-      url.origin !== input.url.replace(/\/$/, "")
-    )
-      throw new Error("Use an HTTP(S) address without a path");
-    const old = input.id ? this.links.get(input.id) : undefined;
-    const config = {
-      id: input.id ?? "",
-      name: input.name.trim(),
-      url: url.origin,
-      credential: input.credential || old?.config.credential || "",
-    };
-    if (!config.name || !config.credential)
-      throw new Error("Name and access token are required");
-    if (!/^[A-Za-z0-9_-]+$/.test(config.credential))
-      throw new Error("Invalid Peer credential");
-    const socket = this.socket(config);
-    let observed: string | undefined;
-    let client: GroveClient | undefined;
-    try {
-      client = await openGrove(
-        socket,
-        (v) => {
-          observed = v.snapshot.entryId;
-        },
-        () => {},
-        10_000,
-      );
-      const identity = await client.call<{ id: string }>("identity", {});
-      if (identity.id !== observed || (input.id && input.id !== identity.id))
-        throw new Error(
-          "Peer identity changed; address edit cannot move ownership",
-        );
-      config.id = identity.id;
-      if (config.id === this.entryId)
-        throw new Error("This Peer is already included");
-      if (!old && this.links.has(config.id))
-        throw new Error("This Peer is already registered");
-    } catch (error) {
-      if (error instanceof Error && error.message === "Connection failed")
-        throw new Error(
-          "Peer connection or authorization failed. Check the address and access token.",
-        );
-      throw error;
-    } finally {
-      client?.close();
-      socket.close();
-    }
-    if (old) this.stop(old);
-    this.add(config);
-    this.persist();
-    this.publish();
-    return this.snapshot();
-  }
-  remove(id: string) {
-    if (id === this.entryId) throw new Error("Cannot remove the page Peer");
-    const link = this.links.get(id);
-    if (link) this.stop(link);
-    this.links.delete(id);
-    this.persist();
-    this.publish();
+    return new WebSocket(url, ["grove.v1"]);
   }
   async call<T>(member: Method, input: unknown): Promise<T> {
-    const p = input as { id?: string; host?: string; ids?: string[] };
     if (member === "select") {
-      this.selected = p.ids?.[0] ?? null;
-      // Deselecting an unrelated Peer must not delay or fail the active selection.
-      const target = this.selected?.split(":")[0];
-      for (const link of this.links.values())
-        if (link.client && link.config.id !== target)
-          void link.client.call("select", { ids: [] }).catch(() => {});
-      const link = target ? this.links.get(target) : undefined;
-      if (link?.client)
-        await link.client.call("select", { ids: [this.selected!] });
+      this.selected = (input as { ids: string[] }).ids[0] ?? null;
+      if (this.link?.client)
+        await this.link.client.call("select", {
+          ids: this.selected ? [this.selected] : [],
+        });
       return null as T;
     }
-    const id = p.id?.split(":")[0] ?? p.host ?? this.entryId;
-    const link = this.links.get(id);
+    const link = this.link;
     if (!link?.client || !link.host.connected)
       throw new Error(
-        "Peer disconnected. Outcome unknown; this operation will not be replayed.",
+        "Instance disconnected. Outcome unknown; this operation will not be replayed.",
       );
     return link.client.call<T>(member, input);
   }
   async media(agent: string, path: string, init: RequestInit = {}) {
     const peer = agent.split(":")[0];
-    const link = this.links.get(peer);
-    if (!link || !link.host.connected)
-      throw new Error("Execution Peer is offline");
+    const link = this.link?.config.id === peer ? this.link : undefined;
+    if (!link || !link.host.connected) throw new Error("Instance is offline");
     const headers = new Headers(init.headers);
     headers.set("X-Grove-Peer", peer);
-    if (link.config.credential)
-      headers.set("Authorization", `Bearer ${link.config.credential}`);
-    const response = await fetch(new URL(path, link.config.url), {
+    const response = await fetch(new URL(path, location.origin), {
       ...init,
       headers,
       credentials: "omit",
@@ -443,21 +316,18 @@ export class Peers {
       throw new Error(error);
     }
     if (response.headers.get("X-Grove-Peer") !== peer)
-      throw new Error("Peer identity changed");
+      throw new Error("Instance identity changed");
     return response;
   }
   async voiceCapability(agent: string, signal?: AbortSignal) {
     const id = agent.split(":")[0];
-    const link = this.links.get(id);
-    if (!link?.host.connected) throw new Error("Execution Peer is offline");
+    const link = this.link?.config.id === id ? this.link : undefined;
+    if (!link?.host.connected) throw new Error("Instance is offline");
     const response = await fetch(
-      new URL("/api/voice/capability", link.config.url),
+      new URL("/api/voice/capability", location.origin),
       {
         headers: {
           "X-Grove-Peer": id,
-          ...(link.config.credential
-            ? { Authorization: `Bearer ${link.config.credential}` }
-            : {}),
         },
         credentials: "omit",
         signal: signal
@@ -466,25 +336,19 @@ export class Peers {
       },
     );
     if (!response.ok || response.headers.get("X-Grove-Peer") !== id)
-      throw new Error("Voice Peer unavailable");
+      throw new Error("Voice instance unavailable");
     return voiceCapability.parse(await response.json());
   }
   async voiceSocket(agent: string) {
     const capability = await this.voiceCapability(agent);
     if (!capability.available)
-      throw new Error("Voice unavailable on this Peer");
+      throw new Error("Voice unavailable on this instance");
     const id = agent.split(":")[0];
-    const link = this.links.get(id);
-    if (!link?.host.connected) throw new Error("Execution Peer is offline");
-    const url = new URL("/api/voice/stream", link.config.url);
+    const link = this.link?.config.id === id ? this.link : undefined;
+    if (!link?.host.connected) throw new Error("Instance is offline");
+    const url = new URL("/api/voice/stream", location.origin);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    return new WebSocket(url, [
-      "grove-voice.v1",
-      `grove-peer.${id}`,
-      ...(link.config.credential
-        ? [`grove-auth.${link.config.credential}`]
-        : []),
-    ]);
+    return new WebSocket(url, ["grove-voice.v1", `grove-peer.${id}`]);
   }
   private stop(link: Link) {
     link.generation++;
@@ -495,6 +359,6 @@ export class Peers {
   }
   close() {
     this.disposed = true;
-    for (const link of this.links.values()) this.stop(link);
+    if (this.link) this.stop(this.link);
   }
 }

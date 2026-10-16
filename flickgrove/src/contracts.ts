@@ -132,7 +132,6 @@ export interface Agent {
     reason: string;
   };
   hostId?: string;
-  hostName?: string;
   stop?: {
     turnId: string;
     status: "pending" | "unknown" | "confirmed" | "completed";

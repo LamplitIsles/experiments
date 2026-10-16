@@ -3,7 +3,6 @@ export type Surface =
   | "new"
   | "history"
   | "history-preview"
-  | "hosts"
   | "settings"
   | "session-settings"
   | "keys"

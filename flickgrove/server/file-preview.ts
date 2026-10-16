@@ -128,41 +128,8 @@ export function filePreview(service: HostService, now = Date.now) {
         (request.headers.get("sec-fetch-site") === "same-origin"
           ? url.origin
           : "");
-      if (!/^https?:\/\//.test(origin) || new URL(origin).origin !== origin)
-        return fail("Browser origin required", 403);
-      headers.set("Access-Control-Allow-Origin", origin);
-      headers.set("Vary", "Origin");
-      headers.set("Access-Control-Expose-Headers", "X-Grove-Peer");
-      if (request.method === "OPTIONS") {
-        if (request.headers.get("access-control-request-method") !== "POST")
-          return fail("Method denied", 405);
-        if (
-          (request.headers.get("access-control-request-headers") ?? "")
-            .toLowerCase()
-            .split(",")
-            .some(
-              (h) =>
-                !["", "authorization", "content-type", "x-grove-peer"].includes(
-                  h.trim(),
-                ),
-            )
-        )
-          return fail("Header denied", 403);
-        headers.set("Access-Control-Allow-Methods", "POST");
-        headers.set(
-          "Access-Control-Allow-Headers",
-          "Authorization, Content-Type, X-Grove-Peer",
-        );
-        return new Response(null, { status: 204, headers });
-      }
-      const token = /^Bearer (.+)$/.exec(
-        request.headers.get("authorization") ?? "",
-      )?.[1];
-      if (
-        (token && token !== service.credential) ||
-        (!origins.includes(origin) && token !== service.credential)
-      )
-        return fail("Peer authorization required", 401);
+      if (!origins.includes(origin))
+        return fail("Open FlickGrove from its configured address", 403);
       if (request.headers.get("x-grove-peer") !== service.identity.id)
         return fail("Peer identity changed", 403);
       if (request.method !== "POST") return fail("Method denied", 405);

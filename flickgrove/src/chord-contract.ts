@@ -41,29 +41,26 @@ export type RetrySend = z.infer<typeof retrySendSchema>;
 export const inputs = {
   select: z.object({ ids: z.array(id).max(100) }),
   identity: z.object({}),
-  projects: z.object({ host: id.optional() }),
-  models: z.object({ host: id.optional() }).strict(),
+  projects: z.object({}),
+  models: z.object({}).strict(),
   weekly: z.object({}).strict(),
   history: z.object({
     project: id,
     query: z.string(),
     cursor: id.optional(),
-    host: id.optional(),
   }),
-  historySession: z.object({ project: id, threadId: id, host: id.optional() }),
+  historySession: z.object({ project: id, threadId: id }),
   resumeHistory: z.object({
     project: id,
     threadId: id,
     archived: z.boolean(),
     settings: settingsSchema,
-    host: id.optional(),
   }),
   detail: z.object({ id }),
   skills: z.object({ id }),
   createOrc: z.object({
     project: id,
     settings: settingsSchema,
-    host: id.optional(),
   }),
   send: z
     .object({
@@ -157,7 +154,6 @@ const agent = z.object({
   role: z.enum(["orc", "worker", "reviewer", "researcher"]),
   ownerId: id.optional(),
   hostId: id.optional(),
-  hostName: z.string().optional(),
   project: z.object({ alias: id, name: z.string(), path: z.string() }),
   directoryBranch: z.string().optional(),
   title: z.string(),
@@ -255,22 +251,21 @@ export function routeCall(
   body?: unknown,
 ): { member: Method; input: JsonValue } {
   const url = new URL(path, "http://grove.invalid");
-  const host = url.searchParams.get("host") ?? undefined;
   const project = url.searchParams.get("project") ?? "";
   const cursor = url.searchParams.get("cursor") ?? undefined;
   const threadId = url.searchParams.get("thread") ?? "";
   const simple: Record<string, [Method, unknown]> = {
     "/identity": ["identity", {}],
-    "/projects": ["projects", { host }],
-    "/models": ["models", { host }],
+    "/projects": ["projects", {}],
+    "/models": ["models", {}],
     "/weekly": ["weekly", {}],
-    "/agents": ["createOrc", { ...(body as object), host }],
+    "/agents": ["createOrc", { ...(body as object) }],
     "/history": [
       "history",
-      { project, host, cursor, query: url.searchParams.get("query") ?? "" },
+      { project, cursor, query: url.searchParams.get("query") ?? "" },
     ],
-    "/history/session": ["historySession", { project, host, threadId }],
-    "/history/resume": ["resumeHistory", { ...(body as object), host }],
+    "/history/session": ["historySession", { project, threadId }],
+    "/history/resume": ["resumeHistory", { ...(body as object) }],
   };
   let route = simple[url.pathname];
   const match =

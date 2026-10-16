@@ -1,11 +1,11 @@
 import { ReadingCache } from "./reading-cache";
-import type { Peers } from "./peers";
+import type { LocalConnection } from "./connection";
 import { routeCall } from "./chord-contract";
-let client: Peers | undefined;
-export function setClient(value: Peers | undefined) {
+let client: LocalConnection | undefined;
+export function setClient(value: LocalConnection | undefined) {
   client = value;
 }
-export function peers() {
+export function connection() {
   if (!client) throw new Error("Connection offline");
   return client;
 }
@@ -22,7 +22,7 @@ export async function reading<T>(
   peerOrAgent: string,
   signal?: AbortSignal,
 ): Promise<T> {
-  const response = await peers().media(peerOrAgent, `/api/read${path}`, {
+  const response = await connection().media(peerOrAgent, `/api/read${path}`, {
     signal,
   });
   return response.json();

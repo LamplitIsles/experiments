@@ -1,3 +1,4 @@
+let disconnected = false;
 let detailDelay = 0;
 let detailFailure = false;
 let settingsDelay = 0;
@@ -54,7 +55,6 @@ let quotaReads = 0;
 let stopMode = "pending";
 let sendMode = "accepted";
 let sendGate = Promise.withResolvers<void>();
-let peerDrop = false;
 let freshNoWorkers = false;
 let longConversations = false;
 let rowConversations = false;
@@ -64,11 +64,6 @@ let branchFailure = false;
 let branchPaths = new Map<string, string[]>();
 let units: ReturnType<typeof unit>[] = [];
 let current: ReturnType<typeof unit>;
-let peer: ReturnType<typeof unit>;
-let empty: ReturnType<typeof unit>;
-let emptyOrigin = "";
-let peerOrigin = "";
-const peerOriginForFixture = () => peerOrigin;
 function unit(
   name: string,
   hub: boolean,
@@ -155,7 +150,7 @@ function unit(
         efforts: ["low", "medium"],
         defaultEffort: "low",
         isDefault: false,
-        fastTier: name === "Neil’s Mac" ? null : "priority",
+        fastTier: null,
       },
     ];
   };
@@ -230,7 +225,7 @@ function unit(
   });
   const originalDetail = service.detail.bind(service);
   service.detail = async (id) => {
-    if (name === "Neil’s Mac") {
+    if (id.endsWith(":reader-orc") || id.endsWith(":reader")) {
       if (detailDelay) await Bun.sleep(detailDelay);
       if (detailFailure) throw new Error("Synthetic detail unavailable");
     }
@@ -355,7 +350,7 @@ async function reset(mode = "working") {
   branchFailure = false;
   branchPaths = new Map();
   if (branchFixture)
-    for (const name of ["NUC", "Neil’s Mac", "Workstation"]) {
+    for (const name of ["NUC"]) {
       branchPaths.set(
         name,
         [0, 1].map((i) =>
@@ -366,6 +361,7 @@ async function reset(mode = "working") {
         ),
       );
     }
+  disconnected = false;
   detailDelay = 0;
   detailFailure = false;
   settingsDelay = 0;
@@ -374,7 +370,6 @@ async function reset(mode = "working") {
   freshNoWorkers = mode === "no-workers";
   longConversations = mode === "long";
   rowConversations = ["virtual-images", "host-selection"].includes(mode);
-  peerDrop = false;
   quotaFailure = false;
   modelFailure = false;
   quotaResets = 1791252000;
@@ -390,6 +385,10 @@ async function reset(mode = "working") {
     true,
     [
       agent("orc", "orc", "Streaming voice input", 0),
+      agent("reader-orc", "orc", "Reader performance", 1),
+      ...(workers
+        ? [agent("reader", "worker", "Reader implementation", 1, "reader-orc")]
+        : []),
       ...(["host-selection", "device-questions"].includes(mode)
         ? [agent("second", "orc", "NUC second session", 0)]
         : []),
@@ -421,77 +420,14 @@ async function reset(mode = "working") {
     () => "http://127.0.0.1:14319",
   );
   units.push(current);
-  peerOrigin = "";
-  peer = unit(
-    "Neil’s Mac",
-    false,
-    [
-      agent("orc", "orc", "Reader performance", 1),
-      ...(["host-selection", "device-questions"].includes(mode)
-        ? [agent("second", "orc", "Mac second session", 1)]
-        : []),
-      ...(workers
-        ? [
-            {
-              ...agent("reader", "worker", "Reader implementation", 1, "orc"),
-              ...(["device-questions", "device-worker"].includes(mode)
-                ? { questions: [fixtureQuestion("delegated")] }
-                : {}),
-            },
-          ]
-        : []),
-    ],
-    () => peerOrigin,
-  );
-  units.push(peer);
-  peer.server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    websocket: groveWebsocket,
-    fetch: async (req, server) => {
-      if (peerDrop)
-        return new Response("Synthetic host outage", { status: 503 });
-      const v = await voiceHttp(
-        req,
-        peer.service,
-        [peerOriginForFixture()],
-        peer.voice,
-        server,
-      );
-      if (v) return v === true ? undefined : v;
-      const result = createUpgrade(peer.app, {
-        service: peer.service,
-        origin: () => peerOrigin,
-      })(req, server);
-      return result === true ? undefined : (result ?? peer.handler(req));
-    },
-  });
-  peerOrigin = `http://127.0.0.1:${peer.server.port}`;
-  empty = unit("Workstation", false, [], () => emptyOrigin);
-  units.push(empty);
-  empty.server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    websocket: groveWebsocket,
-    fetch: async (req, server) => {
-      const result = createUpgrade(empty.app, {
-        service: empty.service,
-        origin: () => emptyOrigin,
-      })(req, server);
-      return result === true ? undefined : (result ?? empty.handler(req));
-    },
-  });
-  emptyOrigin = `http://127.0.0.1:${empty.server.port}`;
-  if (mode === "device-questions")
-    await peer.app.send("second", "Fixture second-session turn", "user");
   if (!["idle", "no-workers", "host-selection"].includes(mode)) {
     await current.app.send(
       "orc",
       "Add streaming voice input and coordinate both projects.",
       "user",
     );
-    await peer.app.send(
-      "orc",
+    await current.app.send(
+      "reader-orc",
       "Add streaming voice input and coordinate both projects.",
       "user",
     );
@@ -499,7 +435,7 @@ async function reset(mode = "working") {
       workerId: "voice",
       message: "Implement voice input",
     });
-    await peer.app.tool("fixture-orc", "worker_send", {
+    await current.app.tool("fixture-reader-orc", "worker_send", {
       workerId: "reader",
       message: "Implement reader",
     });
@@ -606,6 +542,8 @@ const server = Bun.serve({
     },
   },
   fetch: async (request, server) => {
+    if (disconnected && new URL(request.url).pathname.startsWith("/api/"))
+      return new Response("Synthetic instance outage", { status: 503 });
     const upgraded = createUpgrade(current.app, {
       service: current.service,
       origin: () => "http://127.0.0.1:14319",
@@ -645,32 +583,20 @@ const server = Bun.serve({
     if (url.pathname === "/fixture/snapshot")
       return Response.json({
         ...current.service.snapshot(),
-        agents: [
-          ...current.service.snapshot().agents,
-          ...peer.service.snapshot().agents,
-        ],
+        agents: current.service.snapshot().agents,
       });
     if (url.pathname.startsWith("/fixture/agents/")) {
       const id = decodeURIComponent(
         url.pathname.slice("/fixture/agents/".length),
       );
-      const service = id.startsWith(peer.service.identity.id + ":")
-        ? peer.service
-        : current.service;
+      const service = current.service;
       return Response.json(await service.detail(id));
     }
     if (url.pathname === "/fixture/info")
       return Response.json({
         hub: current.service.identity.id,
-        peerUrl: peerOrigin,
-        peerToken: peer.service.credential,
-        peerInputs: peer.runtime.inputs,
         quotaReads,
         localAgents: current.app.snapshot().agents,
-        peerAgents: peer.app.snapshot().agents,
-        peer: peer.service.identity.id,
-        emptyUrl: emptyOrigin,
-        emptyToken: empty.service.credential,
         inputs: current.runtime.inputs,
         imageUploads: JSON.parse(
           readFileSync(
@@ -713,7 +639,6 @@ const server = Bun.serve({
         questionLong?: boolean;
         restartHub?: boolean;
         closedAgent?: string;
-        questionPeer?: boolean;
         append?: { agentId: string; text: string };
       };
       if (body.detailDelay !== undefined) detailDelay = body.detailDelay;
@@ -725,9 +650,7 @@ const server = Bun.serve({
       if (body.branchFailure !== undefined) branchFailure = body.branchFailure;
       if (body.branch && branchFixture)
         fixtureGit(
-          branchPaths.get(body.branchPeer ? "Neil’s Mac" : "NUC")![
-            body.branchPeer ? 1 : 0
-          ],
+          branchPaths.get("NUC")![body.branchPeer ? 1 : 0],
           "branch",
           "-m",
           body.branch,
@@ -786,32 +709,10 @@ const server = Bun.serve({
         });
       }
       if (body.outage !== undefined) {
-        peerDrop = body.outage;
-        if (peerDrop) peer.server?.stop(true);
-        else {
-          peer.server = Bun.serve({
-            hostname: "127.0.0.1",
-            port: Number(new URL(peerOriginForFixture()).port),
-            websocket: groveWebsocket,
-            fetch: async (req, server) => {
-              const v = await voiceHttp(
-                req,
-                peer.service,
-                [peerOriginForFixture()],
-                peer.voice,
-                server,
-              );
-              if (v) return v === true ? undefined : v;
-              const result = createUpgrade(peer.app, {
-                service: peer.service,
-                origin: () => peerOriginForFixture(),
-              })(req, server);
-              return result === true
-                ? undefined
-                : (result ?? peer.handler(req));
-            },
-          });
-        }
+        disconnected = body.outage;
+        if (disconnected)
+          for (const socket of browserSockets)
+            socket.close(1001, "Synthetic outage");
       }
       if (body.modelFailure !== undefined) modelFailure = body.modelFailure;
       if (body.quotaFailure !== undefined) quotaFailure = body.quotaFailure;
@@ -854,9 +755,8 @@ const server = Bun.serve({
           );
       if (body.question) {
         const questionAgent = body.questionAgent ?? "orc";
-        const target =
-          questionAgent === "peer" || body.questionPeer ? peer : current;
-        const id = questionAgent === "peer" ? "orc" : questionAgent;
+        const target = current;
+        const id = questionAgent;
         const turnId = target.app.detail(id).turnId!;
         target.runtime.emit(id, {
           type: "item",
@@ -910,15 +810,7 @@ const server = Bun.serve({
             : "../.scratch/flickgrove-browser/assets/index.html",
         ),
       ).text();
-      const configs = [
-        {
-          id: peer.service.identity.id,
-          name: peer.service.identity.name,
-          url: peerOrigin,
-          credential: peer.service.credential,
-        },
-      ];
-      const script = `<script>if(!localStorage.getItem('flickgrove/'+location.origin+'/peers'))localStorage.setItem('flickgrove/'+location.origin+'/peers',${JSON.stringify(JSON.stringify(configs))});if(!localStorage.getItem('flickgrove/'+location.origin+'/preferences'))localStorage.setItem('flickgrove/'+location.origin+'/preferences',${JSON.stringify(JSON.stringify(defaults))});</script>`;
+      const script = `<script>if(!localStorage.getItem('flickgrove/'+location.origin+'/preferences'))localStorage.setItem('flickgrove/'+location.origin+'/preferences',${JSON.stringify(JSON.stringify(defaults))});</script>`;
       return new Response(file.replace("<head>", "<head>" + script), {
         headers: { "Content-Type": "text/html" },
       });

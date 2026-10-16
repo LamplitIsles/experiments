@@ -67,25 +67,6 @@ for (const width of [1440, 390]) {
         .toBe(900);
       await drawer.getByRole("button", { name: "Close preview" }).click();
     }
-    if (width === 390)
-      await page
-        .getByRole("button", { name: "‹ Sessions", exact: true })
-        .click();
-    await page
-      .getByRole("group", { name: "Host filter" })
-      .getByRole("button", { name: "Remote", exact: true })
-      .click();
-    if (width === 1440 || !(await page.locator(".agent-detail").count()))
-      await page
-        .getByRole("button", { name: "Open Remote reports Orc", exact: true })
-        .click();
-    await page.getByRole("link", { name: "Chart", exact: true }).click();
-    await expect(drawer.locator("img")).toBeVisible();
-    expect(
-      new URL((await drawer.locator("img").getAttribute("src")) as string)
-        .origin,
-    ).toBe("http://127.0.0.1:14321");
-    await drawer.getByRole("button", { name: "Close preview" }).click();
     await page.locator(".worker-report summary").click();
     await page.getByRole("link", { name: "Worker chart" }).click();
     await expect(drawer.locator("img")).toBeVisible();
@@ -291,7 +272,7 @@ for (const width of [1440, 390]) {
     }
   });
 }
-test("Forward/refresh reauthorize, remote documents keep identity and local drafts/scroll survive switching", async ({
+test("Forward/refresh reauthorize without retaining preview capabilities", async ({
   page,
 }) => {
   await open(page);
@@ -317,48 +298,6 @@ test("Forward/refresh reauthorize, remote documents keep identity and local draf
         ),
     ),
   ).toBe(false);
-  await page
-    .getByRole("group", { name: "Host filter" })
-    .getByRole("button", { name: "Remote", exact: true })
-    .click();
-  await expect(page.locator(".file-preview")).toHaveCount(0);
-  await page.getByRole("link", { name: "HTML", exact: true }).click();
-  await expect(
-    page.frameLocator(".file-preview iframe").locator("#module"),
-  ).toHaveText("Local module loaded / Remote");
-  await page.getByRole("button", { name: "Close preview" }).click();
-  await page.getByRole("link", { name: "Markdown", exact: true }).click();
-  await expect(
-    page
-      .frameLocator(".file-preview iframe")
-      .getByRole("heading", { name: "Remote analysis" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Close preview" }).click();
-  await page
-    .getByRole("group", { name: "Host filter" })
-    .getByRole("button", { name: "Local", exact: true })
-    .click();
-  const draft = page.getByRole("textbox", { name: "Message Orc" });
-  await draft.fill("Local draft stays");
-  for (let i = 0; i < 12; i++)
-    await page.request.post(origin + "/fixture/change", { data: {} });
-  const transcript = page.locator(".conversation");
-  await transcript.evaluate((el) => (el.scrollTop = 30));
-  await page.getByRole("link", { name: "HTML", exact: true }).click();
-  const before = await transcript.evaluate((el) => el.scrollTop);
-  await page
-    .getByRole("group", { name: "Host filter" })
-    .getByRole("button", { name: "Remote", exact: true })
-    .click();
-  await expect(page.locator(".file-preview")).toHaveCount(0);
-  await page
-    .getByRole("group", { name: "Host filter" })
-    .getByRole("button", { name: "Local", exact: true })
-    .click();
-  await expect(draft).toHaveValue("Local draft stays");
-  await expect
-    .poll(() => transcript.evaluate((el) => el.scrollTop))
-    .toBe(before);
 });
 test("historical transcript links and reading position retain their restored agent context", async ({
   page,
@@ -400,7 +339,7 @@ test("historical transcript links and reading position retain their restored age
   await expect(link).toBeVisible();
   await expect.poll(() => transcript.evaluate((el) => el.scrollTop)).toBe(30);
 });
-test("foreground Settings retains the preview and a remote outage gives explicit retry", async ({
+test("foreground Settings retains the preview and a read failure gives explicit retry", async ({
   page,
 }) => {
   await open(page);
@@ -415,12 +354,8 @@ test("foreground Settings retains the preview and a remote outage gives explicit
     src,
   );
   await page.getByRole("button", { name: "Close preview" }).click();
-  await page
-    .getByRole("group", { name: "Host filter" })
-    .getByRole("button", { name: "Remote", exact: true })
-    .click();
   let block = true;
-  await page.route("http://127.0.0.1:14321/api/file-preview", (route) =>
+  await page.route("http://127.0.0.1:14320/api/file-preview", (route) =>
     block ? route.abort() : route.continue(),
   );
   await page.getByRole("link", { name: "HTML", exact: true }).click();
@@ -429,7 +364,7 @@ test("foreground Settings retains the preview and a remote outage gives explicit
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(
     page.frameLocator(".file-preview iframe").locator("#module"),
-  ).toHaveText("Local module loaded / Remote");
+  ).toHaveText("Local module loaded / Local");
 });
 test("New and skill finish before a requested preview; Questions width roundtrip leaves no ghost layer", async ({
   page,

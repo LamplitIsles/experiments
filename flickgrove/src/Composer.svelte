@@ -4,7 +4,7 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
   import { Plus, MessagesSquare, Hammer, Bug, ClipboardCheck, RotateCcw, Telescope, X, ArrowUp, Square, Sparkles } from '@lucide/svelte';
-  import { storagePrefix, readingCache, peers } from './api';
+  import { storagePrefix, readingCache, connection } from './api';
   import { Mic, LoaderCircle } from '@lucide/svelte';
   import { canCaptureVoice, VoiceRecordingController, type VoiceRecordingStatus } from './voice-input';
   import { imagePreview, loadImages, saveImages, draftKey, operationKey, intakeError, IMAGE_ACCEPT, type ImageDraft } from './image-drafts';
@@ -41,7 +41,7 @@
   async function startVoice() {
     if(voiceBusy || !voiceAvailable || !connected || stopping || preparing || !ready || composing || navigation.surfaces.length || !input)return;
     takeDraft={text,start:input.selectionStart,end:input.selectionEnd};voiceError="";voiceSeconds=0;
-    try { await voice.start(()=>peers().voiceSocket(agentId),agentId.split(":")[0]); }
+    try { await voice.start(()=>connection().voiceSocket(agentId),agentId.split(":")[0]); }
     catch { /* Controller reports non-cancel failures. */ }
   }
   function stopVoice() { void voice.stopAndGet().catch(()=>{}); }
@@ -51,7 +51,7 @@
     const abort=new AbortController();voiceAvailable=false;voiceReason="Checking voice availability…";
     if(!online){cancelVoice();voiceReason="Execution Peer is offline";return;}
     if(!canCaptureVoice()){voiceReason="Voice requires HTTPS or localhost and a supported browser";return;}
-    void peers().voiceCapability(id,abort.signal).then(value=>{
+    void connection().voiceCapability(id,abort.signal).then(value=>{
       if(abort.signal.aborted)return;voiceAvailable=value.available;
       voiceReason=value.available ? "Start voice input" : value.reason==="config_unavailable" ? "Voice configuration is unavailable on this Peer" : "Voice is not configured on this Peer";
     }).catch(()=>{if(!abort.signal.aborted)voiceReason="Voice is unavailable on this Peer";});

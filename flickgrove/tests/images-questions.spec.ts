@@ -481,8 +481,7 @@ test("slow upload binds original Peer/conversation while new draft remains isola
   await expect(page.locator(".user-message [role=status]")).toHaveCount(0);
   await page.screenshot({ path: `${shots}/desktop-uploading.png` });
   await page
-    .getByRole("group", { name: "Host filter" })
-    .getByRole("button", { name: "Neil’s Mac", exact: true })
+    .getByRole("button", { name: "Open Reader performance Orc", exact: true })
     .click();
   await expect(page.locator(".agent-detail h1")).toHaveText(
     "Reader performance",
@@ -505,14 +504,16 @@ test("slow upload binds original Peer/conversation while new draft remains isola
   await expect
     .poll(
       async () =>
-        (await (await request.get(origin + "/fixture/info")).json()).peerInputs
+        (await (await request.get(origin + "/fixture/info")).json()).inputs
           .length,
     )
-    .toBe(info.peerInputs.length + 1);
+    .toBe(info.inputs.length + 2);
   await expect(page.locator(".message-image")).toHaveCount(1);
   await page
-    .getByRole("group", { name: "Host filter" })
-    .getByRole("button", { name: "NUC", exact: true })
+    .getByRole("button", {
+      name: "Open Streaming voice input Orc",
+      exact: true,
+    })
     .click();
   await expect(page.locator(".message-image")).toHaveCount(1);
   await expect(composer(page)).toHaveValue("");

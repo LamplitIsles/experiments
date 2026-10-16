@@ -274,7 +274,7 @@ test("actual decoder rejects spoofed type, animation, bad data, pixel and byte/c
   ]);
   expect(tinyRef[0].bytes).toBeLessThanOrEqual(tiny.length);
 });
-test("direct cross-origin authorized HTTP upload/read/preflight on real socket and stable Chord refs start/steer once", async () => {
+test("same-origin token-independent HTTP upload/read on real socket and stable Chord refs start/steer once", async () => {
   const directory = temp();
   const runtime = new FakeRuntime();
   const app = new Workspace({
@@ -302,8 +302,8 @@ test("direct cross-origin authorized HTTP upload/read/preflight on real socket a
     const a = await service.createOrc("alpha", defaults);
     const other = await service.createOrc("alpha", defaults);
     const headers = {
-      Origin: "http://remote.invalid",
-      Authorization: `Bearer ${service.credential}`,
+      Origin: origin,
+      Authorization: "Bearer stale",
       "X-Grove-Peer": service.identity.id,
     };
     const preflight = await fetch(origin + "/api/images", {
@@ -314,10 +314,8 @@ test("direct cross-origin authorized HTTP upload/read/preflight on real socket a
         "Access-Control-Request-Headers": "authorization,x-grove-peer",
       },
     });
-    expect(preflight.status).toBe(204);
-    expect(preflight.headers.get("Access-Control-Allow-Origin")).toBe(
-      headers.Origin,
-    );
+    expect(preflight.status).toBe(405);
+    expect(preflight.headers.get("Access-Control-Allow-Origin")).toBeNull();
     expect(
       preflight.headers.get("Access-Control-Allow-Credentials"),
     ).toBeNull();
@@ -342,14 +340,14 @@ test("direct cross-origin authorized HTTP upload/read/preflight on real socket a
           },
         })
       ).status,
-    ).toBe(401);
+    ).toBe(200);
     expect(
       (
         await fetch(url, {
           headers: { ...headers, Authorization: "Bearer wrong" },
         })
       ).status,
-    ).toBe(401);
+    ).toBe(200);
     expect(
       (await fetch(url, { headers: { ...headers, "X-Grove-Peer": "wrong" } }))
         .status,

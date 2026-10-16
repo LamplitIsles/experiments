@@ -436,7 +436,7 @@ test("cancel/failed result preserve draft; retry and second take append; images/
   await released(page, request);
 });
 
-test("transcribing cancel, recovery, hidden page, navigation and Peer switch isolate late results", async ({
+test("transcribing cancel, recovery, hidden page, navigation and session switch isolate late results", async ({
   page,
   request,
 }) => {
@@ -482,7 +482,9 @@ test("transcribing cancel, recovery, hidden page, navigation and Peer switch iso
     }),
   );
   await record(page, request);
-  await page.getByRole("button", { name: "Neil’s Mac", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Open Reader performance Orc", exact: true })
+    .click();
   await released(page, request);
   await expect(input(page)).toHaveValue("");
   await expect(
@@ -495,7 +497,12 @@ test("transcribing cancel, recovery, hidden page, navigation and Peer switch iso
     .click();
   await expect(input(page)).toHaveValue("remote draft你好世界");
   await released(page, request);
-  await page.getByRole("button", { name: "NUC", exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: "Open Streaming voice input Orc",
+      exact: true,
+    })
+    .click();
   await expect(input(page)).toHaveValue("recovered draft");
   await record(page, request);
   await page.goBack();
@@ -590,7 +597,7 @@ test("Escape preserves foreground title hierarchy then cancels voice without lea
   await expect(input(page)).toHaveValue("keep draft");
 });
 
-test("startup transport cancellation, session switch with pending final and remote disconnect release capture", async ({
+test("startup transport cancellation, session switch with pending final and instance disconnect release capture", async ({
   page,
   request,
 }) => {
@@ -634,7 +641,9 @@ test("startup transport cancellation, session switch with pending final and remo
     })
     .click();
   await expect(input(page)).toHaveValue("first session draft");
-  await page.getByRole("button", { name: "Neil’s Mac", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Open Reader performance Orc", exact: true })
+    .click();
   await record(page, request);
   await request.post(origin + "/fixture/change", { data: { outage: true } });
   await released(page, request);

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 const origin = "http://127.0.0.1:14319";
-test("page Peer quota cache survives failure, missing data, reload and a different selected Peer", async ({
+test("page Peer quota cache survives failure, missing data, reload", async ({
   page,
   request,
 }) => {
@@ -20,9 +20,8 @@ test("page Peer quota cache survives failure, missing data, reload and a differe
   await expect(ring).toHaveText("36%");
   await page.reload();
   await expect(ring).toHaveText("36%");
-  await page.getByRole("button", { name: "Neil’s Mac", exact: true }).click();
   await page
-    .getByRole("button", { name: "Open Reader performance Orc" })
+    .getByRole("button", { name: "Open Streaming voice input Orc" })
     .click();
   await page.getByRole("button", { name: "Weekly usage", exact: true }).click();
   await request.post(origin + "/fixture/change", {

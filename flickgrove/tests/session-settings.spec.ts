@@ -2,6 +2,16 @@ import { expect, test, type Page } from "@playwright/test";
 const origin = "http://127.0.0.1:14319";
 const info = async (page: Page) =>
   (await page.request.get(origin + "/fixture/info")).json();
+const localTreeSettings = (agents: any[]) =>
+  agents
+    .filter((a) => !["reader-orc", "reader"].includes(a.id))
+    .map(({ id, model, effort, serviceTier, treeFast }) => ({
+      id,
+      model,
+      effort,
+      serviceTier,
+      treeFast,
+    }));
 const change = (page: Page, data: object) =>
   page.request.post(origin + "/fixture/change", { data });
 async function choose(page: Page, title: string) {
@@ -28,7 +38,7 @@ async function setup(page: Page, width = 1440) {
   ).toBeEnabled();
 }
 for (const width of [1440, 390])
-  test(`${width} opened remote settings atomic save/cancel, quick fast, next-turn and draft/caret; mobile click and Worker isolation`, async ({
+  test(`${width} opened local settings atomic save/cancel, quick fast, next-turn and draft/caret; mobile click and Worker isolation`, async ({
     page,
   }) => {
     await setup(page, width);
@@ -46,7 +56,7 @@ for (const width of [1440, 390])
     await expect
       .poll(
         async () =>
-          (await info(page)).peerAgents.find((a: any) => a.id === "orc")
+          (await info(page)).localAgents.find((a: any) => a.id === "reader-orc")
             .serviceTier,
       )
       .toBe("default");
@@ -70,7 +80,8 @@ for (const width of [1440, 390])
     await panel.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(panel).toBeHidden();
     expect(
-      (await info(page)).peerAgents.find((a: any) => a.id === "orc").effort,
+      (await info(page)).localAgents.find((a: any) => a.id === "reader-orc")
+        .effort,
     ).toBe("low");
     await expect(composer).toBeFocused();
     expect(
@@ -98,13 +109,15 @@ for (const width of [1440, 390])
       "gpt-6-luna / low",
     );
     const after = await info(page);
-    expect(after.localAgents).toEqual(before.localAgents);
-    expect(after.peerAgents.find((a: any) => a.id === "reader")).toEqual({
-      ...before.peerAgents.find((a: any) => a.id === "reader"),
+    expect(localTreeSettings(after.localAgents)).toEqual(
+      localTreeSettings(before.localAgents),
+    );
+    expect(after.localAgents.find((a: any) => a.id === "reader")).toEqual({
+      ...before.localAgents.find((a: any) => a.id === "reader"),
       serviceTier: "default",
       treeFast: false,
     });
-    expect(after.peerInputs).toEqual(before.peerInputs);
+    expect(after.inputs).toEqual(before.inputs);
     await expect(composer).toBeFocused();
     await page.waitForTimeout(150);
     await page.screenshot({
@@ -155,18 +168,20 @@ for (const width of [1440, 390])
     await expect
       .poll(
         async () =>
-          (await info(page)).peerAgents.find((a: any) => a.id === "reader")
+          (await info(page)).localAgents.find((a: any) => a.id === "reader")
             .serviceTier,
       )
       .toBe("priority");
     const treeAfter = await info(page);
-    expect(treeAfter.peerAgents.find((a: any) => a.id === "orc").model).toBe(
-      "gpt-6-luna",
+    expect(
+      treeAfter.localAgents.find((a: any) => a.id === "reader-orc").model,
+    ).toBe("gpt-6-luna");
+    expect(
+      treeAfter.localAgents.find((a: any) => a.id === "reader-orc").treeFast,
+    ).toBe(true);
+    expect(localTreeSettings(treeAfter.localAgents)).toEqual(
+      localTreeSettings(before.localAgents),
     );
-    expect(treeAfter.peerAgents.find((a: any) => a.id === "orc").treeFast).toBe(
-      true,
-    );
-    expect(treeAfter.localAgents).toEqual(before.localAgents);
     await choose(page, "Reader performance");
     const zap = page.getByRole("button", { name: "Tree Fast", exact: true });
     await expect(zap).toHaveAttribute("aria-pressed", "true");
@@ -175,7 +190,7 @@ for (const width of [1440, 390])
       /Fast is unavailable for this model/,
     );
     expect(
-      treeAfter.peerAgents.find((a: any) => a.id === "orc").serviceTier,
+      treeAfter.localAgents.find((a: any) => a.id === "reader-orc").serviceTier,
     ).toBe("default");
     await page.screenshot({
       path: `../.scratch/flickgrove-first-detail-tree-fast/${width}-tree-fast.png`,
@@ -214,7 +229,8 @@ test("model failure Cancel clears only model error; OptF toggles normally and tr
   await expect(page.locator("span.session-settings-error")).toHaveCount(0);
   expect(calls).toEqual([]);
   expect(
-    (await info(page)).peerAgents.find((a: any) => a.id === "orc").effort,
+    (await info(page)).localAgents.find((a: any) => a.id === "reader-orc")
+      .effort,
   ).toBe("low");
   await expect(composer).toBeFocused();
   expect(
@@ -246,7 +262,8 @@ test("model failure Cancel clears only model error; OptF toggles normally and tr
     { fast: !target, retry: true },
   ]);
   expect(
-    (await info(page)).peerAgents.find((a: any) => a.id === "orc").effort,
+    (await info(page)).localAgents.find((a: any) => a.id === "reader-orc")
+      .effort,
   ).toBe("low");
 });
 test("foreground/IME/repeat guards, unknown failure, busy late target and offline do not cross sessions or type characters", async ({
@@ -273,7 +290,9 @@ test("foreground/IME/repeat guards, unknown failure, busy late target and offlin
       }),
     );
   });
-  expect((await info(page)).peerAgents).toEqual(original.peerAgents);
+  expect(localTreeSettings((await info(page)).localAgents)).toEqual(
+    localTreeSettings(original.localAgents),
+  );
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.keyboard.press("Alt+m");
   await page.keyboard.press("Alt+f");
@@ -295,7 +314,8 @@ test("foreground/IME/repeat guards, unknown failure, busy late target and offlin
     "settings outcome unknown",
   );
   expect(
-    (await info(page)).peerAgents.find((a: any) => a.id === "orc").serviceTier,
+    (await info(page)).localAgents.find((a: any) => a.id === "reader-orc")
+      .serviceTier,
   ).toBe("priority");
   await page.waitForTimeout(150);
   await page.screenshot({
@@ -316,7 +336,9 @@ test("foreground/IME/repeat guards, unknown failure, busy late target and offlin
   await expect(
     page.getByRole("button", { name: "Tree Fast", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
-  expect((await info(page)).localAgents).toEqual(original.localAgents);
+  expect(localTreeSettings((await info(page)).localAgents)).toEqual(
+    localTreeSettings(original.localAgents),
+  );
   await choose(page, "Reader performance");
   await expect(page.locator(".detail-model [aria-label='Fast']")).toHaveCount(
     0,

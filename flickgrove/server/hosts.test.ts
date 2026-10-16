@@ -1,3 +1,4 @@
+import { socketWithHeaders } from "./socket-testing";
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -60,17 +61,14 @@ function fixture() {
   return { directory, runtime, app, service, origin, sockets };
 }
 async function client(f: ReturnType<typeof fixture>, token?: string) {
-  const Client = WebSocket as unknown as {
-    new (
-      url: string,
-      protocols: string[],
-      options: { headers: Record<string, string> },
-    ): WebSocket;
-  };
-  const socket = new Client(
+  const socket = socketWithHeaders(
     f.origin.replace("http:", "ws:") + "/api/socket",
-    token ? ["grove.v1", `grove-auth.${token}`] : ["grove.v1"],
-    { headers: { Origin: "http://other-peer.invalid" } },
+    {
+      Origin: f.origin,
+      "Sec-WebSocket-Protocol": token
+        ? `grove.v1, grove-auth.${token}`
+        : "grove.v1",
+    },
   );
   const c = await openGrove(
     socket,
@@ -81,11 +79,9 @@ async function client(f: ReturnType<typeof fixture>, token?: string) {
   cleanup.push(() => c.close());
   return c;
 }
-test("cross-origin browser access requires the target Peer credential and can execute directly", async () => {
+test("local browser executes directly and preserves receipt ownership", async () => {
   const f = fixture();
-  await expect(client(f)).rejects.toThrow();
-  await expect(client(f, "wrong")).rejects.toThrow();
-  const c = await client(f, f.service.credential);
+  const c = await client(f, "stale");
   expect(await c.call<{ id: string; name: string }>("identity", {})).toEqual(
     f.service.identity,
   );
@@ -111,9 +107,7 @@ test("cross-origin browser access requires the target Peer credential and can ex
   await expect(c.call("detail", { id: "foreign:agent" })).rejects.toThrow(
     "another Peer",
   );
-  expect(JSON.stringify(f.service.snapshot())).not.toContain(
-    f.service.credential,
-  );
+  expect(JSON.stringify(f.service.snapshot())).not.toContain("credential");
 });
 test("Peer identity survives restart and owns only local state", async () => {
   const f = fixture(),
@@ -124,12 +118,11 @@ test("Peer identity survives restart and owns only local state", async () => {
     origin: () => f.origin,
   });
   expect(identity.identity.id).toBe(f.service.identity.id);
-  expect(identity.credential).toBe(f.service.credential);
   expect(f.service.snapshot().hosts).toHaveLength(1);
   expect(other.service.snapshot().agents).toHaveLength(0);
   expect(
-    JSON.parse(readFileSync(join(f.directory, "hosts.json"), "utf8")).peers,
-  ).toBeUndefined();
+    JSON.parse(readFileSync(join(f.directory, "hosts.json"), "utf8")),
+  ).toEqual({ id: f.service.identity.id });
   await expect(other.service.detail(first.id)).rejects.toThrow("another Peer");
 });
 test("captured Worker settings survive workspace restart without browser or global settings", async () => {
@@ -165,7 +158,7 @@ test("captured Worker settings survive workspace restart without browser or glob
 
 test("native WebSocket Pong clears only its matching liveness deadline", async () => {
   const f = fixture();
-  await client(f, f.service.credential);
+  await client(f);
   const socket = [...f.sockets][0];
   let expired = false;
   socket.data.ping = "test-owned-probe";

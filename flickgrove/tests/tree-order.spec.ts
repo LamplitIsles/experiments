@@ -68,7 +68,7 @@ test("desktop drags whole trees, preserves selection/draft, restores order and a
   await expect(composer(page)).toHaveValue("Selected tree draft");
   await composer(page).press("Meta+1");
   await expect(page.locator(".agent-detail h1")).toHaveText(
-    "Additional task 1",
+    "Reader performance",
   );
   await composer(page).press("Alt+j");
   await expect(page.locator(".agent-detail h1")).toHaveText(
@@ -84,7 +84,7 @@ test("desktop drags whole trees, preserves selection/draft, restores order and a
   await composer(page).evaluate((el) => el.blur());
   await page.keyboard.press("ArrowUp");
   await expect(page.locator(".agent-detail h1")).toHaveText(
-    "Additional task 1",
+    "Reader performance",
   );
   await page.screenshot({
     path: "../.scratch/flickgrove-host-shortcuts/desktop-tree-order.png",
@@ -141,49 +141,4 @@ test("desktop drags whole trees, preserves selection/draft, restores order and a
   await expect
     .poll(async () => Object.values(await order(page)).flat())
     .not.toContain(created);
-});
-
-test("per-device ordering retains offline missing roots until an authoritative snapshot", async ({
-  page,
-  request,
-}) => {
-  await request.post(origin + "/fixture/reset", {
-    data: { mode: "host-selection" },
-  });
-  const info = await (await request.get(origin + "/fixture/info")).json();
-  await page.goto(origin);
-  await page
-    .getByRole("group", { name: "Host filter" })
-    .getByRole("button", { name: "Neil’s Mac", exact: true })
-    .click();
-  await expect(page.locator(".agent-detail h1")).toHaveText(
-    "Reader performance",
-  );
-  const original = await ids(page);
-  await roots(page)
-    .last()
-    .dragTo(roots(page).first(), { targetPosition: { x: 20, y: 3 } });
-  await expect.poll(() => ids(page)).toEqual([...original].reverse());
-  await request.post(origin + "/fixture/change", { data: { outage: true } });
-  await page.evaluate(({ peer }) => {
-    const prefix = `flickgrove/${location.origin}`;
-    const order = JSON.parse(localStorage.getItem(prefix + "/tree-order")!);
-    order[peer].push(peer + ":unobserved");
-    localStorage.setItem(prefix + "/tree-order", JSON.stringify(order));
-    localStorage.removeItem(prefix + "/peer-cache/" + peer);
-    localStorage.removeItem(prefix + "/snapshot");
-  }, info);
-  await page.reload();
-  await expect
-    .poll(async () => (await order(page))[info.peer])
-    .toEqual([...original].reverse().concat(info.peer + ":unobserved"));
-  await request.post(origin + "/fixture/change", { data: { outage: false } });
-  await expect.poll(() => ids(page)).toEqual([...original].reverse());
-  await expect
-    .poll(async () => (await order(page))[info.peer])
-    .toEqual([...original].reverse());
-  await page.keyboard.press("Alt+h");
-  await expect(roots(page).first()).toContainText("Streaming voice input");
-  await page.keyboard.press("Alt+l");
-  await expect.poll(() => ids(page)).toEqual([...original].reverse());
 });

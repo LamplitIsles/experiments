@@ -4,7 +4,7 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import type { MessageImage } from "./contracts";
-  import { peers } from "./api";
+  import { connection } from "./api";
   import { imagePreview, loadImages, operationKey } from "./image-drafts";
   let { agentId, operationId, images = [], localImageIds = [], connected, onviewer }: { agentId: string; operationId: string; images?: MessageImage[]; localImageIds?: string[]; connected: boolean; onviewer?: (open: boolean) => void } = $props();
   let urls = $state<Record<string,string>>({}); let failures = $state<Record<string,boolean>>({});
@@ -28,7 +28,7 @@
       } else preview = await messageImagePreview(previewKey(image.id), async () => {
         const local = await loadImages(operationKey(agentId, operationId));
         if (local?.images[index]) return imagePreview(local.images[index].file);
-        return (await peers().media(agentId, `/api/images/${image.id}/preview?agent=${encodeURIComponent(agentId)}`)).blob();
+        return (await connection().media(agentId, `/api/images/${image.id}/preview?agent=${encodeURIComponent(agentId)}`)).blob();
       });
       if (active && !urls[image.id]) urls[image.id] = blobUrl(preview);
     } catch { if(active) failures[image.id]=true; }
@@ -41,7 +41,7 @@
     name=label; open=true; original=""; fullError="";
     try {
       const local=await loadImages(operationKey(agentId,operationId));
-      const blob=local?.images[index]?.file ?? await (await peers().media(agentId,`/api/images/${id}/original?agent=${encodeURIComponent(agentId)}`)).blob();
+      const blob=local?.images[index]?.file ?? await (await connection().media(agentId,`/api/images/${id}/original?agent=${encodeURIComponent(agentId)}`)).blob();
       if(active && open) original=blobUrl(blob);
     } catch { if (active && open) fullError="Image missing or unreadable. Reconnect to its execution host and try again."; }
   }

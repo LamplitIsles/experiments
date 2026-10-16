@@ -52,7 +52,6 @@ function qualified<T extends Agent>(host: Host, a: T): T {
     readingRevision: a.readingRevision,
     historyCursor: a.historyCursor,
     hostId: host.id,
-    hostName: host.name,
   };
   if ("deliveries" in a && "messages" in a) {
     const detail = a as unknown as Detail;
@@ -94,10 +93,10 @@ function qualified<T extends Agent>(host: Host, a: T): T {
   }
   return publicAgent as T;
 }
-// A Peer owns only its local workspace. Browser clients perform aggregation.
+// The instance exposes only its local workspace. Qualified IDs retain durable
+// browser operation/cache identity; they never select a remote execution route.
 export class HostService {
   readonly identity: { id: string; name: string };
-  readonly credential: string;
   constructor(
     readonly workspace: Workspace,
     readonly options: {
@@ -110,22 +109,16 @@ export class HostService {
     const file = join(options.directory, "hosts.json");
     const state = existsSync(file)
       ? JSON.parse(readFileSync(file, "utf8"))
-      : { id: crypto.randomUUID(), credential: crypto.randomUUID() };
-    if (
-      !state.id ||
-      state.id.includes(":") ||
-      typeof state.credential !== "string" ||
-      !/^[A-Za-z0-9_-]+$/.test(state.credential)
-    )
-      throw new Error("Invalid Peer identity");
-    writeFileSync(
-      file,
-      JSON.stringify({ id: state.id, credential: state.credential }),
-      { mode: 0o600 },
-    );
-    chmodSync(file, 0o600);
-    this.identity = { id: state.id, name: options.name ?? "This Peer" };
-    this.credential = state.credential;
+      : { id: crypto.randomUUID() };
+    if (typeof state.id !== "string" || !state.id || state.id.includes(":"))
+      throw new Error("Invalid instance identity");
+    // Keep the durable identity namespace. Existing state is read without rewriting
+    // it; obsolete credential fields have no authority and need no migration.
+    if (!existsSync(file)) {
+      writeFileSync(file, JSON.stringify({ id: state.id }), { mode: 0o600 });
+      chmodSync(file, 0o600);
+    }
+    this.identity = { id: state.id, name: options.name ?? "This instance" };
   }
   private local(): Host {
     return { ...this.identity, url: this.options.origin(), connected: true };

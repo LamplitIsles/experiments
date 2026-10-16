@@ -37,8 +37,8 @@ function fixture() {
   const read = (path: string, headers: Record<string, string> = {}) =>
     fetch(origin + "/api/read" + path, {
       headers: {
-        Origin: "http://fixture-browser.example",
-        Authorization: `Bearer ${service.credential}`,
+        Origin: origin,
+        Authorization: "Bearer stale",
         "X-Grove-Peer": service.identity.id,
         ...headers,
       },
@@ -190,10 +190,10 @@ test("native question/answer identity survives bounded HTTP history, reconnect a
             thread,
             item: "original-question",
           }),
-        { Authorization: "Bearer invalid" },
+        { Origin: "https://foreign.invalid", Authorization: "Bearer invalid" },
       )
     ).status,
-  ).toBe(401);
+  ).toBe(403);
 });
 
 test("pending HTTP question retains its unknown operation outside the bounded delivery window", async () => {

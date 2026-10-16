@@ -1,3 +1,5 @@
+Status: historical; superseded by single-host ADR 0002 and spec #4141. The Hub/Peer decisions below are not current behavior.
+
 Status: superseded by FlickNote ADR #3283 (2026-10-04). Every Peer now serves a frontend; browser connections are direct and independent. Whole-tree execution ownership remains.
 
 # ADR 0001: Fixed Hub and host-owned execution

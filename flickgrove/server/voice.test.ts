@@ -148,20 +148,19 @@ test("voice configuration reads relative private files per request and fails clo
   await until(() => s.closed && f.provider.active === 0);
 });
 
-test("capability and stream enforce target, same-origin, credential, CORS and Peer identity", async () => {
+test("capability and stream enforce address, same-origin and instance identity", async () => {
   const f = await fixture(),
     foreign = "https://other-peer.example";
-  expect((await f.capability({ Origin: foreign })).status).toBe(401);
-  expect(
-    (await f.capability({ Authorization: "Bearer agent-mcp-token" })).status,
-  ).toBe(401);
+  expect((await f.capability({ Origin: foreign })).status).toBe(403);
+  expect((await f.capability({ Authorization: "Bearer stale" })).status).toBe(
+    200,
+  );
   expect((await f.capability({ "X-Grove-Peer": "wrong" })).status).toBe(403);
   const response = await f.capability({
-    Origin: foreign,
-    Authorization: `Bearer ${f.service.credential}`,
+    Authorization: "Bearer stale",
   });
   expect(response.status).toBe(200);
-  expect(response.headers.get("access-control-allow-origin")).toBe(foreign);
+  expect(response.headers.get("access-control-allow-origin")).toBeNull();
   expect(response.headers.get("x-grove-peer")).toBe(f.service.identity.id);
   expect(JSON.stringify(await response.json())).not.toContain("synthetic-key");
   const preflight = await f.capability(
@@ -172,7 +171,7 @@ test("capability and stream enforce target, same-origin, credential, CORS and Pe
     },
     "OPTIONS",
   );
-  expect(preflight.status).toBe(204);
+  expect(preflight.status).toBe(403);
   expect((await f.capability({ Origin: "null" })).status).toBe(403);
   expect(
     (
@@ -213,8 +212,7 @@ test("capability and stream enforce target, same-origin, credential, CORS and Pe
   }
   expect(f.provider.stats.runs).toEqual([]);
   const s = f.stream({
-    Origin: foreign,
-    "Sec-WebSocket-Protocol": `grove-voice.v1, grove-peer.${f.service.identity.id}, grove-auth.${f.service.credential}`,
+    "Sec-WebSocket-Protocol": `grove-voice.v1, grove-peer.${f.service.identity.id}, grove-auth.stale`,
   });
   await until(() => s.frames[0]?.type === "ready");
   expect(s.ws.protocol).toBe("grove-voice.v1");

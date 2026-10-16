@@ -30,14 +30,10 @@ export function createUpgrade(workspace: Workspace, options: Options) {
     const protocols = (request.headers.get("sec-websocket-protocol") ?? "")
       .split(",")
       .map((p) => p.trim());
-    const token = protocols
-      .find((p) => p.startsWith("grove-auth."))
-      ?.slice("grove-auth.".length);
     const origins = [origin, options.localOrigin?.()].filter(
       (value): value is string => !!value,
     );
     const local = origins.includes(request.headers.get("origin") ?? "");
-    const authorized = token === options.service.credential;
     if (
       request.method !== "GET" ||
       !origins.some((value) => url.host === new URL(value).host)
@@ -46,12 +42,11 @@ export function createUpgrade(workspace: Workspace, options: Options) {
         { error: "Open FlickGrove from its configured address" },
         403,
       );
-    // Same-origin page access remains local. Cross-origin access requires possession
-    // of this Peer's credential; it is carried by a subprotocol, never a URL.
-    if (!local && !authorized)
-      return json({ error: "Peer authorization required" }, 401);
-    if (token && !authorized)
-      return json({ error: "Peer authorization required" }, 401);
+    if (!local)
+      return json(
+        { error: "Open FlickGrove from its configured address" },
+        403,
+      );
     if (
       server.upgrade(request, {
         ...(protocols.includes("grove.v1")

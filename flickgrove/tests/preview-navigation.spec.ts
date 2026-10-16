@@ -120,7 +120,7 @@ for (const width of [1440, 390]) {
         [],
       );
     }
-    await page.getByRole("button", { name: "Hosts", exact: true }).click();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.goBack();
     await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -131,35 +131,15 @@ for (const width of [1440, 390]) {
     await expect
       .poll(() => transcript.evaluate((el) => el.scrollTop))
       .toBe(reading);
-    // A normal session switch also unwinds all parent preview surfaces directly.
     await openHtml();
     await navigateInside(page);
-    if (width === 1440) {
-      await page
-        .getByRole("group", { name: "Host filter" })
-        .getByRole("button", { name: "Remote", exact: true })
-        .click();
-      await expect(preview).toHaveCount(0);
-      await expect(page.locator(".agent-detail h1")).toHaveText(
-        "Remote reports",
-      );
-      await page
-        .getByRole("group", { name: "Host filter" })
-        .getByRole("button", { name: "Local", exact: true })
-        .click();
-      await expect(composer).toHaveValue("Outer composer works");
-      await expect
-        .poll(() => transcript.evaluate((el) => el.scrollTop))
-        .toBe(reading);
-    } else {
-      // Native Back first visits the child's hash; subsequent explicit Close still works.
-      await page.evaluate(() => history.back());
-      await expect(
-        page.frameLocator(".file-preview iframe").locator("#active-meter"),
-      ).toHaveText("#meter-b");
-      await preview.getByRole("button", { name: "Close preview" }).click();
-      await expect(preview).toHaveCount(0);
-    }
+    // Native Back first visits the child's hash; subsequent explicit Close still works.
+    await page.evaluate(() => history.back());
+    await expect(
+      page.frameLocator(".file-preview iframe").locator("#active-meter"),
+    ).toHaveText("#meter-b");
+    await preview.getByRole("button", { name: "Close preview" }).click();
+    await expect(preview).toHaveCount(0);
   });
 }
 
