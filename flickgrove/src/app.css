@@ -471,7 +471,7 @@ pre {
   min-height: 70px;
   max-height: 220px;
   resize: none;
-  font-size: 14px;
+  font-size: 16px;
 }
 .composer-bottom {
   display: flex;
