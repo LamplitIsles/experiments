@@ -16,3 +16,7 @@
 
 - Research directly by default with `grove-research`; delegate 2–4 independent decision-relevant questions through owned Researchers only when that plan exists. Researcher gathers evidence without developing code, writing repository/FlickNote state, creating agents or making the final recommendation. Orc owns synthesis and FlickNote archival; these are role duties, not hard tool permissions.
 - Researcher configuration comes from the local instance and is captured privately at creation. Restore keeps original owner/question/thread/snapshot and never replays uncertain work. Only missing Researcher config/default prompt is initialized; preserve customization. All managed roles disable native collaboration through supported per-thread configuration while Grove MCP stays available. Native probes use test-owned HOME/CODEX_HOME/env and no paid turns.
+
+## Workspace persistence
+
+For schema or persistence changes, read README's Workspace storage section. Define tables in `server/schema.ts`, generate reviewed migrations with `bunx drizzle-kit generate`, and use the Drizzle builder for business queries. Keep growing ledgers as entity rows and commit changed entities at the existing admission/confirmation transaction boundaries. Observe any new mutable durable field in `WorkspaceStore`; cold reads never join the active aggregate until explicit restoration.

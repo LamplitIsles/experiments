@@ -9,6 +9,7 @@ export type LoadedHistory = {
   error: string;
   pending?: Promise<void>;
   synchronized?: number;
+  generation?: number;
   gap?: { until: string; olderCursor: string | null; before: string };
 };
 
@@ -35,6 +36,13 @@ export class HistoryCache {
     this.entries.set(id, entry);
     this.trim();
     return entry;
+  }
+  reconnect(peer: string) {
+    for (const [id, entry] of this.entries)
+      if (id.startsWith(peer + ":")) {
+        entry.generation = (entry.generation ?? 0) + 1;
+        entry.synchronized = undefined;
+      }
   }
   has(id: string, entry: LoadedHistory) {
     return this.entries.get(id) === entry;
@@ -65,14 +73,16 @@ export class HistoryCache {
     id: string,
     entry: LoadedHistory,
     fetch: (cursor?: string) => Promise<HistoryMessages>,
+    revision?: number,
   ): Promise<void> {
     if (entry.pending) return entry.pending;
     if (entry.invalidated || (entry.loaded && !entry.cursor))
       return Promise.resolve();
     entry.error = "";
+    const generation = entry.generation ?? 0;
     const request = fetch(entry.loaded ? entry.cursor! : undefined)
       .then((page) => {
-        if (entry.invalidated) return;
+        if (entry.invalidated || (entry.generation ?? 0) !== generation) return;
         if (entry.gap) {
           const gap = entry.gap;
           const returned = new Set(page.messages.map((m) => m.id));
@@ -108,17 +118,19 @@ export class HistoryCache {
           entry.cursor = page.nextCursor;
         }
         entry.loaded = true;
+        if (revision !== undefined) entry.synchronized = revision;
         if (this.has(id, entry)) this.trim();
       })
       .catch((error) => {
         if (
           !entry.invalidated &&
+          (entry.generation ?? 0) === generation &&
           !(error instanceof Error && error.name === "AbortError")
         )
           entry.error = error instanceof Error ? error.message : String(error);
       })
       .finally(() => {
-        entry.pending = undefined;
+        if (entry.pending === request) entry.pending = undefined;
       });
     entry.pending = request;
     return request;
@@ -130,11 +142,12 @@ export class HistoryCache {
     fetch: () => Promise<HistoryMessages>,
   ): Promise<void> {
     if (entry.pending) return entry.pending;
+    const generation = entry.generation ?? 0;
     const known = new Set(entry.messages.map((m) => m.id));
     const until = entry.messages.at(-1)?.id;
     const request = fetch()
       .then((page) => {
-        if (entry.invalidated) return;
+        if (entry.invalidated || (entry.generation ?? 0) !== generation) return;
         const overlap = page.messages.some((m) => known.has(m.id));
         const returned = new Set(page.messages.map((m) => m.id));
         entry.messages = [
@@ -156,12 +169,13 @@ export class HistoryCache {
       .catch((error) => {
         if (
           !entry.invalidated &&
+          (entry.generation ?? 0) === generation &&
           !(error instanceof Error && error.name === "AbortError")
         )
           entry.error = error instanceof Error ? error.message : String(error);
       })
       .finally(() => {
-        entry.pending = undefined;
+        if (entry.pending === request) entry.pending = undefined;
       });
     entry.pending = request;
     return request;

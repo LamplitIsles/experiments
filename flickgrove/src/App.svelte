@@ -10,6 +10,7 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import { navigation, initializeNavigation, resumeFilePreview, openConversation, setSurface, back, validateNavigation } from "./navigation.svelte";
   import { readingCache, reading } from "./api";
+  import { retainReading } from "./reading-cache";
   import { retainTranscriptPositions } from "./transcript-state";
   import { LocalConnection, preferences } from "./connection";
   import { onMount, tick, untrack } from "svelte";
@@ -109,7 +110,7 @@
     const seq = ++sequence;
     try {
       const result = await api<Detail>(`/agents/${id}`);
-      if (selectedId === id && seq === sequence) { observeOutgoing(result); detail = result; readingCache.saveDetail(result); }
+      if (selectedId === id && seq === sequence) { observeOutgoing(result); detail = retainReading(detail, result); readingCache.saveDetail(detail); }
     } catch (e) { if (selectedId === id && seq === sequence && connected) error = e instanceof Error ? e.message : m.load_failure(); }
   }
   function open(id: string, fromDetail = false) { openConversation(id, fromDetail, snapshot.agents.find(a => a.id === id)?.ownerId); }
@@ -512,7 +513,7 @@
       notifications(before,value.snapshot);
       adopt(value.snapshot,true);const entry=value.snapshot.hosts?.find(h=>h.id===value.snapshot.entryId);loading=!!entry&&!entry.connected&&!entry.error;
       const incoming=selectedId&&value.details[selectedId];
-      if(incoming && value.snapshot.agents.some(a=>a.id===incoming.id)){observeOutgoing(incoming);detail=incoming;readingCache.saveDetail(incoming);}
+      if(incoming && value.snapshot.agents.some(a=>a.id===incoming.id)){observeOutgoing(incoming);detail=retainReading(detail?.messages.length ? detail : readingCache.readDetail(incoming.id),incoming);readingCache.saveDetail(detail);}
       void reconcilePending();
       for (const intent of closeRecovery.entries) {
         const peer = intent.agentId.split(":")[0];

@@ -194,15 +194,11 @@ test("execution Peer branch updates traverse real Chord, isolate same-name peers
   const db = new Database(join(left.directory, "workspace.sqlite"), {
     readonly: true,
   });
-  const stored = db.query("SELECT value FROM workspace WHERE id=1").get() as {
-    value: string;
-  };
+  const columns = db.query("PRAGMA table_info(sessions)").all() as {
+    name: string;
+  }[];
   db.close();
-  expect(
-    JSON.parse(stored.value).agents.every(
-      (a: object) => !("directoryBranch" in a),
-    ),
-  ).toBe(true);
+  expect(columns.some((c) => c.name === "directoryBranch")).toBe(false);
   const closed = await right.app.createOrc("tree");
   await until(
     () => right.app.detail(closed.id).directoryBranch === "worktree-branch",

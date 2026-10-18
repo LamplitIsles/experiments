@@ -159,3 +159,66 @@ test("removed provisional input is not retained as historical reading while nati
   ]);
   expect(entry.messages.map((m) => m.id)).toEqual(["native"]);
 });
+
+test("reconnect refreshes native history even when a restarted server reuses its revision", async () => {
+  const cache = new HistoryCache();
+  const entry = cache.get("peer:a", "thread");
+  await cache.load("peer:a", entry, async () => ({
+    messages: [{ id: "old", role: "assistant", text: "device copy", at: 1 }],
+    nextCursor: null,
+  }));
+  entry.synchronized = 1;
+  cache.reconnect("peer");
+  expect(entry.synchronized).toBeUndefined();
+  expect(entry.messages[0].text).toBe("device copy");
+  await cache.refresh("peer:a", entry, 1, async () => ({
+    messages: [
+      { id: "new", role: "assistant", text: "external continuation", at: 2 },
+    ],
+    nextCursor: null,
+  }));
+  expect(entry.messages.map((m) => m.id)).toEqual(["old", "new"]);
+  expect(entry.synchronized).toBe(1);
+});
+
+for (const phase of ["load", "refresh"] as const) {
+  test(`reconnect rejects an in-flight ${phase} result before a same-revision fresh read`, async () => {
+    const cache = new HistoryCache();
+    const entry = cache.get("peer:a", "thread");
+    if (phase === "refresh") {
+      await cache.load("peer:a", entry, async () => ({
+        messages: [{ id: "cached", role: "assistant", text: "cached", at: 1 }],
+        nextCursor: null,
+      }));
+      entry.synchronized = 7;
+    }
+    const held =
+      Promise.withResolvers<import("../src/contracts").HistoryMessages>();
+    const pending =
+      phase === "load"
+        ? cache.load("peer:a", entry, () => held.promise)
+        : cache.refresh("peer:a", entry, 7, () => held.promise);
+    cache.reconnect("peer");
+    held.resolve({
+      messages: [{ id: "old", role: "assistant", text: "old response", at: 2 }],
+      nextCursor: null,
+    });
+    await pending;
+    expect(entry.messages.some((m) => m.id === "old")).toBe(false);
+    expect(entry.synchronized).toBeUndefined();
+    const fresh = async () => ({
+      messages: [
+        {
+          id: "fresh",
+          role: "assistant" as const,
+          text: "fresh after reconnect",
+          at: 3,
+        },
+      ],
+      nextCursor: null,
+    });
+    if (phase === "load") await cache.load("peer:a", entry, fresh);
+    else await cache.refresh("peer:a", entry, 7, fresh);
+    expect(entry.messages.at(-1)?.id).toBe("fresh");
+  });
+}

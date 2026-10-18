@@ -95,7 +95,11 @@ test("CLI resume is idempotent, retains the original thread and settings, and do
   });
   try {
     const value = (
-      db.query("SELECT value FROM workspace").get() as { value: string }
+      db
+        .query(
+          "SELECT group_concat(project || settings || recovery || task || diagnostics) AS value FROM sessions",
+        )
+        .get() as { value: string }
     ).value;
     expect(value).not.toContain("Reader repaired.");
     expect(value).not.toContain("inheritSettings");
@@ -272,7 +276,7 @@ test("existing Orc history preserves native item identities across pages without
   expect(merged.filter((m) => m.text === "Captured in Grove")).toHaveLength(1);
   expect(merged.filter((m) => m.id === "native-steer")).toHaveLength(1);
   expect(merged.map((m) => m.text).slice(-1)).toEqual(["CLI continuation 28"]);
-  expect(app.detail(orc.id).messages).toHaveLength(3);
+  expect(app.detail(orc.id).messages).toHaveLength(0); // Native reads do not persist a transcript copy.
   await app.send(orc.id, "New input after restoration", "after-restore");
   expect(
     (await app.agentHistory(orc.id)).messages.some(
@@ -284,8 +288,13 @@ test("existing Orc history preserves native item identities across pages without
   });
   try {
     expect(
-      (db.query("SELECT value FROM workspace").get() as { value: string })
-        .value,
+      (
+        db
+          .query(
+            "SELECT group_concat(project || settings || recovery || task || diagnostics) AS value FROM sessions",
+          )
+          .get() as { value: string }
+      ).value,
     ).not.toContain("CLI continuation");
   } finally {
     db.close();

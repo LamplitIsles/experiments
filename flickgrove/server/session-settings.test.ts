@@ -55,15 +55,10 @@ test("native confirmed per-session settings serialize with start/steer, persist 
     const a = await app.createOrc("fixture");
     const b = await app.createOrc("fixture");
     const db = new Database(join(options.directory, "workspace.sqlite"));
-    const state = JSON.parse(
-      (
-        db.query("SELECT value FROM workspace WHERE id=1").get() as {
-          value: string;
-        }
-      ).value,
-    );
+    const { token } = db
+      .query("SELECT token FROM sessions WHERE id=?")
+      .get(a.id) as { token: string };
     db.close();
-    const token = state.agents.find((v: any) => v.id === a.id).token;
     const worker = (await app.tool(token, "worker_start", {
       project: "fixture",
       title: "Native Worker",
@@ -184,6 +179,7 @@ test("native confirmed per-session settings serialize with start/steer, persist 
         (r) => r.method === "thread/start" && !r.params.ephemeral,
       ),
     ).toHaveLength(3);
+    await app.synchronizeDetail(a.id);
     expect(
       app.detail(a.id).messages.filter((m) => m.role === "user"),
     ).toHaveLength(3);

@@ -83,7 +83,10 @@ async function peer() {
     restart() {
       service.dispose();
       app.dispose();
+      const nativeHistory = runtime.historyItems;
       runtime = new FakeRuntime();
+      for (const [thread, messages] of nativeHistory)
+        runtime.historyItems.set(thread, structuredClone(messages));
       app = make();
       service = new HostService(app, { directory, origin: () => origin });
     },
@@ -335,6 +338,7 @@ test("Researcher survives two real Peer/Chord boundaries, async questions/report
       effort: "low",
       prompt: "New research scope",
     });
+    await a.app.synchronizeDetail(owner.id);
     expect(
       a.app
         .detail(owner.id)

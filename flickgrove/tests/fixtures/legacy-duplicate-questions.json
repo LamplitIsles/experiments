@@ -1,0 +1,132 @@
+{
+  "agents": [
+    {
+      "id": "32bdf672-9ccb-45e9-a2f1-306523a8553e",
+      "token": "63736f7b-d618-4231-9eb4-62d6a2271780",
+      "role": "orc",
+      "project": {
+        "alias": "alpha",
+        "name": "Alpha",
+        "path": "/fixture/alpha"
+      },
+      "title": "New session",
+      "model": "sol",
+      "effort": "medium",
+      "serviceTier": "default",
+      "workerDefaults": {
+        "model": "sol",
+        "effort": "medium",
+        "serviceTier": "default"
+      },
+      "state": "working",
+      "closed": false,
+      "questions": [],
+      "messages": [
+        {
+          "id": "native-report:069cf378-b341-4fb0-97d2-d09636310663:duplicate-question",
+          "clientId": "report:069cf378-b341-4fb0-97d2-d09636310663:duplicate-question",
+          "turnId": "turn-2",
+          "role": "user",
+          "text": "Worker “Duplicate question fixture” needs a decision. Agent ID: 069cf378-b341-4fb0-97d2-d09636310663\n\nQuestion ID: duplicate-question:0\nWhich choice?\n",
+          "at": 1792308106494
+        }
+      ],
+      "deliveries": [
+        {
+          "id": "report:069cf378-b341-4fb0-97d2-d09636310663:duplicate-question",
+          "text": "Worker “Duplicate question fixture” needs a decision. Agent ID: 069cf378-b341-4fb0-97d2-d09636310663\n\nQuestion ID: duplicate-question:0\nWhich choice?\n",
+          "source": "worker",
+          "reportingWorkerId": "069cf378-b341-4fb0-97d2-d09636310663",
+          "status": "sent",
+          "questionIds": [],
+          "at": 1792308106494,
+          "turnId": "turn-2"
+        }
+      ],
+      "threadId": "thread-32bdf672-9ccb-45e9-a2f1-306523a8553e",
+      "turnEnded": false,
+      "workingSince": 1792308106504,
+      "turnId": "turn-2"
+    },
+    {
+      "id": "069cf378-b341-4fb0-97d2-d09636310663",
+      "token": "1e851ed6-2100-48d9-8b81-fe5523f3992c",
+      "role": "worker",
+      "ownerId": "32bdf672-9ccb-45e9-a2f1-306523a8553e",
+      "project": {
+        "alias": "alpha",
+        "name": "Alpha",
+        "path": "/fixture/alpha"
+      },
+      "title": "Duplicate question fixture",
+      "model": "sol",
+      "effort": "medium",
+      "serviceTier": "default",
+      "state": "working",
+      "closed": false,
+      "questions": [
+        {
+          "id": "duplicate-question:0",
+          "itemId": "duplicate-question",
+          "index": 0,
+          "title": "Question",
+          "text": "Which choice?",
+          "options": [],
+          "state": "answered",
+          "at": 1792308106494,
+          "answer": "answer"
+        }
+      ],
+      "messages": [
+        {
+          "id": "native-035773c0-7819-411f-863b-9cfbd2b81df3",
+          "clientId": "035773c0-7819-411f-863b-9cfbd2b81df3",
+          "turnId": "turn-1",
+          "role": "user",
+          "text": "Assigned spec: 4250\n\nFixture assignment",
+          "at": 1792308106481
+        },
+        {
+          "id": "duplicate-question",
+          "role": "assistant",
+          "text": "",
+          "turnId": "turn-1",
+          "at": 1792308106494
+        },
+        {
+          "id": "native-1423d6f1-52db-4496-9c08-067cc10c7c03",
+          "clientId": "1423d6f1-52db-4496-9c08-067cc10c7c03",
+          "turnId": "turn-1",
+          "role": "user",
+          "text": "answer",
+          "at": 1792308106515
+        }
+      ],
+      "deliveries": [
+        {
+          "id": "035773c0-7819-411f-863b-9cfbd2b81df3",
+          "text": "Assigned spec: 4250\n\nFixture assignment",
+          "source": "worker",
+          "status": "sent",
+          "questionIds": [],
+          "at": 1792308106481,
+          "turnId": "turn-1"
+        },
+        {
+          "id": "1423d6f1-52db-4496-9c08-067cc10c7c03",
+          "text": "answer",
+          "source": "worker",
+          "status": "sent",
+          "questionIds": ["duplicate-question:0", "duplicate-question:0"],
+          "at": 1792308106515,
+          "turnId": "turn-1"
+        }
+      ],
+      "threadId": "thread-069cf378-b341-4fb0-97d2-d09636310663",
+      "turnEnded": false,
+      "workingSince": 1792308106487,
+      "turnId": "turn-1"
+    }
+  ],
+  "revision": 22
+}

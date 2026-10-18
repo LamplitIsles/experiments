@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
+import { WorkspaceStore } from "./workspace-store";
+import { sessions } from "./schema";
 import { Workspace } from "./workspace";
 import { FakeRuntime } from "./testing";
 import type { RuntimeAgent } from "./runtime";
@@ -20,19 +21,21 @@ export async function abandonFixture() {
   await app.send(target.id, "Original unknown input", "original-unknown");
   const other = await app.createOrc("fixture");
   function stored() {
-    const db = new Database(join(directory, "workspace.sqlite"));
+    const store = new WorkspaceStore(join(directory, "workspace.sqlite"));
     try {
-      return JSON.parse(
-        (
-          db.query("SELECT value FROM workspace WHERE id=1").get() as {
-            value: string;
-          }
-        ).value,
-      ) as { agents: RuntimeAgent[]; revision: number };
+      return {
+        agents: store.db
+          .select({ id: sessions.id })
+          .from(sessions)
+          .all()
+          .map((row) => store.byId(row.id)!),
+        revision: 0,
+      };
     } finally {
-      db.close();
+      store.close();
     }
   }
+
   function reload(
     edit?: (agent: RuntimeAgent, agents: RuntimeAgent[]) => void,
   ) {
@@ -42,13 +45,12 @@ export async function abandonFixture() {
       state.agents.find((a) => a.id === target.id)!,
       state.agents,
     );
-    const db = new Database(join(directory, "workspace.sqlite"));
+    const store = new WorkspaceStore(join(directory, "workspace.sqlite"));
     try {
-      db.query("UPDATE workspace SET value=? WHERE id=1").run(
-        JSON.stringify(state),
-      );
+      for (const agent of state.agents) store.track(agent, true);
+      store.flush();
     } finally {
-      db.close();
+      store.close();
     }
     app = new Workspace(options);
     return app;

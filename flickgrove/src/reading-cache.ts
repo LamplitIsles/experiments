@@ -202,3 +202,15 @@ export class ReadingCache {
     }
   }
 }
+
+// Empty server memory after restart is not evidence that native history is empty.
+export function retainReading(
+  previous: Detail | null,
+  incoming: Detail,
+): Detail {
+  return previous?.id === incoming.id &&
+    previous.messages.length &&
+    !incoming.messages.length
+    ? { ...incoming, messages: previous.messages }
+    : incoming;
+}

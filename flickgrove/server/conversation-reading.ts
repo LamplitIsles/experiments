@@ -57,12 +57,14 @@ export function recentWindow(
   questions: Question[] = [],
 ) {
   const result: Message[] = [];
+  let bytes = 2; // Array framing without re-encoding cumulative prefixes.
   for (const message of messages.slice(-100).reverse()) {
     const projected = readable(
       questionEntry(associate(message, deliveries), questions),
       LIVE_BYTES - 2048,
     );
-    if (encodedBytes([...result, projected]) > LIVE_BYTES) break;
+    bytes += encodedBytes(projected) + (result.length ? 1 : 0);
+    if (bytes > LIVE_BYTES) break;
     result.push(projected);
   }
   return result.reverse();

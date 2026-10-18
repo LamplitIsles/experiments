@@ -229,7 +229,10 @@ test("Reviewer lifecycle crosses real Peer/Chord with target-bound reports, isol
     const oldRuntime = runtime;
     service.dispose();
     app.dispose();
+    const nativeHistory = runtime.historyItems;
     runtime = new FakeRuntime();
+    for (const [thread, messages] of nativeHistory)
+      runtime.historyItems.set(thread, structuredClone(messages));
     app = make();
     service = new HostService(app, { directory, origin: () => origin });
     await until(() => runtime.agents.has(b.id));
@@ -243,6 +246,7 @@ test("Reviewer lifecycle crosses real Peer/Chord with target-bound reports, isol
     expect(runtime.agents.get(b.id)!.reviewerSnapshot?.prompt).toBe(
       "Original prompt",
     );
+    await app.synchronizeDetail(orc.id);
     expect(
       app
         .detail(orc.id)

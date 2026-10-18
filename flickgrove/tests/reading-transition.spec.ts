@@ -43,7 +43,7 @@ for (const [width, source] of [
         })
         .click();
       await entered.promise;
-      // Native rows remain mounted beneath the bounded loading layer.
+      // Chord already backfilled native reading; the separate HTTP refresh must not obscure it.
       await expect(
         page.locator(`[data-message-id="${provisional}"]`),
       ).toHaveCount(0);
@@ -51,41 +51,11 @@ for (const [width, source] of [
         page.locator('[data-message-id="transition-native-2"]'),
       ).toBeVisible();
       await expect(page.locator(".delivery-error")).toHaveCount(0);
-      await expect(page.locator(".conversation-loading")).toBeVisible();
+      await expect(page.locator(".conversation-loading")).toHaveCount(0);
       await expect(page.locator(".conversation-region")).toHaveAttribute(
         "aria-busy",
-        "true",
+        "false",
       );
-      await expect(page.locator(".timeline-footer")).not.toContainText(
-        "Loading conversation",
-      );
-      const bounds = await page.locator(".conversation-loading").boundingBox();
-      expect(bounds).toEqual(await page.locator(".conversation").boundingBox());
-      const seat = await page.locator(".input-seat").boundingBox();
-      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(seat!.y);
-      const spinner = await page.locator(".conversation-spinner").boundingBox();
-      expect(
-        Math.abs(
-          spinner!.x + spinner!.width / 2 - bounds!.x - bounds!.width / 2,
-        ),
-      ).toBeLessThan(1);
-      expect(
-        Math.abs(
-          spinner!.y + spinner!.height / 2 - bounds!.y - bounds!.height / 2,
-        ),
-      ).toBeLessThan(1);
-      await page.locator(".conversation").evaluate((el) => {
-        el.scrollTop = 0;
-      });
-      expect(await page.locator(".conversation-loading").boundingBox()).toEqual(
-        bounds,
-      );
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      expect(
-        await page
-          .locator(".conversation-spinner")
-          .evaluate((el) => getComputedStyle(el).animationName),
-      ).toBe("none");
       const input = page.getByRole("textbox", {
         name: "Message Orc",
         exact: true,
@@ -209,7 +179,7 @@ for (const width of [1440, 390])
         page.locator('[data-message-id="local-pending"]'),
       ).toContainText("Local pending stays readable");
       await expect(page.locator(".delivery-error")).toHaveCount(0);
-      await expect(page.locator(".conversation-loading")).toBeVisible();
+      await expect(page.locator(".conversation-loading")).toHaveCount(0);
       await expect(
         page.locator(`[data-message-id="${provisional}"]`),
       ).toHaveCount(0);
@@ -246,7 +216,7 @@ for (const width of [1440, 390])
         .getByRole("button", { name: "Retry", exact: true })
         .click();
       await retryEntered.promise;
-      await expect(page.locator(".conversation-loading")).toBeVisible();
+      await expect(page.locator(".conversation-loading")).toHaveCount(0);
       retryRelease.resolve();
       await expect(page.locator(".conversation-loading")).toHaveCount(0);
       await expect(page.locator(".history-controls [role=alert]")).toHaveCount(

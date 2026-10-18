@@ -9,7 +9,7 @@ import {
 import { ImageStore } from "./images";
 import { DirectoryBranches, type BranchReader } from "./directory-branches";
 import type { MessageImage } from "../src/contracts";
-import { Database } from "bun:sqlite";
+import { WorkspaceStore } from "./workspace-store";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type {
@@ -46,7 +46,7 @@ type State = {
 export class Workspace {
   private readonly branches: DirectoryBranches;
   readonly images: ImageStore;
-  private readonly db: Database;
+  private readonly store: WorkspaceStore;
   private readonly state: State;
   private readonly handles = new Map<string, RuntimeHandle>();
   private readonly subscribers = new Set<() => void>();
@@ -64,6 +64,7 @@ export class Workspace {
   private readonly closingChildren = new Set<string>();
   private readonly failedChildCloses = new Set<string>();
   private disposed = false;
+  private writeFailure: unknown;
   constructor(
     private readonly options: {
       directory: string;
@@ -81,17 +82,13 @@ export class Workspace {
   ) {
     mkdirSync(options.directory, { recursive: true, mode: 0o700 });
     this.images = new ImageStore(join(options.directory, "media"));
-    this.db = new Database(join(options.directory, "workspace.sqlite"));
-    this.db.exec(
-      "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS workspace (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL)",
+    this.store = new WorkspaceStore(
+      join(options.directory, "workspace.sqlite"),
     );
-    const row = this.db
-      .query("SELECT value FROM workspace WHERE id=1")
-      .get() as { value: string } | null;
-    const stored: State = row
-      ? JSON.parse(row.value)
-      : { agents: [], revision: 0 };
-    this.state = { agents: stored.agents, revision: stored.revision };
+    this.state = {
+      agents: this.store.openAgents().map((a) => this.store.track(a)),
+      revision: 0,
+    };
     this.branches = new DirectoryBranches(() => {
       if (this.disposed) return;
       this.state.revision++;
@@ -138,26 +135,21 @@ export class Workspace {
     }
   }
   private save() {
-    for (const a of this.state.agents) {
+    if (this.disposed) return;
+    for (const a of this.store.windows) {
       this.rememberCompletedItems(a, a.messages);
       a.messages = recentWindow(a.messages, []);
     }
-    if (this.disposed) return;
-    this.branches.update(
-      this.state.agents.filter((a) => !a.closed).map((a) => a.project.path),
-    );
+    this.store.windows.clear();
+    try {
+      this.store.flush();
+    } catch (error) {
+      this.writeFailure = error;
+      throw error;
+    }
+    this.state.agents = this.state.agents.filter((a) => !a.closed);
+    this.branches.update(this.state.agents.map((a) => a.project.path));
     this.state.revision++;
-    this.db
-      .query(
-        "INSERT INTO workspace(id,value) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value",
-      )
-      .run(
-        JSON.stringify(this.state, (key, value) =>
-          key === "inheritSettings" || key === "restoreArchived"
-            ? undefined
-            : value,
-        ),
-      );
     for (const listener of this.subscribers) listener();
   }
   subscribe(listener: () => void) {
@@ -238,6 +230,7 @@ export class Workspace {
       return;
     if (event.type === "working") {
       if (a.turnId === event.turnId) return;
+      this.completedItems.delete(a.id);
       if (a.turnId) {
         this.completedTurns.add(`${a.id}/${a.turnId}`);
       }
@@ -419,16 +412,27 @@ export class Workspace {
     this.advanceChildCloses();
   }
   previewDirectory(id: string) {
-    const agent = this.state.agents.find((a) => a.id === id);
+    const agent =
+      this.state.agents.find((a) => a.id === id) ?? this.store.byId(id);
     if (!agent) throw new Error("Session not found");
     return agent.project.path;
   }
+  private readableAgent(a: RuntimeAgent | undefined) {
+    if (this.writeFailure && a && this.state.agents.includes(a))
+      throw new Error(
+        "Workspace storage failed. Resolve the write failure and restart before reading active state.",
+      );
+    return a;
+  }
   private agent(id: string) {
-    const a = this.state.agents.find((a) => a.id === id);
+    const a = this.readableAgent(
+      this.state.agents.find((a) => a.id === id) ?? this.store.byId(id),
+    );
     if (!a || a.closed) throw new Error("Session not found");
     return a;
   }
   private publicAgent(a: RuntimeAgent): Agent {
+    this.readableAgent(a);
     const {
       token: _token,
       reviewerSnapshot: _reviewerSnapshot,
@@ -468,6 +472,7 @@ export class Workspace {
     });
   }
   snapshot(): Snapshot {
+    if (this.writeFailure) throw this.writeFailure;
     return {
       agents: this.state.agents
         .filter((a) => !a.closed)
@@ -574,7 +579,9 @@ export class Workspace {
     id: string,
     selection: { item?: string; operation?: string; pending?: boolean } = {},
   ) {
-    const agent = this.state.agents.find((a) => a.id === id);
+    const agent = this.readableAgent(
+      this.state.agents.find((a) => a.id === id) ?? this.store.byId(id),
+    );
     if (!agent) throw new Error("Session not found");
     const delivery = selection.operation
       ? agent.deliveries.find(
@@ -623,7 +630,9 @@ export class Workspace {
     selection: { item?: string; operation?: string },
   ) {
     await this.historySession(alias, threadId);
-    const agent = this.state.agents.find((a) => a.threadId === threadId);
+    const agent =
+      this.state.agents.find((a) => a.threadId === threadId) ??
+      this.store.byThread(threadId);
     if (!agent)
       throw new Error(
         "Question record unavailable. Retry from the conversation.",
@@ -837,11 +846,14 @@ export class Workspace {
     return project;
   }
   private historyIdentity(session: HistorySession): HistorySession {
-    const agent = this.state.agents.find(
-      (a) => a.threadId === session.threadId,
+    const agent = this.readableAgent(
+      this.state.agents.find((a) => a.threadId === session.threadId) ??
+        this.store.byThread(session.threadId),
     );
     if (!agent) return session;
-    const owner = this.state.agents.find((a) => a.id === agent.ownerId);
+    const owner =
+      this.state.agents.find((a) => a.id === agent.ownerId) ??
+      (agent.ownerId ? this.store.byId(agent.ownerId) : undefined);
     return {
       ...session,
       title: agent.role !== "orc" ? agent.title : session.title,
@@ -906,8 +918,10 @@ export class Workspace {
     project?: (m: Message) => Message,
   ) {
     await this.historySession(alias, threadId);
-    const agent = this.state.agents.find((a) => a.threadId === threadId);
-    let confirmed = false;
+    const agent = this.readableAgent(
+      this.state.agents.find((a) => a.threadId === threadId) ??
+        this.store.byThread(threadId),
+    );
     const page = await readingPage(
       this.options.runtime,
       threadId,
@@ -915,20 +929,10 @@ export class Workspace {
       agent?.deliveries ?? [],
       undefined,
       (m) => {
-        const d =
-          agent && m.clientId
-            ? agent.deliveries.find((d) => d.id === m.clientId)
-            : undefined;
-        if (agent && d && d.status !== "sent") {
-          this.confirmNative(agent, m.clientId, m.turnId);
-          confirmed = true;
-          m = associate(m, agent.deliveries);
-        }
         m = questionEntry(m, agent?.questions ?? []);
         return project ? project(m) : m;
       },
     );
-    if (confirmed) this.save();
     return page;
   }
   private async restoreNativeImages(agent: RuntimeAgent, message: Message) {
@@ -1016,7 +1020,9 @@ export class Workspace {
   ) {
     return this.serialize(`history:${threadId}`, async () => {
       const project = await this.historyProject(alias);
-      const existing = this.state.agents.find((a) => a.threadId === threadId);
+      const existing =
+        this.state.agents.find((a) => a.threadId === threadId) ??
+        this.store.byThread(threadId);
       if (
         existing?.project.path !== undefined &&
         !sameDirectory(existing.project.path, project.path)
@@ -1057,9 +1063,11 @@ export class Workspace {
           inheritSettings: true,
           workerDefaults,
         };
+        if (existing) this.store.track(agent);
         agent.restoreArchived = archived;
         try {
           const handle = await this.handle(agent);
+          if (!existing) this.store.track(agent, true);
           agent.title = handle.threadName ?? session.title;
           if (!existing) {
             agent.model = handle.model ?? agent.model;
@@ -1067,6 +1075,7 @@ export class Workspace {
             agent.serviceTier = handle.serviceTier ?? agent.serviceTier;
             this.state.agents.push(agent);
           }
+          if (!this.state.agents.includes(agent)) this.state.agents.push(agent);
           agent.closed = false;
           agent.state = "idle";
           agent.error = undefined;
@@ -1122,6 +1131,7 @@ export class Workspace {
       messages: [],
       deliveries: [],
     };
+    this.store.track(a, true);
     this.state.agents.push(a);
     this.save();
     try {
@@ -1183,7 +1193,7 @@ export class Workspace {
     return handle;
   }
   private serialize<T>(id: string, work: () => Promise<T>): Promise<T> {
-    const a = this.state.agents.find((a) => a.id === id);
+    const a = this.state.agents.find((a) => a.id === id) ?? this.store.byId(id);
     if (a && this.closingTrees.has(a.ownerId ?? a.id))
       return Promise.reject(new Error("Tree is closing"));
     if (a && this.treeActions.has(a.ownerId ?? a.id))
@@ -1208,6 +1218,7 @@ export class Workspace {
     answers?: Answer[],
     images?: MessageImage[],
   ) {
+    if (this.writeFailure) throw this.writeFailure;
     if (this.disposed) throw new Error("Workspace is stopped");
     if (a.closeRequest && !questionIds.length)
       throw new Error(
@@ -1331,12 +1342,20 @@ export class Workspace {
         d.source === "user" &&
         text.trim() &&
         a.title === "New session" &&
-        a.messages.filter((m) => m.role === "user").length === 1
+        a.deliveries.filter((d) => d.source === "user" && d.status === "sent")
+          .length === 1
       ) {
         void handle
           .title(text)
           .then((title) => {
-            if (title && a.title === "New session") {
+            if (
+              title &&
+              !this.disposed &&
+              !a.closed &&
+              this.state.agents.includes(a) &&
+              this.handles.get(a.id) === handle &&
+              a.title === "New session"
+            ) {
               a.title = title;
               this.save();
             }
@@ -1344,6 +1363,7 @@ export class Workspace {
           .catch(() => {});
       }
     } catch (error) {
+      if (this.writeFailure) throw this.writeFailure;
       if (d.status !== "sent") {
         d.status = error instanceof DeliveryRejected ? "failed" : "uncertain";
         d.error = error instanceof Error ? error.message : "Delivery failed";
@@ -1380,7 +1400,8 @@ export class Workspace {
     });
   }
   lookup(id: string, operationId: string) {
-    const a = this.state.agents.find((a) => a.id === id);
+    if (this.writeFailure) throw this.writeFailure;
+    const a = this.state.agents.find((a) => a.id === id) ?? this.store.byId(id);
     if (!a) throw new Error("Agent not found");
     const d = a.deliveries.find((d) => d.id === operationId);
     if (!d || (d.status !== "sent" && d.status !== "failed")) return null;
@@ -1394,6 +1415,29 @@ export class Workspace {
     };
   }
 
+  private async requireNativeRejection(a: RuntimeAgent, operationId: string) {
+    if (!a.threadId) return;
+    let cursor: string | undefined;
+    do {
+      const page = await this.options.runtime.historyMessages(
+        a.threadId,
+        cursor,
+      );
+      const accepted = page.messages.find(
+        (m) =>
+          m.role === "user" &&
+          (m.clientId === operationId || m.id === operationId),
+      );
+      if (accepted) {
+        this.confirmNative(a, operationId, accepted.turnId);
+        this.save();
+        throw new Error(
+          "Native history confirms this submission; it cannot be deleted or retried",
+        );
+      }
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+  }
   deleteFailedSubmission(id: string, operationId: string) {
     return this.serialize(id, async () => {
       const a = this.agent(id);
@@ -1410,16 +1454,11 @@ export class Workspace {
       )
         throw new Error("Only a rejected user submission can be deleted");
       if (!d) {
-        if (
-          this.state.agents.some(
-            (other) =>
-              other.id !== id &&
-              other.deliveries.some((d) => d.id === operationId),
-          )
-        )
+        if (this.store.hasOperationElsewhere(id, operationId))
           throw new Error("Submission belongs to another conversation");
         return this.detail(id); // Pre-admission rejection or already deleted, after queue drain.
       }
+      await this.requireNativeRejection(a, operationId);
       a.deliveries.splice(index, 1);
       try {
         this.save();
@@ -1464,6 +1503,7 @@ export class Workspace {
           )
         )
           throw new Error("Only a rejected user submission can be retried");
+        await this.requireNativeRejection(a, requestId);
         previous.attemptId = retry.attempt;
         this.save();
         if (a.state === "stopping") return this.detail(id);
@@ -1510,7 +1550,9 @@ export class Workspace {
   }
   abandonCloseCandidate(id: string) {
     return this.serialize(id, async () => {
-      const a = this.state.agents.find((a) => a.id === id);
+      const a = this.readableAgent(
+        this.state.agents.find((a) => a.id === id) ?? this.store.byId(id),
+      );
       if (!a || a.role !== "orc") throw new Error("Orc session not found");
       return a.closed
         ? { closed: true as const, unknownOperationIds: [] }
@@ -1557,6 +1599,7 @@ export class Workspace {
       (w) => w.ownerId === id && !w.closed,
     );
     const validate = () => {
+      if (this.writeFailure) throw this.writeFailure;
       if (this.disposed) throw new Error("Workspace is stopped");
       if (this.treeActions.has(id))
         throw new Error("Tree settings are being saved");
@@ -1813,6 +1856,7 @@ export class Workspace {
             throw new Error(
               "Message is too long, including the assignment target",
             );
+          this.store.track(w, true);
           this.state.agents.push(w);
           this.save();
           try {
@@ -1835,6 +1879,7 @@ export class Workspace {
       case "researcher_list":
       case "reviewer_list":
       case "worker_list": {
+        this.readableAgent(a);
         z.object(toolDefinitions[name].shape).parse(args);
         return this.state.agents
           .filter(
@@ -1867,17 +1912,42 @@ export class Workspace {
               ? "researcher"
               : "reviewer",
         );
-        const end = input.before
-          ? w.messages.findIndex((m) => m.id === input.before)
-          : w.messages.length;
-        if (end < 0) throw new Error("History cursor not found");
-        const start = Math.max(0, end - (input.limit ?? 20));
-        const messages = structuredClone(w.messages.slice(start, end));
+        const page = w.threadId
+          ? await readingPage(
+              this.options.runtime,
+              w.threadId,
+              input.before
+                ? Buffer.from(
+                    JSON.stringify({ before: input.before }),
+                  ).toString("base64url")
+                : undefined,
+              w.deliveries,
+              undefined,
+              (m) => questionEntry(m, w.questions),
+            )
+          : { messages: [], nextCursor: null };
+        const nativeClients = new Set(
+          page.messages.filter((m) => m.clientId).map((m) => m.clientId),
+        );
+        const rows = input.before
+          ? page.messages
+          : [
+              ...new Map(
+                [
+                  ...page.messages,
+                  ...w.messages.filter(
+                    (m) => !m.provisional || !nativeClients.has(m.clientId),
+                  ),
+                ].map((m) => [m.id, m]),
+              ).values(),
+            ];
+        const messages = structuredClone(rows.slice(-(input.limit ?? 20)));
+        const hasMore = rows.length > messages.length || !!page.nextCursor;
         return {
           [w.role]: this.publicAgent(w),
           messages,
-          hasMore: start > 0,
-          nextBefore: start > 0 ? messages[0]?.id : null,
+          hasMore,
+          nextBefore: hasMore ? messages[0]?.id : null,
         };
       }
       case "researcher_send":
@@ -2187,6 +2257,6 @@ export class Workspace {
     this.subscribers.clear();
     this.completedItems.clear();
     void this.options.runtime.close();
-    this.db.close();
+    this.store.close();
   }
 }

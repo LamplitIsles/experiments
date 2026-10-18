@@ -88,16 +88,10 @@ test("Orc captures configurable context for new threads and preserves it on nati
     await runtime.close();
     const { Database } = await import("bun:sqlite");
     const db = new Database(join(root, "workspace.sqlite"));
-    const row = db.query("SELECT value FROM workspace WHERE id=1").get() as {
-      value: string;
-    };
-    const state = JSON.parse(row.value);
-    const legacy = state.agents.find((a: { id: string }) => a.id === second.id);
-    delete legacy.orcPromptSnapshot;
-    legacy.closed = false;
-    db.query("UPDATE workspace SET value=? WHERE id=1").run(
-      JSON.stringify(state),
-    );
+    db.query(
+      "UPDATE session_config SET captured=json_remove(captured,'$.orcPromptSnapshot') WHERE session_id=?",
+    ).run(second.id);
+    db.query("UPDATE sessions SET closed=0 WHERE id=?").run(second.id);
     db.close();
     await writeFile(promptPath, "Legacy captured scope C");
     runtime = makeRuntime();

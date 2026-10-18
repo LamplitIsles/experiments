@@ -23,7 +23,10 @@ export async function reading<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   const response = await connection().media(peerOrAgent, `/api/read${path}`, {
-    signal,
+    signal: AbortSignal.any([
+      ...(signal ? [signal] : []),
+      AbortSignal.timeout(15_000),
+    ]),
   });
   return response.json();
 }

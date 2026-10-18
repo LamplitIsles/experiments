@@ -1,4 +1,5 @@
 import { readingCache } from "./api";
+import { historyCache } from "./history-cache";
 import type { Agent, Detail, Host, Snapshot, Settings } from "./contracts";
 import { openGrove, type GroveClient } from "./chord-client";
 import { settingsSchema, type Method, type View } from "./chord-contract";
@@ -186,6 +187,7 @@ export class LocalConnection {
       clearInterval(link.probe);
       link.client = undefined;
       link.host.connected = false;
+      historyCache.reconnect(link.config.id);
       link.host.error = "Instance disconnected. Reconnecting automatically.";
       this.offline(link.config.id);
       this.publish();

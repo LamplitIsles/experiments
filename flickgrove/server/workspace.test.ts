@@ -176,9 +176,7 @@ test("backend restart restores questions and captured models and resumes an exis
   });
   await restarted.send(a.id, "Continue now", "second");
   expect(restarted.detail(a.id).messages.map((m) => m.text)).toEqual([
-    "Continue tomorrow",
-    "", // Original native question item now retains its timeline entry.
-    "Continue now",
+    "Continue now", // Reading bodies are rebuilt from native history, not SQLite.
   ]);
   expect(runtime.agents.get(a.id)?.threadId).toBe(threadId);
 });
@@ -1763,4 +1761,144 @@ test("explicit user retry replaces only its rejected attempt and duplicate token
     }),
   ).rejects.toThrow("Only a rejected");
   expect(runtime.inputs).toHaveLength(4);
+});
+
+test("collaboration reading replaces provisional admission by native client identity and paginates native history", async () => {
+  const { app, runtime } = fixture();
+  const open = runtime.open.bind(runtime);
+  runtime.open = (agent, notify) =>
+    open(agent, (event) => {
+      // Native admission completed, but its item publication has not arrived yet.
+      if (event.type !== "item" || event.item.type !== "userMessage")
+        notify(event);
+    });
+  const orc = await app.createOrc("alpha");
+  const token = runtime.agents.get(orc.id)!.token;
+  const worker = (await app.tool(token, "worker_start", {
+    project: "alpha",
+    title: "Read native",
+    spec: "fixture",
+    message: "Original assignment",
+  })) as import("../src/contracts").Detail;
+  const native = runtime.historyItems.get(worker.threadId!)!;
+  native.unshift(
+    ...Array.from({ length: 35 }, (_, i) => ({
+      id: `older-${i}`,
+      role: "assistant" as const,
+      text: `Earlier ${i}`,
+      at: i,
+    })),
+  );
+  const page = (await app.tool(token, "worker_read", {
+    workerId: worker.id,
+    limit: 1,
+  })) as {
+    messages: import("../src/contracts").Message[];
+    hasMore: boolean;
+    nextBefore: string;
+  };
+  expect(page.messages).toHaveLength(1);
+  expect(page.messages[0].id).toBe(native.at(-1)!.id);
+  expect(page.messages[0].provisional).toBeUndefined();
+  expect(page.hasMore).toBe(true);
+  const older = (await app.tool(token, "worker_read", {
+    workerId: worker.id,
+    limit: 2,
+    before: page.nextBefore,
+  })) as { messages: import("../src/contracts").Message[] };
+  expect(older.messages.map((m) => m.id)).toEqual(["older-33", "older-34"]);
+});
+
+test("a delayed title result cannot replace the reopened aggregate or durably close it", async () => {
+  const { app, runtime, directory } = fixture();
+  const originalOpen = runtime.open.bind(runtime);
+  const titleEntered = Promise.withResolvers<void>();
+  const titleResult = Promise.withResolvers<string | undefined>();
+  runtime.open = async (agent, notify) => ({
+    ...(await originalOpen(agent, notify)),
+    title: () => {
+      titleEntered.resolve();
+      return titleResult.promise;
+    },
+  });
+  const a = await app.createOrc("alpha");
+  await app.send(a.id, "First user input", "title-race");
+  await titleEntered.promise;
+  runtime.emit(a.id, {
+    type: "completed",
+    turnId: app.detail(a.id).turnId!,
+    status: "completed",
+  });
+  await app.closeTree(a.id);
+  runtime.names.set(a.threadId!, "Resumed authoritative title");
+  await app.resumeHistory("alpha", a.threadId!, false);
+  titleResult.resolve("Obsolete delayed title");
+  await titleResult.promise;
+  await Bun.sleep(0);
+  const { WorkspaceStore } = await import("./workspace-store");
+  const stored = new WorkspaceStore(join(directory, "workspace.sqlite"));
+  try {
+    expect(stored.byId(a.id)).toMatchObject({
+      closed: false,
+      title: "Resumed authoritative title",
+    });
+  } finally {
+    stored.close();
+  }
+  expect(app.snapshot().agents.find((v) => v.id === a.id)).toMatchObject({
+    closed: false,
+    title: "Resumed authoritative title",
+  });
+  app.dispose();
+  const restarted = new Workspace({
+    directory,
+    runtime: new FakeRuntime(),
+    projects: async () => fixtureProjects,
+  });
+  cleanups.push(() => restarted.dispose());
+  expect(restarted.snapshot().agents.some((v) => v.id === a.id)).toBe(true);
+});
+
+test("worker_send retains repeated delegated question associations and confirms the same body fallback", async () => {
+  const { app, runtime, directory } = fixture();
+  const orc = await app.createOrc("alpha");
+  const token = runtime.agents.get(orc.id)!.token;
+  const worker = (await app.tool(token, "worker_start", {
+    project: "alpha",
+    title: "Repeated answers",
+    spec: "4250",
+    message: "Fixture assignment",
+  })) as import("../src/contracts").Detail;
+  runtime.emit(worker.id, {
+    type: "item",
+    turnId: app.detail(worker.id).turnId!,
+    item: {
+      id: "repeated-question",
+      type: "agentMessage",
+      delivery: "async",
+      questions: [{ question: "Choice?" }],
+    },
+  });
+  const q = "repeated-question:0";
+  await app.tool(token, "worker_send", {
+    workerId: worker.id,
+    questionIds: [q, q],
+    message: "answer",
+  });
+  const operation = app.detail(worker.id).deliveries.at(-1)!;
+  expect(app.recovery(worker.id, operation.id).questionIds).toEqual([q, q]);
+  expect(app.questionHistory(worker.id)[0]).toMatchObject({
+    state: "answered",
+    answer: "answer",
+  });
+  const { WorkspaceStore } = await import("./workspace-store");
+  const stored = new WorkspaceStore(join(directory, "workspace.sqlite"));
+  try {
+    expect(stored.byId(worker.id)?.deliveries.at(-1)?.questionIds).toEqual([
+      q,
+      q,
+    ]);
+  } finally {
+    stored.close();
+  }
 });

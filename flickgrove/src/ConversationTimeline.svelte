@@ -4,7 +4,7 @@
   import { LoaderCircle } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import type { HistoryMessages, Message } from "./contracts";
-  import { reading } from "./api";
+  import { reading, readingCache } from "./api";
   import { historyCache, type LoadedHistory } from "./history-cache";
   import { transcriptPositions, saveTranscriptPosition } from "./transcript-state";
   import * as m from "./paraglide/messages";
@@ -25,7 +25,7 @@
   // Server recovery metadata can refer to native items outside the recent
   // window. Check the first page before presenting those as pending rows.
   const readingSettled = $derived(!boundary || historyLoaded || !!error || !connected);
-  const initialLoading = $derived(connected && !detailError && (!ready || !readingSettled));
+  const initialLoading = $derived(connected && !detailError && !live.length && !historical.length && !retained.length && (!ready || !readingSettled));
   $effect.pre(() => {
     const current = live, revision = syncRevision;
     untrack(() => {
@@ -176,12 +176,16 @@
       return reading<HistoryMessages>(`/messages?${params}`, id, request.signal);
     };
     if (entry.loaded && entry.synchronized !== revision) await historyCache.refresh(id, entry, revision, () => fetchPage());
-    else { await historyCache.load(id, entry, fetchPage); if (!entry.error) entry.synchronized = revision; }
+    else await historyCache.load(id, entry, fetchPage, revision);
     if (!active || entry !== history) return;
     historical = entry.messages; cursor = entry.cursor; error = entry.error; loading = false; historyLoaded = entry.loaded;
     // The page may arrive after the last live publication. Cache the retained
     // native prefix now as well, so its reading anchor survives a revisit.
     historyCache.remember(id, entry, retained);
+    if (!entry.error) {
+      const copy = readingCache.readDetail(id);
+      if (copy) readingCache.saveDetail({ ...copy, messages: entry.messages.slice(-100) });
+    }
     if (initial && (!saved || saved.follow)) { await tick(); if (active) $virtualizer.scrollToEnd(); }
   }
   $effect(() => {

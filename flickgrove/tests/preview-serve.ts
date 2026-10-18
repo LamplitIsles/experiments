@@ -47,6 +47,7 @@ async function unit(name: string, color: string, origin: () => string) {
   const history = {
     delay: 0,
     fail: false,
+    skipDetailSync: false,
     reads: [] as (string | undefined)[],
   };
   const readHistory = runtime.historyMessages.bind(runtime);
@@ -173,6 +174,9 @@ async function unit(name: string, color: string, origin: () => string) {
     name,
     origin,
   });
+  const synchronize = service.synchronizeDetail.bind(service);
+  service.synchronizeDetail = (id) =>
+    history.skipDetailSync ? service.detail(id) : synchronize(id);
   // Test-only Chord provider patches exercise growing text on the same message
   // ID. Native final answers remain buffered until completion in Workspace.
   const patches = new Map<string, string>();
@@ -296,6 +300,54 @@ const server = Bun.serve({
         provisional: deliveries[0].id,
       });
     }
+    if (url.pathname === "/fixture/cold-reading" && request.method === "POST") {
+      const body = await request.json();
+      const agent = await local.app.createOrc("fixture", defaults);
+      await local.app.rename(agent.id, "Cold reading");
+      local.runtime.historyItems.set(
+        local.app.detail(agent.id).threadId!,
+        body.empty
+          ? []
+          : [
+              {
+                id: "cold-native",
+                role: "assistant",
+                text: "Native history survives empty server memory",
+                at: 1,
+              },
+            ],
+      );
+      local.history.delay = body.delay ?? 0;
+      local.history.fail = body.fail ?? false;
+      return Response.json({ id: local.service.identity.id + ":" + agent.id });
+    }
+    if (
+      url.pathname === "/fixture/clear-reading" &&
+      request.method === "POST"
+    ) {
+      const body = await request.json();
+      // Fixture-only cold-window reset; native history remains authoritative.
+      const owner = (
+        local.app as unknown as {
+          state: { agents: import("../server/runtime").RuntimeAgent[] };
+        }
+      ).state.agents.find((a) => a.id === body.id.split(":")[1])!;
+      owner.messages = [];
+      owner.readingRevision = body.revision ?? 0;
+      local.history.fail = body.fail ?? true;
+      if (body.continuation)
+        local.runtime.historyItems.get(owner.threadId!)!.push({
+          id: "cold-native-later",
+          role: "assistant",
+          text: "External continuation after reconnect",
+          at: 2,
+        });
+      local.runtime.emit(owner.id, {
+        type: "working",
+        turnId: "fixture-reset",
+      });
+      return Response.json({ ok: true });
+    }
     if (url.pathname === "/fixture/reset" && request.method === "POST") {
       offline = false;
       for (const unit of [local]) {
@@ -378,6 +430,8 @@ const server = Bun.serve({
       const target = local;
       if (body.delay !== undefined) target.history.delay = body.delay;
       if (body.fail !== undefined) target.history.fail = body.fail;
+      if (body.skipDetailSync !== undefined)
+        target.history.skipDetailSync = body.skipDetailSync;
       return Response.json(target.history);
     }
     if (url.pathname === "/fixture/history-live" && request.method === "POST") {

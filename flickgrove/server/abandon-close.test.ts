@@ -88,6 +88,8 @@ for (const guard of [
         agents.push({
           ...structuredClone(a),
           id: "child",
+          token: "fixture-child",
+          threadId: "fixture-child-thread",
           role: "worker",
           ownerId: a.id,
           deliveries: [],
