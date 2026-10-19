@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -40,7 +41,9 @@ function readJson(path, fallback) {
   }
 }
 function save() {
-  writeFileSync(statePath, JSON.stringify(database));
+  const temporary = `${statePath}.${process.pid}.tmp`;
+  writeFileSync(temporary, JSON.stringify(database));
+  renameSync(temporary, statePath);
 }
 function send(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);

@@ -26,6 +26,14 @@ export interface RuntimeItem {
 }
 export type RuntimeEvent = { threadId?: string } & (
   | { type: "working"; turnId: string }
+  | {
+      type: "submission";
+      operationId: string;
+      status: "queued" | "placed" | "done" | "unanswered";
+      turnId: string;
+      itemId?: string;
+      reason?: string;
+    }
   | { type: "item"; turnId: string; item: RuntimeItem }
   | {
       type: "completed";
@@ -80,6 +88,7 @@ export interface RuntimeHandle {
     turnId?: string,
     images?: string[],
     clientId?: string,
+    envelope?: string,
   ): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   title(input: string): Promise<string | undefined>;

@@ -1,18 +1,19 @@
 import { test, expect } from "bun:test";
-import {
-  mkdtemp,
-  mkdir,
-  writeFile,
-  readFile,
-  rename,
-  rm,
-} from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { openPiSession } from "./pi-session";
 import { PiRuntime } from "./pi";
 import sharp from "sharp";
-import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import { createNodePhotonImages } from "@earendil-works/pi-durable/images/node";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { openPiStorage } from "./pi-storage";
+import { piSessionPath } from "./pi-session";
+import {
+  createSession,
+  ROOT_CONVERSATION_ID,
+} from "@earendil-works/pi-durable";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { RuntimeAgent, RuntimeEvent } from "./runtime";
 test("official codemode executes official MCP direct/deferred/codemode tools and Grove identity bridge", async () => {
   if (!process.env.GROVE_PI_NATIVE_CHILD) {
@@ -25,7 +26,7 @@ test("official codemode executes official MCP direct/deferred/codemode tools and
           HOME: home,
           CODEX_HOME: join(home, "codex"),
           PI_CODING_AGENT_DIR: join(home, "agent"),
-          PI_OFFLINE: "1",
+
           GROVE_PI_NATIVE_CHILD: "1",
         },
         stdout: "pipe",
@@ -53,11 +54,16 @@ test("official codemode executes official MCP direct/deferred/codemode tools and
   await mkdir(cwd);
   await writeFile(log, "");
   await writeFile(join(cwd, "AGENTS.md"), "Owned project instruction marker");
+  await mkdir(join(cwd, ".pi/skills/owned-fixture"), { recursive: true });
+  await writeFile(
+    join(cwd, ".pi/skills/owned-fixture/SKILL.md"),
+    "---\nname: owned-fixture\ndescription: Owned skill description marker\n---\nOwned skill body marker\n",
+  );
   const plans = [
     {
       name: "codemode",
       args: {
-        code: 'text(await tools.bash({command:"printf fixture > tool-proof.txt"})); text(await tools.read({path:"tool-proof.txt"})); text(await tools.mcp__direct__echo({value:"direct"})); text(await tools.mcp__code__echo({value:"code"})); text((await searchTools("echo", {namespace:"deferred"})).length); text(await tools.worker_report({message:"fixture report"})); if (ALL_TOOLS.some(t => t.name === "worker_start")) throw new Error("Worker acquired Orc tools");',
+        code: 'const skill=await tools.read({path:".pi/skills/owned-fixture/SKILL.md"}); if(!JSON.stringify(skill).includes("Owned skill body marker"))throw new Error("Skill contents unavailable"); text(await tools.bash({command:"printf fixture > tool-proof.txt"})); text(await tools.read({path:"tool-proof.txt"})); text(await tools.mcp__direct__echo({value:"direct"})); text(await tools.mcp__code__echo({value:"code"})); text((await searchTools("echo", {namespace:"deferred"})).length); text(await tools.worker_report({message:"fixture report"})); text(await tools.list_mcp_resources({server:"direct"})); text(await tools.read_mcp_resource({server:"direct",uri:"owned://fixture"})); if (ALL_TOOLS.some(t => t.name.includes("mcp__hidden__"))) throw new Error("Hidden MCP tool exposed"); if (ALL_TOOLS.some(t => t.name === "worker_start")) throw new Error("Worker acquired Orc tools");',
       },
     },
     { name: "tool_search", args: { query: "echo", limit: 10 } },
@@ -90,8 +96,18 @@ test("official codemode executes official MCP direct/deferred/codemode tools and
       requestedModels.push(body.model);
       const plan = plans[requests++];
       if (requests === 1) {
+        const initial = (
+          body as unknown as { tools: { function: { name: string } }[] }
+        ).tools.map((t) => t.function.name);
+        expect(initial).toContain("mcp__direct__echo");
+        expect(initial).not.toContain("mcp__code__echo");
+        expect(initial).not.toContain("mcp__deferred__echo");
+        expect(initial).not.toContain("mcp__hidden__echo");
         expect(JSON.stringify(body.messages)).toContain(
           "Owned project instruction marker",
+        );
+        expect(JSON.stringify(body.messages)).toContain(
+          "Owned skill description marker",
         );
         startedFirst();
         await firstGate;
@@ -159,7 +175,7 @@ test("official codemode executes official MCP direct/deferred/codemode tools and
     join(agentDir, "mcp.json"),
     JSON.stringify({
       mcpServers: Object.fromEntries(
-        ["direct", "deferred", "code"].map((name) => [
+        ["direct", "deferred", "code", "hidden"].map((name) => [
           name,
           {
             command: process.execPath,
@@ -199,7 +215,7 @@ test("official codemode executes official MCP direct/deferred/codemode tools and
     },
     {
       agentDir,
-      sessionDir: SessionManager.create(cwd).getSessionDir(),
+      sessionDir: join(agentDir, "grove-durable"),
       selection: { provider: "fixture", model: "fake", effort: "off" },
       tool: async (token, name, args) => {
         reports.push({ token, name, args });
@@ -242,7 +258,7 @@ test("official codemode executes official MCP direct/deferred/codemode tools and
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    expect(lines.filter((x) => x.event === "start")).toHaveLength(3);
+    expect(lines.filter((x) => x.event === "start")).toHaveLength(4);
     expect(lines.filter((x) => x.event === "echo")).toHaveLength(3);
     expect(
       events.some((e) => e.type === "item" && e.item.clientId === "operation"),
@@ -252,7 +268,7 @@ test("official codemode executes official MCP direct/deferred/codemode tools and
       name: "codemode",
       args: { code: 'text(await tools.mcp__direct__echo({value:"hold"}));' },
     };
-    await handle.send(
+    const cancelRun = await handle.send(
       "Cancel a native MCP call",
       undefined,
       [png],
@@ -264,6 +280,76 @@ test("official codemode executes official MCP direct/deferred/codemode tools and
     }
     expect(await readFile(log, "utf8")).toContain('"event":"hold"');
     expect(requestedModels.at(-1)).toBe("next");
+    await handle.interrupt(cancelRun);
+    const stoppedPids = (await readFile(log, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((x) => x.event === "start");
+    for (const child of stoppedPids)
+      expect(() => process.kill(child.pid, 0)).toThrow();
+    const originalImage = await readFile(png);
+    const imageConfig = JSON.parse(
+      await readFile(join(agentDir, "models.json"), "utf8"),
+    );
+    imageConfig.providers.fixture.models[0].inputLimits = {
+      images: { resize: { maxWidth: 1, maxHeight: 1, maxBytes: 1024 * 1024 } },
+    };
+    await writeFile(join(agentDir, "models.json"), JSON.stringify(imageConfig));
+    const beforeDuplicate = requests;
+    await handle.send(
+      "Cancel a native MCP call",
+      undefined,
+      [png],
+      "image-operation",
+    );
+    expect(requests).toBe(beforeDuplicate);
+    const completions = events.filter((e) => e.type === "completed").length;
+    await handle.send(
+      "Original byte identity",
+      undefined,
+      [png],
+      "original-byte-identity",
+    );
+    for (
+      let i = 0;
+      i < 1000 &&
+      events.filter((e) => e.type === "completed").length === completions;
+      i++
+    )
+      await Bun.sleep(5);
+    expect(events.filter((e) => e.type === "completed").length).toBeGreaterThan(
+      completions,
+    );
+    // Same pixels, different original encoding: official resizing produces the
+    // same image, but the immutable original operation must still reject it.
+    const differentOriginal = await sharp(originalImage)
+      .png({ compressionLevel: 0 })
+      .toBuffer();
+    expect(differentOriginal.equals(originalImage)).toBe(false);
+    const processor = await createNodePhotonImages({ worker: false });
+    const limits = { maxWidth: 1, maxHeight: 1, maxBytes: 1024 * 1024 };
+    const preparedOriginal = await processor.prepare(
+      originalImage,
+      "image/png",
+      limits,
+    );
+    expect(preparedOriginal).toBeDefined();
+    expect(
+      (await processor.prepare(differentOriginal, "image/png", limits))?.data,
+    ).toBe(preparedOriginal!.data);
+    await writeFile(png, differentOriginal);
+    const beforeConflict = requests;
+    await expect(
+      handle.send(
+        "Original byte identity",
+        undefined,
+        [png],
+        "original-byte-identity",
+      ),
+    ).rejects.toThrow("different content");
+    expect(requests).toBe(beforeConflict);
+    await writeFile(png, originalImage);
   } finally {
     releaseFirst();
     const firstClose = handle.close(),
@@ -309,53 +395,51 @@ test("official codemode executes official MCP direct/deferred/codemode tools and
   expect(image?.size).toBeGreaterThan(0);
   expect(requests).toBe(calls);
   expect(await readFile(log, "utf8")).toBe(previousLog);
-  const long = SessionManager.create(cwd);
-  for (let i = 0; i < 251; i++)
-    long.appendMessage({
-      role: "user",
-      content: `owned page ${i}`,
-      timestamp: i,
-    });
-  const lastPage = await readonly.historyMessages(long.getSessionId());
+  const nativeStorage = await openPiStorage(
+    piSessionPath(join(agentDir, "grove-durable"), handle.threadId),
+  );
+  const nativeSession = createSession(nativeStorage);
+  try {
+    await nativeSession.commit(async (tx) => {
+      for (let i = 0; i < 251; i++)
+        await tx.appendEntry(ROOT_CONVERSATION_ID, {
+          kind: "grove.input",
+          data: { operation: `page-${i}` },
+          model: [{ role: "user", content: `owned page ${i}`, timestamp: i }],
+        });
+    }, BACKGROUND_CONTEXT);
+  } finally {
+    await nativeSession.close(BACKGROUND_CONTEXT);
+  }
+  const lastPage = await readonly.historyMessages(handle.threadId);
   const middlePage = await readonly.historyMessages(
-    long.getSessionId(),
+    handle.threadId,
     lastPage.nextCursor!,
   );
   const firstPage = await readonly.historyMessages(
-    long.getSessionId(),
+    handle.threadId,
     middlePage.nextCursor!,
   );
-  expect([
-    lastPage.messages.length,
-    middlePage.messages.length,
-    firstPage.messages.length,
-  ]).toEqual([100, 100, 51]);
-  expect(firstPage.nextCursor).toBeNull();
-  expect(firstPage.messages[0].text).toBe("owned page 0");
-  const nativePath = (await SessionManager.findById(
-    cwd,
-    handle.threadId,
-    SessionManager.create(cwd).getSessionDir(),
-  ))!;
-  const nativeContent = await readFile(nativePath, "utf8");
-  await writeFile(nativePath, "");
-  await expect(readonly.historyMessages(handle.threadId)).rejects.toThrow();
-  await expect(
-    openPiSession({ ...agent, threadId: handle.threadId }, () => {}, {
-      agentDir,
-      sessionDir: SessionManager.create(cwd).getSessionDir(),
-      sessionPath: nativePath,
-      selection: { provider: "fixture", model: "fake", effort: "off" },
-      tool: async () => {
-        throw Error("Missing session invoked tools");
-      },
-    }),
-  ).rejects.toThrow("original Pi session");
-  expect(await readFile(nativePath, "utf8")).toBe("");
-  await writeFile(nativePath, nativeContent);
-  await rename(nativePath, `${nativePath}.owned-backup`);
-  await expect(readonly.historyMessages(handle.threadId)).rejects.toThrow();
-  await rename(`${nativePath}.owned-backup`, nativePath);
+  expect(lastPage.messages).toHaveLength(100);
+  expect(middlePage.messages).toHaveLength(100);
+  expect(lastPage.messages.at(-1)?.text).toBe("owned page 250");
+  expect(middlePage.messages.at(-1)?.text).toBe("owned page 150");
+  expect(
+    firstPage.messages
+      .filter((message) => message.clientId?.startsWith("page-"))
+      .map((message) => message.text),
+  ).toHaveLength(51);
+  expect(
+    new Set(
+      [...lastPage.messages, ...middlePage.messages, ...firstPage.messages].map(
+        (message) => message.id,
+      ),
+    ).size,
+  ).toBe(
+    lastPage.messages.length +
+      middlePage.messages.length +
+      firstPage.messages.length,
+  );
   expect(requests).toBe(calls);
   expect(await readFile(log, "utf8")).toBe(previousLog);
   await readonly.close();
@@ -491,7 +575,7 @@ test("official codemode executes official MCP direct/deferred/codemode tools and
     },
     {
       agentDir,
-      sessionDir: SessionManager.create(cwd).getSessionDir(),
+      sessionDir: join(agentDir, "grove-durable"),
       selection: { provider: "fixture", model: "fake", effort: "off" },
       tool: async () => ({}),
     },

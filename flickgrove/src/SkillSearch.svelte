@@ -6,6 +6,7 @@
   import type { Skill } from './contracts';
   import * as m from './paraglide/messages';
   let { open = $bindable(false), skills, project, onselect, onclose }: {open?:boolean; skills:Skill[]; project:string; onselect:(s:Skill)=>void; onclose:()=>void} = $props();
+  const listId=$props.id();
   let query = $state(''); let selected = $state('');
   let input = $state<HTMLInputElement | null>(null); let panel = $state<HTMLDivElement | null>(null); let wasOpen = false;
   const choices = $derived(searchSkills(skills,query));
@@ -22,8 +23,8 @@
   <div class="completion skill-search" bind:this={panel}>
     <div class="skill-search-heading"><span>{m.skills_scope({project})}</span><Kbd>Esc</Kbd></div>
     <Command.Root shouldFilter={false} bind:value={selected} label={m.search_skills()}>
-      <Command.Input bind:ref={input} bind:value={query} aria-label={m.search_skills()} placeholder={m.search_skills()} onkeydown={e => { if(e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return; if(e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); open = false; } else if(e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); if(!e.shiftKey) choose(); } }} />
-      <Command.List aria-label={m.skills()}>
+      <Command.Input aria-controls={listId} bind:ref={input} bind:value={query} aria-label={m.search_skills()} placeholder={m.search_skills()} onkeydown={e => { if(e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return; if(e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); open = false; } else if(e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); if(!e.shiftKey) choose(); } }} />
+      <Command.List id={listId} aria-label={m.skills()}>
         {#each choices as skill (skill.name)}
           <Command.Item value={skill.name} onSelect={() => onselect(skill)}><div class="min-w-0 flex-1"><code>${skill.name}</code><p class="skill-summary truncate">{skill.shortDescription ?? skill.description}</p></div></Command.Item>
         {:else}<div class="skill-search-empty">{m.no_skills()}</div>{/each}

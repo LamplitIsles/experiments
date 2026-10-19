@@ -8,7 +8,7 @@ for (const mobile of [false, true]) {
     if (mobile) await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/");
     await newSession(page);
-    await page.getByRole("button", { name: "Alpha", exact: true }).click();
+    await page.getByRole("option", { name: "Alpha", exact: true }).click();
     await page
       .getByRole("button", { name: "Find history", exact: true })
       .click();
@@ -87,8 +87,8 @@ test("dense session list fits at least ten Orcs, with compact state and input in
   });
   await page.goto("http://127.0.0.1:14319/");
   const list = page.locator(".session-list");
-  // Dense fixture has 19 Orcs on NUC and one on the other device.
-  await expect(list.locator(".session-item")).toHaveCount(19);
+  // The current single Peer owns two initial Orcs plus eighteen dense rows.
+  await expect(list.locator(".session-item")).toHaveCount(20);
   const counts = await list.evaluate((node) => {
     const bounds = node.getBoundingClientRect();
     return [...node.querySelectorAll(".session-item")].filter((item) => {
@@ -123,7 +123,7 @@ test("restored Grove history includes external turns once and retains folded Wor
 }) => {
   await page.goto("/");
   await newSession(page);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await page.getByRole("option", { name: "Alpha", exact: true }).click();
   await createSession(page);
   const input = page.getByRole("textbox", { name: "Message Orc", exact: true });
   for (const [command, result] of [
@@ -140,15 +140,17 @@ test("restored Grove history includes external turns once and retains folded Wor
       page.locator('.session-open[aria-current="true"] [aria-label="Idle"]'),
     ).toBeVisible();
   }
-  const snapshot = await (await page.request.get("/fixture/snapshot")).json();
-  const agent = snapshot.agents.find((a: { role: string }) => a.role === "orc");
+  const activeId = await page
+    .locator('.session-open[aria-current="true"]')
+    .getAttribute("data-agent-id");
+  expect(activeId).toBeTruthy();
   await page.request.post("/fixture/history-continuation", {
-    data: { id: agent.id },
+    data: { id: activeId },
   });
   await page.keyboard.press("Alt+x");
   await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
   await newSession(page);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await page.getByRole("option", { name: "Alpha", exact: true }).click();
   await page.getByRole("button", { name: "Find history", exact: true }).click();
   await page
     .getByRole("textbox", { name: "Search title or first message…" })
@@ -217,7 +219,7 @@ test("restored Grove history includes external turns once and retains folded Wor
 });
 
 for (const mobile of [false, true]) {
-  test(`new session width stays fixed across history and host changes (${mobile ? "mobile" : "desktop"})`, async ({
+  test(`new session width stays fixed across history and project choices (${mobile ? "mobile" : "desktop"})`, async ({
     page,
   }) => {
     if (mobile) await page.setViewportSize({ width: 390, height: 844 });
@@ -246,8 +248,10 @@ for (const mobile of [false, true]) {
       await dialog.evaluate((node) => node.getBoundingClientRect().width),
     ).toBe(width);
     await page.goBack();
-    await expect(page.locator(".host-choices")).toBeVisible();
-    await page.locator(".host-choices button").last().click();
+    await expect(
+      page.getByRole("combobox", { name: "Search projects…", exact: true }),
+    ).toBeFocused();
+    await page.getByRole("option").last().click();
     expect(
       await dialog.evaluate((node) => node.getBoundingClientRect().width),
     ).toBe(width);

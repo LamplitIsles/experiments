@@ -8,7 +8,7 @@ for (const key of Object.keys(process.env))
 process.env.HOME = root;
 process.env.CODEX_HOME = join(root, "codex");
 process.env.PI_CODING_AGENT_DIR = join(root, "agent");
-process.env.PI_OFFLINE = "1";
+
 const [
   { Workspace },
   { FakeRuntime },
@@ -29,8 +29,10 @@ const [
 const cwd = join(root, "repo"),
   agentDir = process.env.PI_CODING_AGENT_DIR;
 await mkdir(cwd);
+process.chdir(cwd);
 await mkdir(agentDir);
-let modelCalls = 0;
+let modelCalls = 0,
+  holdModel = false;
 const model = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,
@@ -39,6 +41,19 @@ const model = Bun.serve({
     modelCalls++;
     const chunk = (delta: object, finish_reason: string | null) =>
       `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
+    if (holdModel)
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                chunk({ role: "assistant", content: "" }, null),
+              ),
+            );
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
     return new Response(
       chunk({ role: "assistant", content: "Owned Pi fixture reply" }, null) +
         chunk({}, "stop") +
@@ -86,12 +101,14 @@ const runtime = new MixedRuntime(
     tool: (token, name, args) => app.tool(token, name, args),
   }),
 );
+let expandedChoices = false;
+let registeredProjects = [
+  { alias: "fixture", name: "Mixed fixture", path: cwd },
+];
 const workspaceOptions = {
   directory: join(root, "state"),
   runtime,
-  projects: async () => [
-    { alias: "fixture", name: "Mixed fixture", path: cwd },
-  ],
+  projects: async () => registeredProjects,
   branches: { read: async () => null },
 };
 app = new Workspace(workspaceOptions);
@@ -113,8 +130,61 @@ const server = Bun.serve({
   port: 0,
   websocket: groveWebsocket,
   async fetch(req, server) {
+    if (
+      new URL(req.url).pathname === "/fixture/choices" &&
+      req.method === "POST"
+    ) {
+      const { enabled } = (await req.json()) as { enabled: boolean };
+      expandedChoices = enabled;
+      const settings = config();
+      if (enabled) {
+        const base = settings.providers.fixture.models[0]!;
+        settings.providers.fixture.models.push(
+          ...Array.from({ length: 40 }, (_, index) => ({
+            ...base,
+            id: `long-model-${String(index).padStart(2, "0")}`,
+            name: `Long model ${String(index).padStart(2, "0")} — a very detailed provider catalogue label for viewport and search verification`,
+          })),
+        );
+        registeredProjects = [
+          { alias: "fixture", name: "Mixed fixture", path: cwd },
+          ...Array.from({ length: 35 }, (_, index) => ({
+            alias: `project-${String(index).padStart(2, "0")}`,
+            name: `Orbit project ${String(index).padStart(2, "0")} with a long descriptive name`,
+            path: join(
+              cwd,
+              "nested-project-directory-with-a-long-path",
+              `project-${index}`,
+            ),
+          })),
+        ];
+        await Promise.all(
+          registeredProjects.map((project) =>
+            mkdir(project.path, { recursive: true }),
+          ),
+        );
+      } else
+        registeredProjects = [
+          { alias: "fixture", name: "Mixed fixture", path: cwd },
+        ];
+      await writeFile(join(agentDir, "models.json"), JSON.stringify(settings));
+      return Response.json({ ok: true, expandedChoices });
+    }
+    if (
+      new URL(req.url).pathname === "/fixture/hold" &&
+      req.method === "POST"
+    ) {
+      holdModel = ((await req.json()) as { enabled: boolean }).enabled;
+      return Response.json({ ok: true });
+    }
     if (new URL(req.url).pathname === "/fixture/info")
-      return Response.json({ modelCalls, snapshot: service.snapshot() });
+      return Response.json({
+        modelCalls,
+        snapshot: service.snapshot(),
+        detail: new URL(req.url).searchParams.has("id")
+          ? await service.detail(new URL(req.url).searchParams.get("id")!)
+          : undefined,
+      });
     if (
       new URL(req.url).pathname === "/fixture/auth" &&
       req.method === "POST"

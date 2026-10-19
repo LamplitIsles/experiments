@@ -471,6 +471,37 @@ test("lookup retains an uncertain answer without replaying or inventing native a
   await expect(app.closeTree(a.id)).rejects.toThrow("unconfirmed");
 });
 
+test("first native acceptance clears a stale sending failure without replay", async () => {
+  const { app, runtime } = fixture();
+  const agent = await app.createOrc("alpha");
+  runtime.sendOverride = async () => {
+    throw new Error("Connection lost before receipt");
+  };
+  await app.send(agent.id, "Original input", "original-input");
+  expect(
+    app.detail(agent.id).deliveries.find((d) => d.id === "original-input"),
+  ).toMatchObject({
+    status: "uncertain",
+    error: "Connection lost before receipt",
+  });
+  const inputs = runtime.inputs.length;
+  runtime.emit(agent.id, {
+    type: "item",
+    turnId: "accepted-run",
+    item: {
+      id: "native-original",
+      type: "userMessage",
+      clientId: "original-input",
+      text: "Original input",
+    },
+  });
+  expect(
+    app.detail(agent.id).deliveries.find((d) => d.id === "original-input"),
+  ).toMatchObject({ status: "sent", error: undefined });
+  expect(app.lookup(agent.id, "original-input")?.state).toBe("accepted");
+  expect(runtime.inputs.length).toBe(inputs);
+});
+
 test("each tree captures independent Orc and Worker settings while other trees cannot change its tier", async () => {
   const { app, runtime } = fixture();
   const settings = {
@@ -494,13 +525,13 @@ test("each tree captures independent Orc and Worker settings while other trees c
   expect(app.detail(worker.id).serviceTier).toBe("priority");
   const third = await app.createOrc("alpha");
   expect(app.detail(third.id).serviceTier).toBe("default");
-  await expect(
-    app.createOrc("alpha", {
-      ...settings,
-      fast: true,
-      orc: { model: "luna", effort: "low" },
-    }),
-  ).rejects.toThrow("Fast is not available");
+  const unsupported = await app.createOrc("alpha", {
+    ...settings,
+    fast: true,
+    orc: { model: "luna", effort: "low" },
+  });
+  expect(app.detail(unsupported.id).serviceTier).toBe("default");
+  expect(app.detail(unsupported.id).treeFast).toBe(true);
 });
 
 test("a rejected steer preserves the active turn and prevents premature closing", async () => {

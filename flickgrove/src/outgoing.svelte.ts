@@ -321,7 +321,11 @@ export function withOutgoing(detail: Detail): Detail {
         .filter((d) => !local.some((o) => o.id === d.id))
         .map((d) =>
           receiptAlreadyAccepted(detail.id, d.id)
-            ? { ...d, status: "sent" as const, error: undefined }
+            ? {
+                ...d,
+                status: "sent" as const,
+                error: d.status === "sent" ? d.error : undefined,
+              }
             : d,
         ),
       ...local.map((o) => ({

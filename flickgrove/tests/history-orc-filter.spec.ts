@@ -44,7 +44,7 @@ for (const width of [1440, 390]) {
     });
     await page.goto("/");
     await newSession(page);
-    await page.getByRole("button", { name: "Alpha", exact: true }).click();
+    await page.getByRole("option", { name: "Alpha", exact: true }).click();
     await page
       .getByRole("button", { name: "Find history", exact: true })
       .click();
@@ -134,7 +134,7 @@ test("empty filtered pages retain scanning; mode and query changes reject stale 
   });
   await page.goto("/");
   await newSession(page);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await page.getByRole("option", { name: "Alpha", exact: true }).click();
   await page.getByRole("button", { name: "Find history", exact: true }).click();
   const toggle = page.getByRole("switch", { name: "Only Orc" });
   const titles = page.locator(".history-result strong");
@@ -194,7 +194,7 @@ test("a late query response cannot replace the current keyword results", async (
   });
   await page.goto("/");
   await newSession(page);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await page.getByRole("option", { name: "Alpha", exact: true }).click();
   await page.getByRole("button", { name: "Find history", exact: true }).click();
   await expect
     .poll(

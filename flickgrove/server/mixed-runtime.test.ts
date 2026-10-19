@@ -27,7 +27,7 @@ test("real Pi and Codex adapter form both mixed trees, with questions, reports, 
           HOME: home,
           CODEX_HOME: join(home, "codex"),
           PI_CODING_AGENT_DIR: join(home, "agent"),
-          PI_OFFLINE: "1",
+
           GROVE_MIXED_CHILD: "1",
         },
         stdout: "pipe",
@@ -38,6 +38,8 @@ test("real Pi and Codex adapter form both mixed trees, with questions, reports, 
         new Response(child.stderr).text(),
         child.exited,
       ]);
+      for (const line of out.split("\n"))
+        if (line.startsWith("owned cancellation")) console.log(line);
       expect({ code, output: code ? out + err : "" }).toEqual({
         code: 0,
         output: "",
@@ -53,6 +55,7 @@ test("real Pi and Codex adapter form both mixed trees, with questions, reports, 
     directory = join(home, "workspace");
   await mkdir(agentDir);
   await mkdir(cwd);
+  process.chdir(cwd);
   const plans: ({ name: string; args: unknown } | undefined)[] = [];
   let requests = 0;
   let blocked = false,
@@ -493,7 +496,7 @@ test("real Pi and Codex adapter form both mixed trees, with questions, reports, 
       app
         .detail(piOwner.id)
         .deliveries.some(
-          (d) => d.id === "queued-unknown" && d.status === "sending",
+          (d) => d.id === "queued-unknown" && d.status === "sent",
         ),
     );
     await app.stop(piOwner.id, app.detail(piOwner.id).turnId!);
@@ -501,15 +504,52 @@ test("real Pi and Codex adapter form both mixed trees, with questions, reports, 
     expect(
       app.detail(piOwner.id).deliveries.find((d) => d.id === "queued-unknown")
         ?.status,
-    ).toBe("uncertain");
-    expect(app.lookup(piOwner.id, "queued-unknown")).toBeNull();
+    ).toBe("sent");
+    await until(
+      () =>
+        app
+          .detail(piOwner.id)
+          .deliveries.find((d) => d.id === "queued-unknown")
+          ?.error?.includes("cancelled") ?? false,
+    );
+    expect(app.lookup(piOwner.id, "queued-unknown")?.state).toBe("accepted");
     blocked = false;
     releaseBlocked();
     const calls = requests;
+    const stoppedIds = ["stop-start", "queued-unknown"];
+    const cancellation = () =>
+      stoppedIds.map((id) => {
+        const delivery = app
+          .detail(piOwner.id)
+          .deliveries.find((d) => d.id === id)!;
+        return { id, status: delivery.status, error: delivery.error };
+      });
+    const cancelled = stoppedIds.map((id) => ({
+      id,
+      status: "sent" as const,
+      error: "Accepted input was cancelled by Stop.",
+    }));
+    await until(() =>
+      cancellation().every(
+        (d) => d.error === "Accepted input was cancelled by Stop.",
+      ),
+    );
+    console.log(
+      "owned cancellation before reread",
+      JSON.stringify(cancellation()),
+    );
+    expect(cancellation()).toEqual(cancelled);
     await app.synchronizeDetail(piOwner.id);
+    console.log(
+      "owned cancellation after reread",
+      JSON.stringify(cancellation()),
+    );
+    expect(cancellation()).toEqual(cancelled);
+    await app.synchronizeDetail(piOwner.id);
+    expect(cancellation()).toEqual(cancelled);
     await app.reconcileSettings(piOwner.id);
     expect(requests).toBe(calls);
-    await app.closeTree(piOwner.id, ["queued-unknown"]);
+    await app.closeTree(piOwner.id);
     await app.closeTree(owner.id);
     app.dispose();
     await runtime.close();

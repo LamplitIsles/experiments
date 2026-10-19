@@ -21,7 +21,7 @@ test("a new unsent native session opens without unsupported history errors and r
 }) => {
   await page.goto(origin);
   await newSession(page);
-  await page.getByRole("button", { name: "Fixture", exact: true }).click();
+  await page.getByRole("option", { name: "Fixture", exact: true }).click();
   await createSession(page);
   await expect(page.locator(".first-message")).toBeVisible();
   await expect(page.locator(".conversation-loading")).toHaveCount(0);

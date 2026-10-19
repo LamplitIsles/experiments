@@ -383,44 +383,54 @@ async function reset(mode = "working") {
   current = unit(
     "NUC",
     true,
-    [
-      agent("orc", "orc", "Streaming voice input", 0),
-      agent("reader-orc", "orc", "Reader performance", 1),
-      ...(workers
-        ? [agent("reader", "worker", "Reader implementation", 1, "reader-orc")]
-        : []),
-      ...(["host-selection", "device-questions"].includes(mode)
-        ? [agent("second", "orc", "NUC second session", 0)]
-        : []),
-      ...(mode === "dense"
-        ? Array.from({ length: 18 }, (_, i) =>
-            agent(`extra-${i}`, "orc", `Additional task ${i + 1}`, 0),
-          )
-        : []),
-      ...(workers
-        ? [
-            {
-              ...agent("voice", "worker", "Voice input", 0, "orc"),
-              ...(mode === "device-worker"
-                ? { questions: [fixtureQuestion("unanswered")] }
-                : {}),
-            },
-            agent(
-              "docs",
-              "worker",
-              ["dense", "branches"].includes(mode)
-                ? "Documentation for a very long Worker assignment covering mobile navigation and persistent conversation drafts across hosts"
-                : "Documentation",
-              1,
-              "orc",
-            ),
-          ]
-        : []),
-    ],
+    mode === "empty"
+      ? []
+      : [
+          agent("orc", "orc", "Streaming voice input", 0),
+          agent("reader-orc", "orc", "Reader performance", 1),
+          ...(workers
+            ? [
+                agent(
+                  "reader",
+                  "worker",
+                  "Reader implementation",
+                  1,
+                  "reader-orc",
+                ),
+              ]
+            : []),
+          ...(["host-selection", "device-questions"].includes(mode)
+            ? [agent("second", "orc", "NUC second session", 0)]
+            : []),
+          ...(mode === "dense"
+            ? Array.from({ length: 18 }, (_, i) =>
+                agent(`extra-${i}`, "orc", `Additional task ${i + 1}`, 0),
+              )
+            : []),
+          ...(workers
+            ? [
+                {
+                  ...agent("voice", "worker", "Voice input", 0, "orc"),
+                  ...(mode === "device-worker"
+                    ? { questions: [fixtureQuestion("unanswered")] }
+                    : {}),
+                },
+                agent(
+                  "docs",
+                  "worker",
+                  ["dense", "branches"].includes(mode)
+                    ? "Documentation for a very long Worker assignment covering mobile navigation and persistent conversation drafts across hosts"
+                    : "Documentation",
+                  1,
+                  "orc",
+                ),
+              ]
+            : []),
+        ],
     () => "http://127.0.0.1:14319",
   );
   units.push(current);
-  if (!["idle", "no-workers", "host-selection"].includes(mode)) {
+  if (!["empty", "idle", "no-workers", "host-selection"].includes(mode)) {
     await current.app.send(
       "orc",
       "Add streaming voice input and coordinate both projects.",

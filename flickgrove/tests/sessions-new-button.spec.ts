@@ -16,7 +16,7 @@ for (const width of [1440, 390]) {
       exact: true,
     });
     const dialog = page.getByRole("dialog");
-    const search = dialog.getByRole("textbox", { name: "Search projects" });
+    const search = dialog.getByRole("combobox", { name: "Search projects" });
     await expect(plus).toBeVisible();
     await expect(plus).toHaveText("");
     expect(await plus.getAttribute("title")).toBeNull();
@@ -70,10 +70,8 @@ for (const width of [1440, 390]) {
       await page.locator(`[data-agent-id="${selected}"]`).click();
     await expect(composer).toHaveValue("Unsent draft survives creation");
     // Existing empty Peer and a blocked socket are entirely fixture-owned.
-    const { emptyUrl } = await (
-      await request.get(origin + "/fixture/info")
-    ).json();
-    await page.goto(emptyUrl);
+    await request.post(origin + "/fixture/reset", { data: { mode: "empty" } });
+    await page.goto(origin);
     await expect(page.locator(".session-open")).toHaveCount(0);
     for (const via of ["plus", "n"] as const) {
       if (via === "plus") await plus.click();

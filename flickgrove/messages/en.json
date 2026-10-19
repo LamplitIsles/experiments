@@ -34,7 +34,7 @@
   "assigned_by": "Assigned by {title}",
   "choose_project": "Choose a registered project for your Orc.",
   "search_projects": "Search projects…",
-  "project_keyboard": "↑ ↓ Select · Enter Create · Esc Cancel",
+  "project_keyboard": "↑ ↓ Browse · Enter Choose project · Esc Back",
   "create_session": "Create session",
   "no_projects": "No matching registered projects",
   "project_loading": "Loading your projects…",

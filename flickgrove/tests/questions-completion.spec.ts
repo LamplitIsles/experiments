@@ -71,7 +71,10 @@ test("mobile New/Back and widening preserve questions and foreground hierarchy",
   await page.keyboard.press("n");
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
-  const field = dialog.getByRole("textbox").first();
+  const field = dialog.getByRole("combobox", {
+    name: "Search projects…",
+    exact: true,
+  });
   await field.fill("New draft");
   await change(request, {
     question: true,

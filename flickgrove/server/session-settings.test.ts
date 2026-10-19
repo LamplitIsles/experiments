@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,11 +14,11 @@ import { invoke } from "./chord-methods";
 test("native confirmed per-session settings serialize with start/steer, persist and reconcile; rejection/unknown never publish or replay", async () => {
   const directory = await mkdtemp(join(tmpdir(), "grove-settings-"));
   const requestsPath = join(directory, ".fake-app-server-requests.jsonl");
-  const control = (value: object) =>
-    writeFile(
-      join(directory, ".fake-app-server-control.json"),
-      JSON.stringify(value),
-    );
+  const control = async (value: object) => {
+    const path = join(directory, ".fake-app-server-control.json");
+    await writeFile(`${path}.tmp`, JSON.stringify(value));
+    await rename(`${path}.tmp`, path);
+  };
   const requests = async () =>
     (await readFile(requestsPath, "utf8"))
       .trim()
@@ -31,7 +31,10 @@ test("native confirmed per-session settings serialize with start/steer, persist 
       new URL("../tests/fake-codex.mjs", import.meta.url),
     ),
     env: {
-      ...process.env,
+      PATH: process.env.PATH,
+      LD_LIBRARY_PATH: process.env.LD_LIBRARY_PATH,
+      HOME: join(directory, "user-home"),
+      PI_CODING_AGENT_DIR: join(directory, "pi-agent"),
       CODEX_HOME: join(directory, "codex-home"),
       FAKE_SERVER_ROOT: directory,
       FAKE_SERVER_PROCESS_LOG: join(directory, "processes"),
@@ -145,8 +148,9 @@ test("native confirmed per-session settings serialize with start/steer, persist 
     expect(
       (await requests()).filter((r) => r.method === "thread/settings/update"),
     ).toHaveLength(count);
-    await control({});
+    // Keep the turn held until the observed Stop; releasing it first races completion.
     await app.stop(a.id, turn);
+    await control({});
     await Bun.sleep(50);
     await app.updateTreeFast(a.id, true);
     await app.send(a.id, "next", "next");

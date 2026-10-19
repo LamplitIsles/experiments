@@ -1,3 +1,4 @@
+import { chooseOption } from "./choice-interactions";
 import { expect, test, type Page } from "@playwright/test";
 const origin = "http://127.0.0.1:14319";
 const info = async (page: Page) =>
@@ -74,9 +75,11 @@ for (const width of [1440, 390])
     await page.keyboard.press("Alt+m");
     const panel = page.getByRole("dialog", { name: "Session settings" });
     await expect(panel).toBeVisible();
-    await panel
-      .getByRole("combobox", { name: "Reasoning effort" })
-      .selectOption("high");
+    await chooseOption(
+      page,
+      panel.getByRole("button", { name: "Reasoning effort" }),
+      "high",
+    );
     await panel.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(panel).toBeHidden();
     expect(
@@ -93,15 +96,19 @@ for (const width of [1440, 390])
     await page
       .getByRole("button", { name: "Session settings", exact: true })
       .click();
-    await panel
-      .getByRole("combobox", { name: "Reasoning effort" })
-      .selectOption("high");
-    await panel
-      .getByRole("combobox", { name: "Model", exact: true })
-      .selectOption("gpt-6-luna");
+    await chooseOption(
+      page,
+      panel.getByRole("button", { name: "Reasoning effort" }),
+      "high",
+    );
+    await chooseOption(
+      page,
+      panel.getByRole("combobox", { name: "Model", exact: true }),
+      "gpt-6-luna",
+    );
     await expect(
-      panel.getByRole("combobox", { name: "Reasoning effort" }),
-    ).toHaveValue("low");
+      panel.getByRole("button", { name: "Reasoning effort" }),
+    ).toContainText("low");
     await expect(panel.getByRole("switch", { name: "Fast" })).toHaveCount(0); // remote catalogue differs from page Peer
     await panel.getByRole("button", { name: "Save changes" }).click();
     await expect(panel).toBeHidden();
@@ -130,9 +137,11 @@ for (const width of [1440, 390])
     await page
       .getByRole("button", { name: "Session settings", exact: true })
       .click();
-    await panel
-      .getByRole("combobox", { name: "Model", exact: true })
-      .selectOption("gpt-6.1-sol");
+    await chooseOption(
+      page,
+      panel.getByRole("combobox", { name: "Model", exact: true }),
+      "gpt-6.1-sol",
+    );
     await expect(panel.getByRole("switch", { name: "Fast" })).toHaveCount(0);
     await page.waitForTimeout(150);
     await page.screenshot({
@@ -217,9 +226,11 @@ test("model failure Cancel clears only model error; OptF toggles normally and tr
   await change(page, { settingsFailure: true });
   await page.keyboard.press("Alt+m");
   const panel = page.getByRole("dialog", { name: "Session settings" });
-  await panel
-    .getByRole("combobox", { name: "Reasoning effort" })
-    .selectOption("high");
+  await chooseOption(
+    page,
+    panel.getByRole("button", { name: "Reasoning effort" }),
+    "high",
+  );
   await panel.getByRole("button", { name: "Save changes" }).click();
   await expect(panel.getByRole("alert")).toContainText(
     "settings outcome unknown",
@@ -369,12 +380,14 @@ test("390 long model, unavailable current choice, retained catalogue on failure 
   const panel = page.getByRole("dialog", { name: "Session settings" });
   const long =
     "fixture-model-with-an-extremely-long-name-for-mobile-overflow-verification";
-  await panel
-    .getByRole("combobox", { name: "Model", exact: true })
-    .selectOption(long);
+  await chooseOption(
+    page,
+    panel.getByRole("combobox", { name: "Model", exact: true }),
+    long,
+  );
   await expect(
-    panel.getByRole("combobox", { name: "Reasoning effort" }),
-  ).toHaveValue("medium");
+    panel.getByRole("button", { name: "Reasoning effort" }),
+  ).toContainText("medium");
   await expect(panel.getByRole("switch", { name: "Fast" })).toHaveCount(0);
   await page.waitForTimeout(150);
   await page.screenshot({
@@ -414,7 +427,9 @@ test("390 long model, unavailable current choice, retained catalogue on failure 
   await expect(panel.getByRole("alert")).toContainText("model outage");
   await expect(
     panel.getByRole("combobox", { name: "Model", exact: true }),
-  ).toHaveValue(long);
+  ).toContainText(
+    "Fixture model with an extremely long name for mobile overflow verification",
+  );
   await page.waitForTimeout(150);
   await page.screenshot({
     path: "../.scratch/flickgrove-first-detail-tree-fast/390-catalogue-failure.png",

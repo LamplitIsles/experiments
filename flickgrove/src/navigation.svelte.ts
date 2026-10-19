@@ -1,5 +1,6 @@
 export type Surface =
   | "abandon-close"
+  | "choice"
   | "new"
   | "history"
   | "history-preview"
@@ -128,8 +129,11 @@ export function setSurface(name: Surface, open: boolean) {
   const next = route();
   const index = next.surfaces.indexOf(name);
   if (open && index < 0) {
+    const replaceChoice =
+      name !== "choice" && next.surfaces.at(-1) === "choice";
+    if (replaceChoice) next.surfaces.pop();
     next.surfaces.push(name);
-    write(next);
+    write(next, replaceChoice);
   } else if (!open && index >= 0) {
     if (index === next.surfaces.length - 1) void back();
   }

@@ -1,3 +1,4 @@
+import { chooseOption } from "./choice-interactions";
 import { expect, test } from "@playwright/test";
 import { newSession, openSettings, createSession } from "./browser-actions";
 
@@ -6,7 +7,7 @@ test("Worker reports stay in the timeline as one folded incoming card, including
 }) => {
   await page.goto("/");
   await newSession(page);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await page.getByRole("option", { name: "Alpha", exact: true }).click();
   await createSession(page);
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Build a reader");
@@ -72,7 +73,7 @@ test("create, delegate, read a Worker, insert a skill and close an idle tree", a
   await page.goto("/");
   await expect(page.getByText("FlickGrove", { exact: true })).toBeVisible();
   await newSession(page);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await page.getByRole("option", { name: "Alpha", exact: true }).click();
   await createSession(page);
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Build a reader");
@@ -99,8 +100,14 @@ test("create, delegate, read a Worker, insert a skill and close an idle tree", a
   await expect(page.getByRole("option", { name: /to-orc-impl/ })).toBeVisible();
   await page.getByRole("combobox", { name: "Search skills…" }).press("Tab");
   await expect(input).toHaveValue("$to-orc-impl ");
+  const closedId = await page
+    .locator('.session-open[aria-current="true"]')
+    .getAttribute("data-agent-id");
   await page.keyboard.press("Alt+x");
-  await expect(page.getByText("A place for your next task.")).toBeVisible();
+  await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
+  await expect(
+    page.locator(`.session-open[data-agent-id="${closedId}"]`),
+  ).toHaveCount(0);
 });
 
 test("all pending questions preserve drafts and use one explicit batch submission", async ({
@@ -108,7 +115,7 @@ test("all pending questions preserve drafts and use one explicit batch submissio
 }) => {
   await page.goto("/");
   await newSession(page);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await page.getByRole("option", { name: "Alpha", exact: true }).click();
   await createSession(page);
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Ask me questions");
@@ -155,23 +162,25 @@ test("settings affect new sessions, Markdown stays safe and offline reload resto
   ).toHaveCount(1);
   const orc = page.locator(".role-settings").first();
   await page.getByRole("switch", { name: "Fast", exact: true }).check();
-  await orc
-    .getByRole("combobox", { name: "Model", exact: true })
-    .selectOption("luna");
+  await chooseOption(
+    page,
+    orc.getByRole("combobox", { name: "Orc model", exact: true }),
+    "luna",
+  );
   await expect(
-    orc.getByRole("combobox", { name: "Reasoning effort", exact: true }),
-  ).toHaveValue("low");
+    orc.getByRole("button", { name: "Orc reasoning effort", exact: true }),
+  ).toContainText("low");
   await expect(
     page.getByRole("switch", { name: "Fast", exact: true }),
-  ).not.toBeChecked();
+  ).toBeChecked();
   await expect(
     page.getByRole("switch", { name: "Fast", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await page.getByRole("button", { name: "Save changes" }).click();
   await newSession(page);
-  await page.getByRole("button", { name: "Beta", exact: true }).click();
+  await page.getByRole("option", { name: "Beta", exact: true }).click();
   await createSession(page);
-  await expect(page.locator(".detail-model")).toHaveText("luna / low");
+  await expect(page.locator(".detail-model")).toHaveText("Codex · luna / low");
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Show Markdown");
   await input.press("Enter");
@@ -230,21 +239,26 @@ test("N focuses creation, I focuses Composer, and list navigation survives detai
   ).toBeEnabled();
   await page.locator("body").click({ position: { x: 100, y: 70 } });
   await page.keyboard.press("n");
-  const search = page.getByRole("textbox", { name: "Search projects" });
+  const search = page.getByRole("combobox", { name: "Search projects" });
   await expect(search).toBeFocused();
   await page.keyboard.type("Beta");
   await expect(
-    page.getByRole("button", { name: "Alpha", exact: true }),
+    page.getByRole("option", { name: "Alpha", exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Beta", exact: true }),
-  ).toHaveClass(/selected/);
+    page.getByRole("option", { name: "Beta", exact: true }),
+  ).toHaveAttribute("data-checked", "true");
   await expect(
     page
       .getByRole("dialog")
       .getByRole("button", { name: "New session", exact: true }),
   ).toBeEnabled();
   await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "New session", exact: true })
+    .click();
   await expect(
     page.getByRole("textbox", { name: "Message Orc" }),
   ).toBeFocused();
@@ -278,12 +292,12 @@ test("Tab completes without moving focus, skill search preserves drafts, and clo
   await page.goto("/");
   await newSession(page);
   await expect(
-    page.getByRole("textbox", { name: "Search projects" }),
+    page.getByRole("combobox", { name: "Search projects" }),
   ).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await newSession(page);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await page.getByRole("option", { name: "Alpha", exact: true }).click();
   await createSession(page);
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Draft before skill ");
@@ -327,7 +341,7 @@ test("Orc closure of a running Worker shows Closing and automatically removes it
 }) => {
   await page.goto("/");
   await newSession(page);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await page.getByRole("option", { name: "Alpha", exact: true }).click();
   await createSession(page);
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Start a long Worker");
@@ -396,7 +410,7 @@ test("Orc titles edit in place, cancel safely, retain failed drafts and persist 
   });
   await page.goto("/");
   await newSession(page);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await page.getByRole("option", { name: "Alpha", exact: true }).click();
   await createSession(page);
   await page.getByRole("button", { name: "Edit title", exact: true }).click();
   const title = page.getByRole("textbox", {
@@ -489,7 +503,7 @@ test("ordinary tree Close preflights a running child and releases an open idle c
 }) => {
   await page.goto("/");
   await newSession(page);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await page.getByRole("option", { name: "Alpha", exact: true }).click();
   await createSession(page);
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Start a long Worker");

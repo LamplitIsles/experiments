@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import sharp from "sharp";
 import { fileURLToPath } from "node:url";
@@ -7,8 +7,6 @@ import { sameDirectory } from "./directory";
 import {
   ModelRuntime,
   getAgentDir,
-  SessionManager,
-  parseSessionEntries,
   DefaultPackageManager,
   CONFIG_DIR_NAME,
   loadSkills,
@@ -30,11 +28,27 @@ import type {
   RuntimeEvent,
   RuntimeHandle,
 } from "./runtime";
-import { openPiSession } from "./pi-session";
+import {
+  openPiSession,
+  piSessionPath,
+  entryText,
+  entryMessages,
+} from "./pi-session";
+import { PiMetadata } from "./pi-documents";
+import { readPiStorage } from "./pi-storage";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import {
+  ROOT_CONVERSATION_ID,
+  createSession,
+  AgentDoc,
+  type EntryRecord,
+} from "@earendil-works/pi-durable";
 
 export class PiRuntime implements Runtime {
   private readonly handles = new Set<RuntimeHandle>();
-  private readonly paths = new Map<string, string>();
+  private get sessionDir() {
+    return join(this.options.agentDir, "grove-durable");
+  }
   constructor(
     private readonly options: {
       agentDir: string;
@@ -163,180 +177,213 @@ export class PiRuntime implements Runtime {
     }).skills.map((s) => ({ name: s.name, description: s.description }));
   }
 
-  private async list() {
-    const entries = await SessionManager.listAll();
-    for (const e of entries) this.paths.set(e.id, e.path);
-    return entries;
+  private path(id: string) {
+    if (!/^[a-f0-9-]{36}$/.test(id))
+      throw new Error("Invalid Pi session identity");
+    return piSessionPath(this.sessionDir, id);
+  }
+  private async read<T>(
+    id: string,
+    body: (storage: Awaited<ReturnType<typeof readPiStorage>>) => Promise<T>,
+  ) {
+    const storage = await readPiStorage(this.path(id));
+    try {
+      return await body(storage);
+    } finally {
+      await storage.close(BACKGROUND_CONTEXT);
+    }
   }
   async history(cwd: string, cursor?: string): Promise<HistoryPage> {
     const offset = cursor ? Number(cursor) : 0;
     if (!Number.isSafeInteger(offset) || offset < 0)
       throw new Error("Invalid Pi history cursor");
-    const entries = (await this.list())
-      .filter((e) => sameDirectory(e.cwd, cwd))
-      .sort((a, b) => b.modified.getTime() - a.modified.getTime());
+    let names: string[];
+    try {
+      names = await readdir(this.sessionDir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT")
+        return { sessions: [], nextCursor: null };
+      throw error;
+    }
+    const sessions: HistorySession[] = [];
+    for (const name of names.filter((name) =>
+      /^[a-f0-9-]{36}\.sqlite$/.test(name),
+    )) {
+      const item = await this.historyThread(name.slice(0, -7));
+      if (sameDirectory(item.cwd, cwd)) sessions.push(item);
+    }
+    sessions.sort((a, b) => b.updatedAt - a.updatedAt);
     return {
-      sessions: entries.slice(offset, offset + 40).map((e) => ({
-        backend: "pi",
-        threadId: e.id,
-        title: e.name ?? e.firstMessage.slice(0, 160) ?? "Pi session",
-        preview: e.firstMessage,
-        cwd: e.cwd,
-        updatedAt: e.modified.getTime(),
-        source: "Pi",
-        archived: false,
-        role: "session",
-      })),
-      nextCursor: offset + 40 < entries.length ? String(offset + 40) : null,
+      sessions: sessions.slice(offset, offset + 40),
+      nextCursor: offset + 40 < sessions.length ? String(offset + 40) : null,
     };
-  }
-  private async sessionPath(id: string) {
-    if (!this.paths.has(id)) await this.list();
-    const path = this.paths.get(id);
-    if (!path) throw new Error("Pi session was not found");
-    return path;
-  }
-  private async manager(id: string) {
-    const entries = parseSessionEntries(
-      await readFile(await this.sessionPath(id), "utf8"),
-    );
-    const header = entries.find((entry) => entry.type === "session");
-    if (!header || header.id !== id)
-      throw new Error("Pi session history is unavailable");
-    return SessionManager.inMemory(header.cwd, undefined, entries);
   }
   async historyThread(id: string): Promise<HistorySession> {
-    const manager = await this.manager(id),
-      header = manager.getHeader()!,
-      projection = manager.buildSessionContext();
-    return {
-      backend: "pi",
-      threadId: id,
-      title: manager.getSessionName() ?? "Pi session",
-      preview: "",
-      cwd: manager.getCwd(),
-      updatedAt: Date.parse(
-        manager.getLeafEntry()?.timestamp ?? header.timestamp,
-      ),
-      source: "Pi",
-      archived: false,
-      role: "session",
-      model: projection.model?.modelId,
-      provider: projection.model?.provider,
-      effort: projection.thinkingLevel,
-    };
+    const modified = (await stat(this.path(id))).mtimeMs;
+    return this.read(id, async (storage) => {
+      const session = createSession(storage),
+        ctx = BACKGROUND_CONTEXT;
+      try {
+        const agent = await session.snapshot(
+          AgentDoc,
+          ROOT_CONVERSATION_ID,
+          ctx,
+        );
+        const metadata = await session.snapshot(PiMetadata, ctx);
+        if (metadata?.id !== id)
+          throw new Error("The original Pi session is unavailable");
+        const first = await storage.scanEntries(
+          { conversationId: ROOT_CONVERSATION_ID, order: "ascending" },
+          1,
+          undefined,
+          ctx,
+        );
+        return {
+          backend: "pi",
+          threadId: id,
+          title:
+            metadata.title ||
+            entryText(
+              first.items[0] ?? {
+                id: "" as never,
+                conversationId: ROOT_CONVERSATION_ID,
+                kind: "",
+              },
+            ).slice(0, 160) ||
+            "Pi session",
+          preview: first.items[0] ? entryText(first.items[0]) : "",
+          cwd: metadata.cwd,
+          updatedAt: modified,
+          source: "Pi",
+          archived: false,
+          role: metadata.role as HistorySession["role"],
+          model: agent?.model?.modelId,
+          provider: agent?.model?.provider,
+          effort: agent?.thinkingLevel,
+        };
+      } finally {
+        await session.close(ctx);
+      }
+    });
   }
   async readTitle(id: string) {
-    return (await this.manager(id)).getSessionName() ?? null;
+    return (await this.historyThread(id)).title;
   }
   async historyMessages(id: string, cursor?: string): Promise<HistoryMessages> {
-    const manager = await this.manager(id),
-      entries = manager.getBranch();
-    const receipts = new Map<string, { operation: string; runId: string }>();
-    for (const e of entries)
-      if (e.type === "custom" && e.customType === "grove-accepted") {
-        const receipt = e.data as {
-          itemId: string;
-          operation: string;
-          runId: string;
-        };
-        receipts.set(receipt.itemId, receipt);
-      }
-    const visible = entries.filter(
-      (e) =>
-        (e.type === "message" &&
-          (e.message.role === "user" || e.message.role === "assistant")) ||
-        (e.type === "custom" && e.customType === "grove-question"),
-    );
-    const end = cursor ? Number(cursor) : visible.length;
-    if (!Number.isSafeInteger(end) || end < 0 || end > visible.length)
-      throw new Error("Invalid Pi message cursor");
-    const start = Math.max(0, end - 100);
-    const messages: Message[] = [];
-    for (const e of visible.slice(start, end)) {
-      if (e.type === "custom" && e.customType === "grove-question") {
-        const question = e.data as {
-          itemId: string;
-          runId: string;
-          questions: { title?: string; question: string; options?: string[] }[];
-        };
+    return this.read(id, async (storage) => {
+      const page = await storage.scanEntries(
+        { conversationId: ROOT_CONVERSATION_ID, order: "descending" },
+        100,
+        cursor
+          ? JSON.parse(Buffer.from(cursor, "base64url").toString())
+          : undefined,
+        BACKGROUND_CONTEXT,
+      );
+      const messages: Message[] = [];
+      for (const entry of [...page.items].reverse()) {
+        if (
+          ![
+            "grove.input",
+            "grove.withdrawn",
+            "pi.assistant",
+            "grove.question",
+          ].includes(entry.kind)
+        )
+          continue;
+        if (entry.kind === "grove.withdrawn") {
+          const receipt = await storage.submission(
+            (entry.data as { submissionId: number })
+              .submissionId as import("@earendil-works/pi-durable").SubmissionId,
+            BACKGROUND_CONTEXT,
+          );
+          if (
+            receipt?.status !== "unanswered" ||
+            receipt.reason !== "aborted" ||
+            receipt.entry
+          )
+            continue;
+        }
+        const data = entry.data as
+          | {
+              operation?: string;
+              itemId?: string;
+              runId?: string;
+              questions?: { question: string }[];
+            }
+          | undefined;
+        const images = [];
+        for (const [index, part] of entryMessages(entry)
+          .flatMap((m) =>
+            "content" in m && Array.isArray(m.content)
+              ? m.content.filter((part) => part.type === "image")
+              : [],
+          )
+          .entries() ?? []) {
+          if (part.type !== "image") continue;
+          const bytes = Buffer.from(part.data, "base64"),
+            metadata = await sharp(bytes).metadata();
+          images.push({
+            id: `${entry.id}:${index}`,
+            name: "Pi image",
+            width: metadata.width!,
+            height: metadata.height!,
+            bytes: bytes.length,
+            mediaType: part.mimeType,
+          });
+        }
         messages.push({
-          id: question.itemId,
-          questionItemId: question.itemId,
-          turnId: question.runId,
-          role: "assistant",
-          at: Date.parse(e.timestamp),
-          text: question.questions.map((q) => q.question).join("\n\n"),
+          id: data?.itemId ?? String(entry.id),
+          role:
+            entry.kind === "grove.input" || entry.kind === "grove.withdrawn"
+              ? "user"
+              : "assistant",
+          text:
+            entry.kind === "grove.question"
+              ? (data?.questions?.map((q) => q.question).join("\n\n") ?? "")
+              : entryText(entry),
+          at:
+            entry.model?.[0] && "timestamp" in entry.model[0]
+              ? entry.model[0].timestamp
+              : 0,
+          clientId: data?.operation,
+          turnId: data?.runId,
+          ...(entry.kind === "grove.question"
+            ? { questionItemId: data?.itemId }
+            : {}),
+          ...(images.length ? { images } : {}),
         });
-        continue;
       }
-      if (
-        e.type !== "message" ||
-        (e.message.role !== "user" && e.message.role !== "assistant")
-      )
-        continue;
-      const receipt = receipts.get(e.id),
-        message = e.message;
-      const text =
-        typeof message.content === "string"
-          ? message.content
-          : message.content
-              .filter((c) => c.type === "text")
-              .map((c) => c.text)
-              .join("\n");
-      const images =
-        typeof message.content === "string"
-          ? []
-          : await Promise.all(
-              message.content
-                .flatMap((part, index) =>
-                  part.type === "image" ? [{ part, index }] : [],
-                )
-                .map(async ({ part, index }) => {
-                  const bytes = Buffer.from(part.data, "base64");
-                  const metadata = await sharp(bytes).metadata();
-                  return {
-                    id: `${e.id}:${index}`,
-                    name: "Pi image",
-                    width: metadata.width!,
-                    height: metadata.height!,
-                    bytes: bytes.length,
-                    mediaType: part.mimeType,
-                  };
-                }),
-            );
-      messages.push({
-        ...(images.length ? { images } : {}),
-        id: e.id,
-        role: message.role,
-        text,
-        at: Date.parse(e.timestamp),
-        clientId: receipt?.operation,
-        turnId: receipt?.runId,
-      });
-    }
-    return { messages, nextCursor: start ? String(start) : null };
+      return {
+        messages,
+        nextCursor: page.next
+          ? Buffer.from(JSON.stringify(page.next)).toString("base64url")
+          : null,
+      };
+    });
   }
-
   async historyImage(id: string, imageId: string): Promise<File | null> {
-    const manager = await this.manager(id);
-    const separator = imageId.lastIndexOf(":");
-    const entry = manager.getEntry(imageId.slice(0, separator));
-    const index = Number(imageId.slice(separator + 1));
-    if (
-      separator < 0 ||
-      !Number.isSafeInteger(index) ||
-      entry?.type !== "message" ||
-      !("content" in entry.message) ||
-      !Array.isArray(entry.message.content)
-    )
-      return null;
-    const part = entry.message.content[index];
-    return part?.type === "image"
-      ? new File([Buffer.from(part.data, "base64")], "Pi image", {
-          type: part.mimeType,
-        })
-      : null;
+    return this.read(id, async (storage) => {
+      const separator = imageId.lastIndexOf(":"),
+        index = Number(imageId.slice(separator + 1));
+      if (separator < 0 || !Number.isSafeInteger(index) || index < 0)
+        return null;
+      const record = await storage.entry(
+        ROOT_CONVERSATION_ID,
+        Number(imageId.slice(0, separator)) as EntryRecord["id"],
+        BACKGROUND_CONTEXT,
+      );
+      const parts = (record ? entryMessages(record.entry) : []).flatMap((m) =>
+          "content" in m && Array.isArray(m.content)
+            ? m.content.filter((part) => part.type === "image")
+            : [],
+        ),
+        part = parts?.[index];
+      return part?.type === "image"
+        ? new File([Buffer.from(part.data, "base64")], "Pi image", {
+            type: part.mimeType,
+          })
+        : null;
+    });
   }
   async open(
     agent: RuntimeAgent,
@@ -345,10 +392,8 @@ export class PiRuntime implements Runtime {
     if (!agent.provider) throw new Error("Select a Pi provider");
     const handle = await openPiSession(agent, notify, {
       ...this.options,
-      sessionDir: SessionManager.create(agent.project.path).getSessionDir(),
-      sessionPath: agent.threadId
-        ? await this.sessionPath(agent.threadId)
-        : undefined,
+      sessionDir: this.sessionDir,
+      sessionPath: agent.threadId ? this.path(agent.threadId) : undefined,
       selection: {
         provider: agent.provider,
         model: agent.model,
@@ -364,7 +409,6 @@ export class PiRuntime implements Runtime {
     return handle;
   }
   async close() {
-    await Promise.all([...this.handles].map((h) => h.close()));
-    this.paths.clear();
+    await Promise.all([...this.handles].map((handle) => handle.close()));
   }
 }

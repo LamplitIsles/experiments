@@ -7,7 +7,8 @@
   import { Zap } from "@lucide/svelte";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { NativeSelect } from "$lib/components/ui/native-select/index.js";
+  import ChoiceSelect from "./ChoiceSelect.svelte";
+  import ModelPicker, {modelKey} from "./ModelPicker.svelte";
   import { api } from "./api";
   import { navigation, setSurface, back } from "./navigation.svelte";
   import { onMount, tick, untrack } from "svelte";
@@ -20,22 +21,22 @@
   let provider = $state(untrack(() => detail.provider));
   let model = $state(untrack(() => detail.model)); let effort = $state(untrack(() => detail.effort));
   let requestedFast = $state<boolean | undefined>();
-  let busy = $state(false); let modelError = $state(""); let treeError = $state(""); let catalogueError = $state("");
+  let busy = $state(false); let modelError = $state(""); let treeError = $state(""); let catalogueError = $state(""); let catalogueBusy = $state(false); let catalogueSequence = 0;
   let composing = false; let alive = true;
   let previous: HTMLElement | null = null;
   let selection: [number, number, "forward" | "backward" | "none"] | undefined;
   const selected = $derived(choices.find(value => value.id === model && value.provider === provider && (value.backend ?? "codex") === (detail.backend ?? "codex")));
-  const modelKey = (provider: string | undefined, id: string) => provider ? JSON.stringify([provider, id]) : id;
   const valid = $derived(!!selected?.efforts.includes(effort));
   onMount(() => () => { alive = false; });
   async function catalogue() {
     if (!connected) { catalogueError = m.session_offline(); return; }
-    const key = catalogueKey; const backend = detail.backend ?? "codex";
+    const key = catalogueKey; const backend = detail.backend ?? "codex"; const request=++catalogueSequence; catalogueBusy=true;
     try {
       const result = (await api<Model[]>("/models")).filter(value => (value.backend ?? "codex") === backend);
       catalogues.set(key, result);
-      if (alive && key === catalogueKey) { choices = result; catalogueError = ""; }
-    } catch (e) { if (alive && key === catalogueKey) catalogueError = e instanceof Error ? e.message : m.load_failure(); }
+      if (alive && key === catalogueKey && request===catalogueSequence) { choices = result; catalogueError = ""; }
+    } catch (e) { if (alive && key === catalogueKey && request===catalogueSequence) catalogueError = e instanceof Error ? e.message : m.load_failure(); }
+    finally {if(alive&&request===catalogueSequence)catalogueBusy=false;}
   }
   $effect(() => {
     modelError = "";
@@ -93,19 +94,16 @@
 <Button variant="ghost" size="icon-sm" class="tree-fast" disabled={!connected || treeBusy || !!detail.closeRequest} aria-label={m.tree_fast()} aria-pressed={!!tree?.treeFast} title={fastTitle} onclick={() => save("tree", !!tree?.treeFastError || !!treeError)}><Zap size={14} class={tree?.treeFast ? "size-3.5 text-primary" : "size-3.5 text-muted-foreground"} /></Button></div>
 {#if (treeError || tree?.treeFastError) && !open}<span class="session-settings-error" role="alert">{treeError || tree?.treeFastError} <button disabled={!connected || treeBusy} onclick={() => save("tree", !!tree?.treeFastError || !!treeError)}>{m.retry()}</button></span>{/if}
 <Dialog.Root {open} onOpenChange={value => { if (!value) void back(); }}>
-  <Dialog.Content class="session-settings-dialog" showCloseButton={false} onCloseAutoFocus={event => { event.preventDefault(); void restore(); }}>
+  <Dialog.Content class="session-settings-dialog" showCloseButton={false} onEscapeKeydown={event=>event.stopPropagation()} onCloseAutoFocus={event => { event.preventDefault(); void restore(); }}>
     <Dialog.Title>{m.session_settings()}</Dialog.Title>
     <Dialog.Description>{m.session_next_turn()}</Dialog.Description>
     <p>{detail.backend === "pi" ? "Pi" : "Codex"}</p>
-    <label>{m.model()}<NativeSelect class="w-full min-w-0" aria-label={m.model()} value={modelKey(provider, model)} disabled={treeBusy} onchange={event => {
-      const choice = choices.find(value => modelKey(value.provider, value.id) === event.currentTarget.value);
-      if (choice) { model = choice.id; provider = choice.provider; if (!choice.efforts.includes(effort)) effort = choice.defaultEffort; }
-    }}>
-      {#if !selected}<option value={modelKey(provider, model)}>{model} ({m.session_unavailable()})</option>{/if}
-      {#each choices as value}<option value={modelKey(value.provider, value.id)}>{value.name}</option>{/each}
-    </NativeSelect></label>
+    <label>{m.model()}<ModelPicker label={m.model()} value={modelKey(provider,model)} {choices} fallback={`${model} (${m.session_unavailable()})`} disabled={treeBusy||!connected} loading={catalogueBusy} onchange={next=>{
+      const choice=choices.find(value=>modelKey(value.provider,value.id)===next);
+      if(choice){model=choice.id;provider=choice.provider;if(!choice.efforts.includes(effort))effort=choice.defaultEffort;}
+    }} /></label>
     {#if !selected && choices.length}<p role="status">{m.session_current_unavailable()}</p>{:else if selected && !valid}<p role="status">{m.session_choose_supported()}</p>{/if}
-    <label>{m.effort()}<NativeSelect class="w-full min-w-0" aria-label={m.effort()} bind:value={effort} disabled={treeBusy || !selected}>{#if !valid}<option value={effort}>{effort}</option>{/if}{#each selected?.efforts ?? [] as value}<option value={value}>{value}</option>{/each}</NativeSelect></label>
+    <label>{m.effort()}<ChoiceSelect label={m.effort()} value={effort} items={[...(!valid?[effort]:[]),...(selected?.efforts??[])].filter((value,index,all)=>all.indexOf(value)===index).map(value=>({value,label:value}))} disabled={treeBusy||!selected||!connected} onchange={value=>effort=value} /></label>
     {#if catalogueError}<p role="alert">{catalogueError} <button onclick={catalogue} disabled={treeBusy}>{m.retry()}</button></p>{/if}
     {#if modelError}<p class="session-settings-error" role="alert">{modelError}</p>{/if}
     <div class="modal-action"><Button variant="ghost" size="sm" onclick={() => back()}>{m.cancel()}</Button><Button size="sm" disabled={treeBusy || !connected || !valid || !!detail.closeRequest} onclick={() => save("model")}>{m.save_changes()}</Button></div>

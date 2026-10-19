@@ -96,9 +96,10 @@ export class Workspace {
     }, options.branches);
     for (const a of this.state.agents) {
       if (
-        a.state === "working" ||
-        a.state === "stopping" ||
-        (a.state === "error" && a.turnId)
+        a.backend !== "pi" &&
+        (a.state === "working" ||
+          a.state === "stopping" ||
+          (a.state === "error" && a.turnId))
       ) {
         a.turnEnded = false;
         if (a.stop?.status === "pending") a.stop.status = "unknown";
@@ -161,9 +162,10 @@ export class Workspace {
       ? a.deliveries.find((d) => d.id === clientId)
       : undefined;
     if (!d) return;
+    // Re-reading an accepted receipt must retain its later native outcome.
+    if (d.status !== "sent") d.error = undefined;
     d.status = "sent";
     d.turnId = turnId ?? d.turnId;
-    d.error = undefined;
     for (const q of a.questions)
       if (d.questionIds.includes(q.id)) {
         q.state = "answered";
@@ -228,7 +230,16 @@ export class Workspace {
       event.turnId !== a.turnId
     )
       return;
-    if (event.type === "working") {
+    if (event.type === "submission") {
+      const delivery = this.confirmNative(a, event.operationId, event.turnId);
+      if (delivery && event.status === "unanswered")
+        delivery.error =
+          event.reason === "aborted"
+            ? "Accepted input was cancelled by Stop."
+            : "Accepted input ended without an answer. Inspect the conversation before continuing.";
+      this.save();
+      return;
+    } else if (event.type === "working") {
       if (a.turnId === event.turnId) return;
       this.completedItems.delete(a.id);
       if (a.turnId) {
@@ -1323,9 +1334,24 @@ export class Workspace {
         a.workingSince ??= Date.now();
       }
       this.save();
+      const envelopeContext = JSON.stringify({
+        source: d.source,
+        questionIds: d.questionIds,
+        answers: d.answers,
+        images: d.images,
+        reportingWorkerId: d.reportingWorkerId,
+        reportingReviewerId: d.reportingReviewerId,
+        reportingResearcherId: d.reportingResearcherId,
+        reviewTarget: d.reviewTarget,
+        researchQuestion: d.researchQuestion,
+      });
+      const send = (observed?: string) =>
+        a.backend === "pi"
+          ? handle.send(text, observed, paths, requestId, envelopeContext)
+          : handle.send(text, observed, paths, requestId);
       let turnId: string;
       try {
-        turnId = await handle.send(text, activeTurn, paths, requestId);
+        turnId = await send(activeTurn);
       } catch (error) {
         if (!(error instanceof StaleTurn)) throw error;
         if (
@@ -1340,7 +1366,7 @@ export class Workspace {
           error.activeTurnId ??
           (a.turnId !== activeTurn ? a.turnId : undefined);
         a.turnId = currentTurn;
-        turnId = await handle.send(text, currentTurn, paths, requestId);
+        turnId = await send(currentTurn);
       }
       if (!this.completedTurns.has(`${a.id}/${turnId}`)) {
         if (turnId !== activeTurn)
@@ -2303,7 +2329,9 @@ export class Workspace {
     this.branches.dispose();
     this.subscribers.clear();
     this.completedItems.clear();
-    void this.options.runtime.close();
+    void this.options.runtime.close().catch(() => {
+      console.error("Runtime shutdown could not release all resources");
+    });
     this.store.close();
   }
 }

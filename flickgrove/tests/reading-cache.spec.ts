@@ -8,7 +8,7 @@ for (const failure of ["QuotaExceededError", "SecurityError"]) {
   }) => {
     await page.goto("/");
     await newSession(page);
-    await page.getByRole("button", { name: "Alpha", exact: true }).click();
+    await page.getByRole("option", { name: "Alpha", exact: true }).click();
     await createSession(page);
     const id = await page.evaluate(
       () => history.state.grove.details.at(-1) as string,
@@ -135,7 +135,7 @@ test("a quota failure while caching the snapshot does not disconnect the convers
   });
   await page.goto("/");
   await newSession(page);
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await page.getByRole("option", { name: "Alpha", exact: true }).click();
   await createSession(page);
   // Fill again after startup cleanup so the live update must handle a rejected
   // write, rather than relying only on reclaiming obsolete startup records.

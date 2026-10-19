@@ -58,16 +58,22 @@ test("model refresh failure retains available choices and recovery refreshes the
   });
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(
-    page.locator(".role-settings").first().getByRole("combobox").first(),
-  ).toHaveValue("gpt-6.1-sol");
+    page
+      .locator(".role-settings")
+      .first()
+      .getByRole("combobox", { name: "Orc model" }),
+  ).toContainText("Sol");
   await page.keyboard.press("Escape");
   await request.post(origin + "/fixture/change", {
     data: { modelFailure: false },
   });
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(
-    page.locator(".role-settings").first().getByRole("combobox").first(),
-  ).toHaveValue("gpt-6.1-sol");
+    page
+      .locator(".role-settings")
+      .first()
+      .getByRole("combobox", { name: "Orc model" }),
+  ).toContainText("Sol");
 });
 
 const week = 7 * 24 * 60 * 60 * 1000;

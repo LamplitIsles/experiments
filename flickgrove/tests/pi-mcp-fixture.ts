@@ -28,6 +28,15 @@ server.registerTool(
     return { content: [{ type: "text", text: value }] };
   },
 );
+server.registerResource(
+  "owned-resource",
+  "owned://fixture",
+  { description: "Owned fixture resource" },
+  async (uri) => {
+    log("read-resource");
+    return { contents: [{ uri: uri.href, text: "owned resource value" }] };
+  },
+);
 process.on("SIGTERM", () => {
   log("stop");
   process.exit(0);

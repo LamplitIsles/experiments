@@ -7,6 +7,7 @@
 - Apply the same restraint to model-list caching. Preserve available choices across refresh failures without adding cache-state labels. Keep errors actionable when they prevent the user's requested operation.
 - Keep instance connectivity and message delivery status visible where they affect available actions or require the user's attention.
 - Read [DESIGN.md](DESIGN.md) before changing rendered UI or interaction behavior.
+- Use the project-owned Select for short choices and Command/Popover for searchable model choices. New-session project search stays an embedded Command: Enter chooses the highlighted alias; creating a session remains explicit. Preserve provider/model identity and let the primitives own selection keys and focus. Verify popup Escape/Back separately from the containing dialog.
 
 ## Managed collaboration
 
@@ -20,3 +21,7 @@
 ## Workspace persistence
 
 For schema or persistence changes, read README's Workspace storage section. Define tables in `server/schema.ts`, generate reviewed migrations with `bunx drizzle-kit generate`, and use the Drizzle builder for business queries. Keep growing ledgers as entity rows and commit changed entities at the existing admission/confirmation transaction boundaries. Observe any new mutable durable field in `WorkspaceStore`; cold reads never join the active aggregate until explicit restoration.
+
+## Pi runtime changes
+
+Read README's Codex and Pi sessions section before changing Pi admission, recovery, MCP or history. Reconcile unknown operations through their original native submission identity. Verify runtime work with owned fake providers and MCP servers; passive reads keep their zero-spawn/zero-mutation contract. Treat service shutdown, observed-run Stop and guarded business Close as separate lifecycle boundaries.

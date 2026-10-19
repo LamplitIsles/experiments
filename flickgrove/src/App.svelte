@@ -2,8 +2,7 @@
   import { Toaster } from "$lib/components/ui/sonner/index.js";
   import { toast } from "svelte-sonner";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
-  import { Input } from "$lib/components/ui/input/index.js";
-  import { NativeSelect } from "$lib/components/ui/native-select/index.js";
+  import * as Command from "$lib/components/ui/command/index.js";
   import { Switch } from "$lib/components/ui/switch/index.js";
   import { Kbd } from "$lib/components/ui/kbd/index.js";
   import { X, Plus, History, Settings as SettingsIcon } from "@lucide/svelte";
@@ -49,8 +48,9 @@
   let connected = $state(false); let loading = $state(true); let error = $state("");
   let now = $state(Date.now()); let sessionList: { visibleIds(): string[]; keydown(event: KeyboardEvent): Promise<void>; expandFocused(): void; reveal(id: string): Promise<void>; closeTarget(): string | null; navigate(offset: number, index?: number): Promise<string | null> };
   let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | "abandon-close" | null>(null);
-  let search = $state(""); let projectId = $state(""); let saving = $state(false);
-  let modelRefreshBusy = $state(false);
+  let search = $state(""); let projectId = $state(""); let projectHighlight=$state(""); let projectsLoading=$state(false); let projectError=$state(""); let saving = $state(false);
+  const projectListId=$props.id();
+  let modelRefreshBusy = $state(false); let modalModelsLoading=$state(false); let modalModelSequence=0;
   let settings = $state<Settings | null>(null); let sequence = 0; let focusCreatedId = $state<string | null>(null);
   let install = $state<(Event & { prompt: () => Promise<void> }) | null>(null);
   let instanceId = $state(savedSelection.host);
@@ -88,9 +88,10 @@
   const visibleAgents = $derived(snapshot.agents.map(a => optimistic(a.id) && a.state !== "working" && a.state !== "stopping" ? {...a,state:"working" as const} : a));
   $effect(() => { if (navigationReady) preferences.selection = { host: instanceId, sessions: $state.snapshot(remembered) }; });
   async function loadProjects() {
-    projectId = ""; projects = []; const seq = ++catalogSequence;
+    projectId = ""; projects = []; projectError=""; projectsLoading=true; const seq = ++catalogSequence;
     try { const registered = await api<Project[]>("/projects"); if (seq === catalogSequence) { projects = registered; projectId = registered[0]?.alias ?? ""; } }
-    catch(e) { if (seq === catalogSequence) error = e instanceof Error ? e.message : m.load_failure(); }
+    catch(e) { if (seq === catalogSequence) projectError = e instanceof Error ? e.message : m.load_failure(); }
+    finally {if(seq===catalogSequence)projectsLoading=false;}
   }
   const roots = $derived(snapshot.agents.filter(a => a.role === "orc"));
   const settingsValid = $derived(!!settings && [settings.orc, settings.worker].every(role => models.some(model => model.id === role.model && (model.backend ?? "codex") === (role.backend ?? "codex") && model.provider === role.provider && model.efforts.includes(role.effort))));
@@ -99,6 +100,8 @@
   const filteredProjects = $derived(projects.filter(p => `${p.alias} ${p.name}`.toLowerCase().includes(search.toLowerCase())));
 
   $effect(() => { if (modal === "new" && !filteredProjects.some(p => p.alias === projectId)) projectId = filteredProjects[0]?.alias ?? ""; });
+  $effect(()=>{projectHighlight=projectId;});
+  $effect(()=>{const input=projectSearch;if(input)untrack(()=>{if(modal==="new"&&!navigation.surfaces.includes("history"))input.focus({preventScroll:true});});});
   function closeDetail() { if (navigation.surfaces.length || !desktop) void back(); else if (selectedId && questionPanels[selectedId]) setQuestionPanel(selectedId, false); }
   $effect(() => {
     if (!navigationReady) return;
@@ -204,13 +207,14 @@
       const saved=preferences.settings;
       const fallback=models.find(m=>m.isDefault) ?? models[0];
       settings=saved ? structuredClone(saved) : fallback ? {fast:false,orc:{backend:fallback.backend ?? "codex",provider:fallback.provider,model:fallback.id,effort:fallback.defaultEffort},worker:{backend:fallback.backend ?? "codex",provider:fallback.provider,model:fallback.id,effort:fallback.defaultEffort}} : null;
-      try{models = await api<Model[]>("/models");preferences.models=models;}catch(e){if(!models.length)error=e instanceof Error?e.message:m.load_failure();}
+      const request=++modalModelSequence; modalModelsLoading=true;
+      try{const result=await api<Model[]>("/models");if(request!==modalModelSequence)return;models=result;preferences.models=models;}catch(e){if(request!==modalModelSequence)return;if(!models.length)error=e instanceof Error?e.message:m.load_failure();}finally{if(request===modalModelSequence)modalModelsLoading=false;}
       // Catalogue refresh must not replace a foreground settings draft.
       const model = models.find(m => m.isDefault) ?? models[0];
       if(!settings && (modal==='settings' || modal==='new') && model)settings={fast:false,orc:{backend:model.backend ?? "codex",provider:model.provider,model:model.id,effort:model.defaultEffort},worker:{backend:model.backend ?? "codex",provider:model.provider,model:model.id,effort:model.defaultEffort}};
     }
     if (kind === "settings" && settings) { settings.fast = !!settings.fast; }
-    await tick(); if (modal === kind && kind === "new") projectSearch?.focus();
+
   }
   async function closeModal() { const kind = modal; while (kind && navigation.surfaces.includes(kind)) await back(); }
   async function resumeHistory(session: HistorySession, project: string) {
@@ -239,10 +243,10 @@
   }
   async function refreshModels() {
     if (modelRefreshBusy) return;
-    modelRefreshBusy = true; error = "";
-    try { models = await api<Model[]>("/models"); preferences.models = models; }
-    catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
-    finally { modelRefreshBusy = false; }
+    const request=++modalModelSequence; modelRefreshBusy = true; error = "";
+    try { const result=await api<Model[]>("/models"); if(request===modalModelSequence){models=result;preferences.models=models;} }
+    catch (e) { if(request===modalModelSequence)error = e instanceof Error ? e.message : m.load_failure(); }
+    finally { modelRefreshBusy = false; if(request===modalModelSequence)modalModelsLoading=false; }
   }
   async function saveSettings() {
     if (!settings || saving) return; saving = true;
@@ -546,7 +550,7 @@
     window.addEventListener("compositionend", compositionEnd);
     const timer = setInterval(() => now = Date.now(), 1000);
     const permission = () => { if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission().catch(() => {}); };
-    const completionTab = (e: KeyboardEvent) => { if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof HTMLElement && e.target.closest(".question-panel, .history-controls"))) e.preventDefault(); };
+    const completionTab = (e: KeyboardEvent) => { if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof HTMLElement && e.target.closest(".question-panel, .history-controls, [data-choice-layer], [data-slot=select-content], [data-slot=select-trigger], [data-choice-trigger]"))) e.preventDefault(); };
     window.addEventListener("keydown", completionTab, true);
     const installer = (e: Event) => { e.preventDefault(); install = e as Event & { prompt: () => Promise<void> }; };
     window.addEventListener("pointerdown", permission, { once: true }); window.addEventListener("keydown", permission, { once: true }); window.addEventListener("keydown", keydown); window.addEventListener("beforeinstallprompt", installer);
@@ -576,7 +580,7 @@
 {/if}
 </div>
 <Dialog.Root open={modalOpen} onOpenChange={value => { if (!value && modal) void closeModal(); }}>
-  <Dialog.Content showCloseButton={false} class={`grove-dialog ${modal === "new" ? "new-modal" : modal === "settings" ? "settings-modal" : ""}`} onOpenAutoFocus={e => { e.preventDefault(); if (modal === "new") projectSearch?.focus(); }}><Button class="modal-close" variant="ghost" size="icon-sm" aria-label={m.close()} onclick={closeModal}><X /></Button>
+  <Dialog.Content onEscapeKeydown={event=>{event.preventDefault();event.stopPropagation();void back();}} showCloseButton={false} class={`grove-dialog ${modal === "new" ? "new-modal" : modal === "settings" ? "settings-modal" : ""}`} onOpenAutoFocus={e => { e.preventDefault(); if (modal === "new") projectSearch?.focus(); }}><Button class="modal-close" variant="ghost" size="icon-sm" aria-label={m.close()} onclick={closeModal}><X /></Button>
     {#if modal === "abandon-close" && abandon}
       <Dialog.Title>{m.abandon_close_title()}</Dialog.Title>
       <Dialog.Description>{m.abandon_close_help()}</Dialog.Description>
@@ -589,20 +593,28 @@
       {#if navigation.surfaces.includes("history") && projects.find(p => p.alias === projectId)}
         {#key createHost + ":" + projectId}<SessionHistory hostId={createHost} project={projects.find(p => p.alias === projectId)!} connected={connected && !!hosts.find(h => h.id === createHost)?.connected} onresume={resumeHistory} />{/key}
       {:else}
-      <p class="form-section-label">{m.project_label()}</p><Input bind:ref={projectSearch} class="project-search" aria-label={m.search_projects()} placeholder={m.search_projects()} bind:value={search} onkeydown={e => {
-        if (e.isComposing) return;
-        if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); const i = filteredProjects.findIndex(p => p.alias === projectId); projectId = filteredProjects[Math.max(0, Math.min(filteredProjects.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))]?.alias ?? ""; }
-        if (e.key === "Enter") { e.preventDefault(); void create(); }
-      }} />
-      <div class="project-list">{#each filteredProjects as project}<button class:selected={project.alias === projectId} onclick={() => projectId = project.alias} aria-label={project.name}><strong>{project.name}</strong>{#if project.name !== project.alias}<span>{project.path}</span>{/if}</button>{:else}<p>{m.no_projects()}</p>{/each}</div>
-      {#if settings}{#each ["orc", "worker"] as role}{@const key = role as "orc" | "worker"}<section class="role-settings"><h3>{key === "orc" ? m.orc() : m.worker()}</h3><ModelFields bind:value={settings[key]} {models} disabled={saving} label={key === "orc" ? m.orc() : m.worker()} /></section>{/each}{/if}
+      <p class="form-section-label">{m.project_label()}</p>
+      <Command.Root class="project-choice h-auto border border-input" shouldFilter={false} bind:value={projectHighlight} label={m.search_projects()}>
+        <Command.Input aria-controls={projectListId} bind:ref={projectSearch} aria-label={m.search_projects()} placeholder={m.search_projects()} bind:value={search} disabled={saving} onkeydown={event=>{if(event.key==="Tab"&&!event.isComposing&&!event.shiftKey){event.preventDefault();if(filteredProjects.some(project=>project.alias===projectHighlight))projectId=projectHighlight;}}} />
+        <Command.List id={projectListId} class="max-h-44" aria-label={m.project_label()} aria-busy={projectsLoading}>
+          {#each filteredProjects as project (project.alias)}
+            <Command.Item value={project.alias} aria-label={project.name} data-checked={project.alias===projectId} disabled={saving||!connected||!hosts.find(host=>host.id===createHost)?.connected} onSelect={()=>projectId=project.alias}>
+              <div class="min-w-0 flex-1"><strong class="block break-words font-medium">{project.name}</strong><span class="block break-all text-xs text-muted-foreground">{project.name!==project.alias ? project.alias+" · " : ""}{project.path}</span></div>
+            </Command.Item>
+          {:else}<p class="px-2 py-3 text-sm text-muted-foreground" role="status">{projectsLoading ? m.loading() : !connected ? m.offline_help() : projectError ? m.load_failure() : m.no_projects()}</p>{/each}
+        </Command.List>
+      </Command.Root>
+      {#if projectError}<p role="alert">{projectError} <Button variant="ghost" size="sm" disabled={!connected||projectsLoading} onclick={loadProjects}>{m.retry()}</Button></p>{/if}
+      {#if !settings&&modalModelsLoading}<p role="status">{m.loading()}</p>{/if}
+      {#if settings}{#each ["orc", "worker"] as role}{@const key = role as "orc" | "worker"}<section class="role-settings"><h3>{key === "orc" ? m.orc() : m.worker()}</h3><ModelFields bind:value={settings[key]} {models} loading={modelRefreshBusy||modalModelsLoading} disabled={saving||!connected} label={key === "orc" ? m.orc() : m.worker()} /></section>{/each}{/if}
       <Button variant="ghost" size="sm" disabled={modelRefreshBusy || !connected} onclick={refreshModels}>Refresh models</Button>
       <p class="project-keyboard">{m.project_keyboard()}</p>
       <div class="modal-action"><Button variant="ghost" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !projectId} onclick={() => setSurface("history", true)}><History />{m.find_history()}</Button><Button variant="default" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !settingsValid || !filteredProjects.some(p => p.alias === projectId)} onclick={create}>{saving ? m.sending() : m.new_session()}</Button></div>
       {/if}
     {:else if modal === "settings"}
       <Dialog.Title>{m.settings()}</Dialog.Title><p class="modal-help">{m.settings_help()}</p>
-      {#if settings}{#each ["orc", "worker"] as role}{@const key = role as "orc" | "worker"}<section class="role-settings"><h3>{key === "orc" ? m.orc() : m.worker()}</h3><ModelFields bind:value={settings[key]} {models} disabled={saving} label={key === "orc" ? m.orc() : m.worker()} /></section>{/each}<label class="fast-setting"><span><strong>{m.fast_mode()}</strong><small>{fastAvailable ? m.fast_help() : m.fast_unavailable()}</small></span><Switch aria-label={m.fast_mode()} bind:checked={settings.fast} disabled={!fastAvailable && !settings.fast} /></label>{/if}
+      {#if !settings&&modalModelsLoading}<p role="status">{m.loading()}</p>{/if}
+      {#if settings}{#each ["orc", "worker"] as role}{@const key = role as "orc" | "worker"}<section class="role-settings"><h3>{key === "orc" ? m.orc() : m.worker()}</h3><ModelFields bind:value={settings[key]} {models} loading={modelRefreshBusy||modalModelsLoading} disabled={saving||!connected} label={key === "orc" ? m.orc() : m.worker()} /></section>{/each}<label class="fast-setting"><span><strong>{m.fast_mode()}</strong><small>{fastAvailable ? m.fast_help() : m.fast_unavailable()}</small></span><Switch aria-label={m.fast_mode()} bind:checked={settings.fast} disabled={!fastAvailable && !settings.fast} /></label>{/if}
       <Button variant="ghost" size="sm" disabled={modelRefreshBusy || !connected} onclick={refreshModels}>Refresh models</Button>
       <p class="settings-scope">{m.settings_scope()}</p><div class="modal-action">{#if install}<button class="install-link" onclick={() => install?.prompt()}>{m.install_app()}</button>{/if}<Button variant="default" size="sm" disabled={!settings || !settingsValid || saving} onclick={saveSettings}>{saving ? m.sending() : m.save_changes()}</Button></div>
     {:else if modal === "keys"}

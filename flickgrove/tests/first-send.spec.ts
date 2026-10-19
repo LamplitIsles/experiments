@@ -39,7 +39,7 @@ for (const width of [1440, 390]) {
     });
     await page.goto(origin);
     await newSession(page);
-    await page.getByRole("button", { name: "Fixture", exact: true }).click();
+    await page.getByRole("option", { name: "Fixture", exact: true }).click();
     await createSession(page);
     const id = await page.evaluate(
       () => history.state.grove.details.at(-1) as string,
@@ -173,7 +173,7 @@ test("attempted input stays unknown across restart and read failure without repl
   ).toBe(200);
   await page.goto(origin);
   await newSession(page);
-  await page.getByRole("button", { name: "Fixture", exact: true }).click();
+  await page.getByRole("option", { name: "Fixture", exact: true }).click();
   await createSession(page);
   const id = await page.evaluate(
     () => history.state.grove.details.at(-1) as string,
@@ -270,7 +270,7 @@ test("resumed empty thread admits first input while unsupported history stays ac
   });
   await page.goto(origin);
   await newSession(page);
-  await page.getByRole("button", { name: "Fixture", exact: true }).click();
+  await page.getByRole("option", { name: "Fixture", exact: true }).click();
   await createSession(page);
   const id = await page.evaluate(
     () => history.state.grove.details.at(-1) as string,

@@ -45,7 +45,7 @@ for (const viewport of [
       page.getByRole("textbox", { name: "Access token", exact: true }),
     ).toHaveCount(0);
     await expect(page.locator(".host-choices")).toHaveCount(0);
-    await page.getByRole("button", { name: "Alpha", exact: true }).click();
+    await page.getByRole("option", { name: "Alpha", exact: true }).click();
     await page.screenshot({
       path: `../.scratch/single-host/project-${viewport.width}.png`,
     });

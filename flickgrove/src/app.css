@@ -643,29 +643,6 @@ pre {
   font-size: 12px;
   margin: 20px 0 10px;
 }
-.project-list {
-  max-height: 220px;
-  overflow-y: auto;
-  margin-top: 12px;
-}
-.project-list button {
-  display: grid;
-  width: 100%;
-  gap: 4px;
-  padding: 10px 12px;
-  text-align: left;
-  border-radius: 6px;
-  font-size: 13px;
-  border: 1px solid transparent;
-}
-.project-list button.selected {
-  background: var(--accent);
-}
-.project-list span {
-  color: var(--muted-foreground);
-  font-size: 11px;
-  overflow-wrap: anywhere;
-}
 .defaults-note,
 .project-keyboard,
 .settings-scope,
@@ -693,16 +670,6 @@ pre {
   gap: 8px;
   color: var(--muted-foreground);
   font-size: 12px;
-}
-.model-select {
-  width: 100%;
-}
-.model-select select {
-  height: 40px;
-}
-.model-select option {
-  color: var(--foreground);
-  background: var(--card);
 }
 .fast-setting {
   display: flex;
