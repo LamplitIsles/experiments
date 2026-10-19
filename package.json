@@ -3,7 +3,6 @@
   "private": true,
   "workspaces": [
     "flickgrove",
-    "flicklog",
     "utterlog"
   ],
   "scripts": {
