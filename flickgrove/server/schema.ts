@@ -5,6 +5,7 @@ import {
   primaryKey,
   index,
   foreignKey,
+  uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 import type { Agent, Delivery, Project, Question } from "../src/contracts";
 import type { RuntimeAgent, ExecutionSettings } from "./runtime";
@@ -40,7 +41,8 @@ export const sessions = sqliteTable(
     id: text("id").primaryKey(),
     role: text("role").$type<Agent["role"]>().notNull(),
     ownerId: text("owner_id"),
-    threadId: text("thread_id").unique(),
+    backend: text("backend").$type<"codex" | "pi">().notNull().default("codex"),
+    threadId: text("thread_id"),
     title: text("title").notNull(),
     token: text("token").notNull().unique(),
     closed: integer("closed", { mode: "boolean" }).notNull(),
@@ -53,6 +55,7 @@ export const sessions = sqliteTable(
     treeFast: integer("tree_fast", { mode: "boolean" }),
   },
   (t) => [
+    uniqueIndex("sessions_backend_thread").on(t.backend, t.threadId),
     index("sessions_open").on(t.closed),
     index("sessions_owner").on(t.ownerId),
   ],

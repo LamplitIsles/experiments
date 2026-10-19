@@ -15,27 +15,31 @@
   import * as m from "./paraglide/messages";
   let { detail, tree, connected, onupdate }: { detail: Detail; tree?: Agent; connected: boolean; onupdate: (value: Detail) => void } = $props();
   const open = $derived(navigation.surfaces.includes("session-settings"));
-  let choices = $state<Model[]>(untrack(() => catalogues.get(detail.hostId!)) ?? []);
+  const catalogueKey = $derived(JSON.stringify([detail.hostId, detail.backend ?? "codex"]));
+  let choices = $state<Model[]>(untrack(() => catalogues.get(catalogueKey)) ?? []);
+  let provider = $state(untrack(() => detail.provider));
   let model = $state(untrack(() => detail.model)); let effort = $state(untrack(() => detail.effort));
   let requestedFast = $state<boolean | undefined>();
   let busy = $state(false); let modelError = $state(""); let treeError = $state(""); let catalogueError = $state("");
   let composing = false; let alive = true;
   let previous: HTMLElement | null = null;
   let selection: [number, number, "forward" | "backward" | "none"] | undefined;
-  const selected = $derived(choices.find(value => value.id === model));
+  const selected = $derived(choices.find(value => value.id === model && value.provider === provider && (value.backend ?? "codex") === (detail.backend ?? "codex")));
+  const modelKey = (provider: string | undefined, id: string) => provider ? JSON.stringify([provider, id]) : id;
   const valid = $derived(!!selected?.efforts.includes(effort));
   onMount(() => () => { alive = false; });
   async function catalogue() {
     if (!connected) { catalogueError = m.session_offline(); return; }
+    const key = catalogueKey; const backend = detail.backend ?? "codex";
     try {
-      const result = await api<Model[]>("/models");
-      catalogues.set(detail.hostId!, result);
-      if (alive) { choices = result; catalogueError = ""; }
-    } catch (e) { if (alive) catalogueError = e instanceof Error ? e.message : m.load_failure(); }
+      const result = (await api<Model[]>("/models")).filter(value => (value.backend ?? "codex") === backend);
+      catalogues.set(key, result);
+      if (alive && key === catalogueKey) { choices = result; catalogueError = ""; }
+    } catch (e) { if (alive && key === catalogueKey) catalogueError = e instanceof Error ? e.message : m.load_failure(); }
   }
   $effect(() => {
     modelError = "";
-    if (open) untrack(() => { model = detail.model; effort = detail.effort; void catalogue(); });
+    if (open) untrack(() => { provider = detail.provider; model = detail.model; effort = detail.effort; void catalogue(); });
   });
   function capture() {
     previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -49,7 +53,7 @@
   }
   function show(captured = false) {
     if (!connected || tree?.treeFastBusy || navigation.details.at(-1) !== detail.id || navigation.surfaces.some(surface => surface !== "questions") || pending.has(tree?.id ?? detail.ownerId ?? detail.id)) return;
-    if (!captured) capture(); model = detail.model; effort = detail.effort; modelError = "";
+    if (!captured) capture(); provider = detail.provider; model = detail.model; effort = detail.effort; modelError = "";
     setSurface("session-settings", true);
   }
   async function save(action: "model" | "tree", retry = false) {
@@ -65,7 +69,7 @@
       if (!treeAction && !valid) throw new Error(m.session_choose_supported());
       const fast = retry ? (tree?.treeFastError ? !!tree.treeFast : requestedFast ?? !!tree?.treeFast) : !tree?.treeFast;
       if (treeAction) requestedFast = fast;
-      const result = await api<Detail>(`/agents/${id}/${treeAction ? "tree-fast" : "settings"}`, treeAction ? { fast, retry } : { model, effort });
+      const result = await api<Detail>(`/agents/${id}/${treeAction ? "tree-fast" : "settings"}`, treeAction ? { fast, retry } : { provider, model, effort });
       if (!alive || detail.id !== id || navigation.details.at(-1) !== id) return;
       onupdate(result);
       if (!treeAction && open) await back();
@@ -74,7 +78,7 @@
   }
   $effect(() => { if (connected) untrack(() => { void catalogue(); }); });
   const treeBusy = $derived(busy || !!tree?.treeFastBusy || pending.has(tree?.id ?? detail.ownerId ?? detail.id));
-  const fastTitle = $derived(`${m.tree_fast()} — ${tree?.treeFast ? m.tree_fast_on() : m.tree_fast_off()}. ${m.session_next_turn()} ${m.tree_native({ tier: detail.serviceTier })}${tree?.treeFast && choices.length && !choices.find(v => v.id === detail.model)?.fastTier ? " " + m.session_fast_unavailable() : ""}`);
+  const fastTitle = $derived(`${m.tree_fast()} — ${tree?.treeFast ? m.tree_fast_on() : m.tree_fast_off()}. ${m.session_next_turn()} ${m.tree_native({ tier: detail.serviceTier })}${tree?.treeFast && choices.length && !choices.find(v => v.id === detail.model && v.provider === detail.provider)?.fastTier ? " " + m.session_fast_unavailable() : ""}`);
   function keydown(event: KeyboardEvent) {
     if (event.defaultPrevented || composing || event.isComposing || event.keyCode === 229 || navigation.surfaces.length || navigation.details.at(-1) !== detail.id) return;
     if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey || !["KeyF", "KeyM"].includes(event.code)) return;
@@ -85,16 +89,20 @@
   }
 </script>
 <svelte:window onkeydown={keydown} oncompositionstart={() => composing = true} oncompositionend={() => composing = false} />
-<div class="session-controls"><button class="detail-model session-model" tabindex="-1" disabled={!connected || treeBusy || !!detail.closeRequest} title={m.session_next_turn()} aria-label={m.session_settings()} onpointerdown={capture} onclick={() => show(true)}><span>{detail.model} / {detail.effort}</span></button>
+<div class="session-controls"><button class="detail-model session-model" tabindex="-1" disabled={!connected || treeBusy || !!detail.closeRequest} title={m.session_next_turn()} aria-label={m.session_settings()} onpointerdown={capture} onclick={() => show(true)}><span>{detail.backend === "pi" ? "Pi" : "Codex"} · {detail.provider ? detail.provider + "/" : ""}{detail.model} / {detail.effort}</span></button>
 <Button variant="ghost" size="icon-sm" class="tree-fast" disabled={!connected || treeBusy || !!detail.closeRequest} aria-label={m.tree_fast()} aria-pressed={!!tree?.treeFast} title={fastTitle} onclick={() => save("tree", !!tree?.treeFastError || !!treeError)}><Zap size={14} class={tree?.treeFast ? "size-3.5 text-primary" : "size-3.5 text-muted-foreground"} /></Button></div>
 {#if (treeError || tree?.treeFastError) && !open}<span class="session-settings-error" role="alert">{treeError || tree?.treeFastError} <button disabled={!connected || treeBusy} onclick={() => save("tree", !!tree?.treeFastError || !!treeError)}>{m.retry()}</button></span>{/if}
 <Dialog.Root {open} onOpenChange={value => { if (!value) void back(); }}>
   <Dialog.Content class="session-settings-dialog" showCloseButton={false} onCloseAutoFocus={event => { event.preventDefault(); void restore(); }}>
     <Dialog.Title>{m.session_settings()}</Dialog.Title>
     <Dialog.Description>{m.session_next_turn()}</Dialog.Description>
-    <label>{m.model()}<NativeSelect class="w-full min-w-0" aria-label={m.model()} value={model} disabled={treeBusy} onchange={event => { model = event.currentTarget.value; const value = choices.find(v => v.id === model); if (!value?.efforts.includes(effort)) effort = value?.defaultEffort ?? ""; }}>
-      {#if !selected}<option value={model}>{model} ({m.session_unavailable()})</option>{/if}
-      {#each choices as value}<option value={value.id}>{value.name}</option>{/each}
+    <p>{detail.backend === "pi" ? "Pi" : "Codex"}</p>
+    <label>{m.model()}<NativeSelect class="w-full min-w-0" aria-label={m.model()} value={modelKey(provider, model)} disabled={treeBusy} onchange={event => {
+      const choice = choices.find(value => modelKey(value.provider, value.id) === event.currentTarget.value);
+      if (choice) { model = choice.id; provider = choice.provider; if (!choice.efforts.includes(effort)) effort = choice.defaultEffort; }
+    }}>
+      {#if !selected}<option value={modelKey(provider, model)}>{model} ({m.session_unavailable()})</option>{/if}
+      {#each choices as value}<option value={modelKey(value.provider, value.id)}>{value.name}</option>{/each}
     </NativeSelect></label>
     {#if !selected && choices.length}<p role="status">{m.session_current_unavailable()}</p>{:else if selected && !valid}<p role="status">{m.session_choose_supported()}</p>{/if}
     <label>{m.effort()}<NativeSelect class="w-full min-w-0" aria-label={m.effort()} bind:value={effort} disabled={treeBusy || !selected}>{#if !valid}<option value={effort}>{effort}</option>{/if}{#each selected?.efforts ?? [] as value}<option value={value}>{value}</option>{/each}</NativeSelect></label>

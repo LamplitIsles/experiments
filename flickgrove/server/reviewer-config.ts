@@ -11,8 +11,11 @@ export const reviewerProfiles = [
   "penpot",
 ] as const;
 const profileSchema = z.object({
+  backend: z.enum(["codex", "pi"]).default("codex"),
+  provider: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1),
   reasoning_effort: z.enum([
+    "off",
     "none",
     "minimal",
     "low",
@@ -35,6 +38,8 @@ const configSchema = z.object({
   }),
 });
 export interface ReviewerSnapshot {
+  backend?: "codex" | "pi";
+  provider?: string;
   model: string;
   effort: string;
   prompt: string;
@@ -110,6 +115,8 @@ export async function reviewerSnapshot(
   const value = (await readReviewerConfig(path)).reviewers[profile];
   const promptPath = resolve(dirname(path), value.prompt_file);
   return {
+    backend: value.backend,
+    provider: value.provider,
     model: value.model,
     effort: value.reasoning_effort,
     prompt: await readPrompt(promptPath, "Reviewer"),
@@ -120,6 +127,8 @@ export async function researcherSnapshot(
 ): Promise<ReviewerSnapshot> {
   const value = (await readReviewerConfig(path)).researcher;
   return {
+    backend: value.backend,
+    provider: value.provider,
     model: value.model,
     effort: value.reasoning_effort,
     prompt: await readPrompt(

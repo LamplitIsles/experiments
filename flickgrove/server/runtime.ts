@@ -49,12 +49,16 @@ export interface RuntimeAgent extends Detail {
   orcPromptSnapshot?: string;
   researcherSnapshot?: import("./reviewer-config").ReviewerSnapshot;
   reviewerSnapshot?: import("./reviewer-config").ReviewerSnapshot;
-  workerDefaults?: { model: string; effort: string; serviceTier: string };
+  workerDefaults?: ExecutionSettings & {
+    backend?: import("../src/contracts").Backend;
+    provider?: string;
+  };
   inheritSettings?: boolean;
   restoreArchived?: boolean;
   turnEnded?: boolean;
 }
 export type ExecutionSettings = {
+  provider?: string;
   model: string;
   effort: string;
   serviceTier: string;
@@ -89,7 +93,10 @@ export interface Runtime {
   readTitle(threadId: string): Promise<string | null>;
   weekly(): Promise<WeeklyUsage>;
   models(): Promise<Model[]>;
-  skills(cwd: string): Promise<Skill[]>;
+  skills(
+    cwd: string,
+    backend?: import("../src/contracts").Backend,
+  ): Promise<Skill[]>;
   open(
     agent: RuntimeAgent,
     notify: (event: RuntimeEvent) => void,

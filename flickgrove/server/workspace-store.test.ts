@@ -1,6 +1,16 @@
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  copyFileSync,
+} from "node:fs";
+import { fileURLToPath } from "node:url";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkspaceStore } from "./workspace-store";
@@ -202,14 +212,14 @@ test("real Bun migrator converts all durable roles, envelopes and order atomical
   ).toBeNull();
   expect(
     db.sqlite.query("SELECT count(*) AS n FROM __drizzle_migrations").get(),
-  ).toEqual({ n: 1 });
+  ).toEqual({ n: 2 });
   const reopened = store(path);
   expect(reopened.byId("parent")?.deliveries).toEqual(parent.deliveries);
   expect(
     reopened.sqlite
       .query("SELECT count(*) AS n FROM __drizzle_migrations")
       .get(),
-  ).toEqual({ n: 1 });
+  ).toEqual({ n: 2 });
 });
 test("conversion failure rolls back schema, data and success log and refuses Workspace startup", () => {
   const { path, directory } = fixture();
@@ -798,4 +808,82 @@ test("a failed owned child close cannot disappear from the authenticated shared 
   );
   console.info("failed-child-close lists", JSON.stringify(outcomes));
   expect(outcomes).toEqual(["read failed", "read failed", "read failed"]);
+});
+
+test("0001 upgrades deployed 0000 Codex records atomically, retaining custom snapshots and unknown envelopes", () => {
+  const { directory, path } = fixture();
+  const prior = join(directory, "prior-migrations");
+  mkdirSync(join(prior, "meta"), { recursive: true });
+  const shipped = fileURLToPath(new URL("../drizzle/", import.meta.url));
+  const journal = JSON.parse(
+    readFileSync(join(shipped, "meta/_journal.json"), "utf8"),
+  );
+  const first = journal.entries[0];
+  writeFileSync(
+    join(prior, "meta/_journal.json"),
+    JSON.stringify({ ...journal, entries: [first] }),
+  );
+  copyFileSync(
+    join(shipped, first.tag + ".sql"),
+    join(prior, first.tag + ".sql"),
+  );
+  legacy(path, [
+    agent("custom", {
+      threadId: "native-preserved",
+      orcPromptSnapshot: "custom prompt",
+      workerDefaults: {
+        model: "custom-model",
+        effort: "high",
+        serviceTier: "default",
+      },
+      deliveries: [
+        {
+          id: "unknown",
+          text: "immutable envelope",
+          status: "uncertain",
+          source: "user",
+          questionIds: [],
+          at: 7,
+        },
+      ],
+    }),
+  ]);
+  const deployed = new Database(path);
+  migrate(drizzle(deployed), { migrationsFolder: prior });
+  deployed.exec(
+    "CREATE TRIGGER fail_backend_snapshot BEFORE UPDATE ON session_config BEGIN SELECT RAISE(ABORT,'owned upgrade failure'); END",
+  );
+  deployed.close();
+  expect(() => new WorkspaceStore(path)).toThrow();
+  const rolledBack = new Database(path);
+  expect(
+    rolledBack.query("SELECT count(*) AS n FROM __drizzle_migrations").get(),
+  ).toEqual({ n: 1 });
+  expect(
+    (
+      rolledBack.query("PRAGMA table_info(sessions)").all() as {
+        name: string;
+      }[]
+    ).some((c) => c.name === "backend"),
+  ).toBe(false);
+  expect(
+    rolledBack.query("SELECT thread_id FROM sessions WHERE id='custom'").get(),
+  ).toEqual({ thread_id: "native-preserved" });
+  rolledBack.exec("DROP TRIGGER fail_backend_snapshot");
+  rolledBack.close();
+  const upgraded = store(path).byId("custom")!;
+  expect(upgraded.backend).toBe("codex");
+  expect(upgraded.threadId).toBe("native-preserved");
+  expect(upgraded.workerDefaults).toEqual({
+    backend: "codex",
+    model: "custom-model",
+    effort: "high",
+    serviceTier: "default",
+  });
+  expect(upgraded.orcPromptSnapshot).toBe("custom prompt");
+  expect(upgraded.deliveries[0]).toMatchObject({
+    id: "unknown",
+    text: "immutable envelope",
+    status: "uncertain",
+  });
 });

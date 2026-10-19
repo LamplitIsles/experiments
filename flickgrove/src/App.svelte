@@ -23,6 +23,7 @@
   import { loadImages, operationKey, type ImageDraft } from "./image-drafts";
   import { receiptAlreadyAccepted, setOutgoingImages, clearClosedPending, closeRecovery, rememberCloseRecovery, forgetCloseRecovery } from "./outgoing.svelte";
   import { observeQuestions, questionPanels, setQuestionPanel } from "./question-state.svelte";
+  import ModelFields from "./ModelFields.svelte";
   import Weekly from "./Weekly.svelte";
   import SessionList from "./SessionList.svelte";
   import { historyCache } from "./history-cache";
@@ -49,6 +50,7 @@
   let now = $state(Date.now()); let sessionList: { visibleIds(): string[]; keydown(event: KeyboardEvent): Promise<void>; expandFocused(): void; reveal(id: string): Promise<void>; closeTarget(): string | null; navigate(offset: number, index?: number): Promise<string | null> };
   let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | "abandon-close" | null>(null);
   let search = $state(""); let projectId = $state(""); let saving = $state(false);
+  let modelRefreshBusy = $state(false);
   let settings = $state<Settings | null>(null); let sequence = 0; let focusCreatedId = $state<string | null>(null);
   let install = $state<(Event & { prompt: () => Promise<void> }) | null>(null);
   let instanceId = $state(savedSelection.host);
@@ -91,7 +93,8 @@
     catch(e) { if (seq === catalogSequence) error = e instanceof Error ? e.message : m.load_failure(); }
   }
   const roots = $derived(snapshot.agents.filter(a => a.role === "orc"));
-  const fastAvailable = $derived(!!settings && [settings.orc, settings.worker].every(role => models.find(model => model.id === role.model)?.fastTier));
+  const settingsValid = $derived(!!settings && [settings.orc, settings.worker].every(role => models.some(model => model.id === role.model && (model.backend ?? "codex") === (role.backend ?? "codex") && model.provider === role.provider && model.efforts.includes(role.effort))));
+  const fastAvailable = $derived(!!settings && [settings.orc, settings.worker].some(role => models.find(model => model.id === role.model && (model.backend ?? "codex") === (role.backend ?? "codex") && model.provider === role.provider)?.fastTier));
   const owner = $derived(snapshot.agents.find(a => a.id === shownDetail?.ownerId));
   const filteredProjects = $derived(projects.filter(p => `${p.alias} ${p.name}`.toLowerCase().includes(search.toLowerCase())));
 
@@ -167,7 +170,7 @@
     if(!hosts.find(h=>h.id===snapshot.entryId)?.connected){if(selectedId)await restoreDetail(selectedId);loading=false;return;}
     try {
       const [state, registered, catalog] = await Promise.all([api<Snapshot>("/snapshot"), api<Project[]>("/projects"), api<Model[]>("/models")]);
-      projects = registered; models = catalog;preferences.models=catalog; if(!preferences.settings&&catalog.length){const model=catalog.find(m=>m.isDefault)??catalog[0];preferences.settings={fast:false,orc:{model:model.id,effort:model.defaultEffort},worker:{model:model.id,effort:model.defaultEffort}};snapshot={...snapshot,settings:preferences.settings};} if(!connected) adopt(state, true);
+      projects = registered; models = catalog;preferences.models=catalog; if(!preferences.settings&&catalog.length){const model=catalog.find(m=>m.isDefault)??catalog[0];preferences.settings={fast:false,orc:{backend:model.backend ?? "codex",provider:model.provider,model:model.id,effort:model.defaultEffort},worker:{backend:model.backend ?? "codex",provider:model.provider,model:model.id,effort:model.defaultEffort}};snapshot={...snapshot,settings:preferences.settings};} if(!connected) adopt(state, true);
       if (selectedId) await restoreDetail(selectedId);
     } catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { loading = false; }
@@ -197,14 +200,14 @@
       closeUnknown = true;
     }
     if (kind === "new") { search = ""; void loadProjects(); }
-    if (kind === "settings") {
+    if (kind === "settings" || kind === "new") {
       const saved=preferences.settings;
       const fallback=models.find(m=>m.isDefault) ?? models[0];
-      settings=saved ? structuredClone(saved) : fallback ? {fast:false,orc:{model:fallback.id,effort:fallback.defaultEffort},worker:{model:fallback.id,effort:fallback.defaultEffort}} : null;
+      settings=saved ? structuredClone(saved) : fallback ? {fast:false,orc:{backend:fallback.backend ?? "codex",provider:fallback.provider,model:fallback.id,effort:fallback.defaultEffort},worker:{backend:fallback.backend ?? "codex",provider:fallback.provider,model:fallback.id,effort:fallback.defaultEffort}} : null;
       try{models = await api<Model[]>("/models");preferences.models=models;}catch(e){if(!models.length)error=e instanceof Error?e.message:m.load_failure();}
       // Catalogue refresh must not replace a foreground settings draft.
       const model = models.find(m => m.isDefault) ?? models[0];
-      if(!settings && modal==='settings' && model)settings={fast:false,orc:{model:model.id,effort:model.defaultEffort},worker:{model:model.id,effort:model.defaultEffort}};
+      if(!settings && (modal==='settings' || modal==='new') && model)settings={fast:false,orc:{backend:model.backend ?? "codex",provider:model.provider,model:model.id,effort:model.defaultEffort},worker:{backend:model.backend ?? "codex",provider:model.provider,model:model.id,effort:model.defaultEffort}};
     }
     if (kind === "settings" && settings) { settings.fast = !!settings.fast; }
     await tick(); if (modal === kind && kind === "new") projectSearch?.focus();
@@ -220,18 +223,26 @@
   }
   $effect(() => { if (detail?.id === focusCreatedId && focusCreatedId) { focusCreatedId = null; void tick().then(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus()); } });
   async function creationSettings():Promise<Settings> {
+    if (modal === "new" && settings) { preferences.settings = $state.snapshot(settings); return preferences.settings!; }
     if(preferences.settings)return preferences.settings;
     const catalog=await api<Model[]>("/models");
     const model=catalog.find(m=>m.isDefault)??catalog[0];
     if(!model)throw new Error("No models available");
-    const settings:Settings={fast:false,orc:{model:model.id,effort:model.defaultEffort},worker:{model:model.id,effort:model.defaultEffort}};
-    preferences.settings=settings;return settings;
+    const initial:Settings={fast:false,orc:{backend:model.backend ?? "codex",provider:model.provider,model:model.id,effort:model.defaultEffort},worker:{backend:model.backend ?? "codex",provider:model.provider,model:model.id,effort:model.defaultEffort}};
+    preferences.settings=initial;return initial;
   }
   async function create() {
     if (!projectId || saving || !connected) return; saving = true;
     try { const agent = await api<Agent>("/agents", { project: projectId, settings: await creationSettings() }); await closeModal(); adopt(await api<Snapshot>("/snapshot")); focusCreatedId = agent.id; open(agent.id); await sessionList?.reveal(agent.id); }
     catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { saving = false; }
+  }
+  async function refreshModels() {
+    if (modelRefreshBusy) return;
+    modelRefreshBusy = true; error = "";
+    try { models = await api<Model[]>("/models"); preferences.models = models; }
+    catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
+    finally { modelRefreshBusy = false; }
   }
   async function saveSettings() {
     if (!settings || saving) return; saving = true;
@@ -546,7 +557,7 @@
 <Toaster theme="dark" position="bottom-center" />
 <header class="app-header" class:has-selection={!!selectedId}><strong>{m.product()}</strong><span class="session-count">{m.session_count({ count: roots.length })}</span>
 
-  <div class="header-actions"><Weekly hostId={snapshot.entryId} connected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} /><Button variant="ghost" size="icon-sm" aria-label={m.settings()} onclick={() => show("settings")}><SettingsIcon /></Button></div>
+  <div class="header-actions">{#if !loading && detail?.backend !== "pi" && (!snapshot.agents.length || snapshot.agents.some(agent => agent.backend !== "pi"))}<Weekly hostId={snapshot.entryId} connected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} />{/if}<Button variant="ghost" size="icon-sm" aria-label={m.settings()} onclick={() => show("settings")}><SettingsIcon /></Button></div>
 </header>
 <div class:close-recovery-layout={closeRecovery.entries.some(i => modal !== "abandon-close" || abandon?.id !== i.agentId)}>
 <main class:with-detail={!!selectedId}>
@@ -584,14 +595,16 @@
         if (e.key === "Enter") { e.preventDefault(); void create(); }
       }} />
       <div class="project-list">{#each filteredProjects as project}<button class:selected={project.alias === projectId} onclick={() => projectId = project.alias} aria-label={project.name}><strong>{project.name}</strong>{#if project.name !== project.alias}<span>{project.path}</span>{/if}</button>{:else}<p>{m.no_projects()}</p>{/each}</div>
-      {#if snapshot.settings}<p class="defaults-note">{m.new_defaults({ model: snapshot.settings.orc.model, effort: snapshot.settings.orc.effort, tier: snapshot.settings.fast ? m.fast_mode() : "Default" })}</p>{/if}
+      {#if settings}{#each ["orc", "worker"] as role}{@const key = role as "orc" | "worker"}<section class="role-settings"><h3>{key === "orc" ? m.orc() : m.worker()}</h3><ModelFields bind:value={settings[key]} {models} disabled={saving} label={key === "orc" ? m.orc() : m.worker()} /></section>{/each}{/if}
+      <Button variant="ghost" size="sm" disabled={modelRefreshBusy || !connected} onclick={refreshModels}>Refresh models</Button>
       <p class="project-keyboard">{m.project_keyboard()}</p>
-      <div class="modal-action"><Button variant="ghost" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !projectId} onclick={() => setSurface("history", true)}><History />{m.find_history()}</Button><Button variant="default" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !filteredProjects.some(p => p.alias === projectId)} onclick={create}>{saving ? m.sending() : m.new_session()}</Button></div>
+      <div class="modal-action"><Button variant="ghost" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !projectId} onclick={() => setSurface("history", true)}><History />{m.find_history()}</Button><Button variant="default" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !settingsValid || !filteredProjects.some(p => p.alias === projectId)} onclick={create}>{saving ? m.sending() : m.new_session()}</Button></div>
       {/if}
     {:else if modal === "settings"}
       <Dialog.Title>{m.settings()}</Dialog.Title><p class="modal-help">{m.settings_help()}</p>
-      {#if settings}{#each ["orc", "worker"] as role}{@const key = role as "orc" | "worker"}<section class="role-settings"><h3>{key === "orc" ? m.orc() : m.worker()}</h3><div class="model-fields"><label>{m.model()}<NativeSelect class="model-select" bind:value={settings[key].model} onchange={() => { if (settings) settings[key].effort = models.find(model => model.id === settings![key].model)?.defaultEffort ?? ""; if (settings && !models.find(model => model.id === settings![key].model)?.fastTier) settings.fast = false; }}>{#each models as model}<option value={model.id}>{model.name}</option>{/each}</NativeSelect></label><label>{m.effort()}<NativeSelect class="model-select" bind:value={settings[key].effort}>{#each models.find(model => model.id === settings![key].model)?.efforts ?? [] as effort}<option value={effort}>{effort}</option>{/each}</NativeSelect></label></div></section>{/each}<label class="fast-setting"><span><strong>{m.fast_mode()}</strong><small>{fastAvailable ? m.fast_help() : m.fast_unavailable()}</small></span><Switch aria-label={m.fast_mode()} bind:checked={settings.fast} disabled={!fastAvailable} /></label>{/if}
-      <p class="settings-scope">{m.settings_scope()}</p><div class="modal-action">{#if install}<button class="install-link" onclick={() => install?.prompt()}>{m.install_app()}</button>{/if}<Button variant="default" size="sm" disabled={!settings || saving} onclick={saveSettings}>{saving ? m.sending() : m.save_changes()}</Button></div>
+      {#if settings}{#each ["orc", "worker"] as role}{@const key = role as "orc" | "worker"}<section class="role-settings"><h3>{key === "orc" ? m.orc() : m.worker()}</h3><ModelFields bind:value={settings[key]} {models} disabled={saving} label={key === "orc" ? m.orc() : m.worker()} /></section>{/each}<label class="fast-setting"><span><strong>{m.fast_mode()}</strong><small>{fastAvailable ? m.fast_help() : m.fast_unavailable()}</small></span><Switch aria-label={m.fast_mode()} bind:checked={settings.fast} disabled={!fastAvailable && !settings.fast} /></label>{/if}
+      <Button variant="ghost" size="sm" disabled={modelRefreshBusy || !connected} onclick={refreshModels}>Refresh models</Button>
+      <p class="settings-scope">{m.settings_scope()}</p><div class="modal-action">{#if install}<button class="install-link" onclick={() => install?.prompt()}>{m.install_app()}</button>{/if}<Button variant="default" size="sm" disabled={!settings || !settingsValid || saving} onclick={saveSettings}>{saving ? m.sending() : m.save_changes()}</Button></div>
     {:else if modal === "keys"}
       <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Option + J / K", m.key_session_loop()], ["⌘ 1–9", m.key_visible_session()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Option/Alt + S", m.search_skills()], ["Option/Alt + X", m.close_tree()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
     {/if}

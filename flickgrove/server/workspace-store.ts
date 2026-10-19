@@ -7,8 +7,11 @@ import { fileURLToPath } from "node:url";
 import type { Delivery, Question } from "../src/contracts";
 import type { RuntimeAgent } from "./runtime";
 import * as s from "./schema";
+import { threadIdentity } from "./backend";
 const migrationsFolder = fileURLToPath(new URL("../drizzle", import.meta.url));
 const sessionKeys = [
+  "backend",
+  "provider",
   "role",
   "ownerId",
   "threadId",
@@ -82,10 +85,11 @@ function optional<T extends object>(
 function sessionRow(a: RuntimeAgent) {
   return {
     id: a.id,
+    backend: a.backend ?? "codex",
     ...pick(a, ["role", "title", "token", "closed", "state", "project"]),
     ownerId: a.ownerId ?? null,
     threadId: a.threadId ?? null,
-    settings: pick(a, ["model", "effort", "serviceTier"]),
+    settings: pick(a, ["model", "effort", "serviceTier", "provider"]),
     recovery: pick(a, ["turnId", "turnEnded", "stop", "closeRequest"]),
     task: pick(a, ["reviewTarget", "researchQuestion"]),
     diagnostics: pick(a, ["error", "execution", "treeFastError"]),
@@ -232,7 +236,12 @@ export class WorkspaceStore {
     const row = this.db
       .select()
       .from(s.sessions)
-      .where(eq(s.sessions.threadId, id))
+      .where(
+        and(
+          eq(s.sessions.backend, threadIdentity(id).backend),
+          eq(s.sessions.threadId, id),
+        ),
+      )
       .get();
     return row && this.hydrate(row);
   }
@@ -258,6 +267,7 @@ export class WorkspaceStore {
     return {
       id,
       role: row.role,
+      backend: row.backend,
       title: row.title,
       token: row.token,
       closed: row.closed,

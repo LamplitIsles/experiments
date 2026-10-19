@@ -8,6 +8,9 @@ import {
   researcherSnapshot,
   orcPrompt,
 } from "./reviewer-config";
+import { MixedRuntime } from "./mixed-runtime";
+import { PiRuntime } from "./pi";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { CodexRuntime } from "./codex";
 import { Workspace } from "./workspace";
 import { registeredProjects } from "./projects";
@@ -24,6 +27,7 @@ const { values } = parseArgs({
     config: { type: "string" },
     state: { type: "string" },
     codex: { type: "string", default: "codex" },
+    "pi-agent-dir": { type: "string" },
   },
 });
 const port = Number(values.port);
@@ -41,12 +45,21 @@ const directory =
 const configPath =
   values.config ?? join(homedir(), ".config", "flickgrove", "config.toml");
 await initializeReviewerConfig(configPath);
-const runtime = new CodexRuntime({
+const codexRuntime = new CodexRuntime({
   cwd: process.cwd(),
   origin: () => localOrigin,
   codexPath: values.codex,
 });
-const app = new Workspace({
+if (values["pi-agent-dir"])
+  process.env.PI_CODING_AGENT_DIR = values["pi-agent-dir"];
+const runtime: MixedRuntime = new MixedRuntime(
+  codexRuntime,
+  new PiRuntime({
+    agentDir: getAgentDir(),
+    tool: (token, name, args) => app.tool(token, name, args),
+  }),
+);
+const app: Workspace = new Workspace({
   directory,
   runtime,
   projects: registeredProjects,

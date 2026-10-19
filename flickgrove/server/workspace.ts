@@ -663,6 +663,7 @@ export class Workspace {
   async reconcileSettings(id: string) {
     return this.serialize(id, async () => {
       const a = this.agent(id);
+      if (a.backend === "pi") return; // Passive reads never construct a Pi executor.
       // Passive selection/reconnect must not initialize a prefeature Orc.
       if (
         a.role === "orc" &&
@@ -686,7 +687,10 @@ export class Workspace {
   private root(a: RuntimeAgent) {
     return a.ownerId ? this.agent(a.ownerId) : a;
   }
-  async updateSettings(id: string, value: { model: string; effort: string }) {
+  async updateSettings(
+    id: string,
+    value: { model: string; effort: string; provider?: string },
+  ) {
     return this.serialize(id, async () => {
       const a = this.agent(id);
       if (a.role === "reviewer" || a.role === "researcher")
@@ -696,7 +700,12 @@ export class Workspace {
       if (a.closeRequest) throw new Error("Session is closing");
       const handle = await this.handle(a, false);
       const current = await handle.readSettings();
-      const model = (await this.models()).find((m) => m.id === value.model);
+      const model = (await this.models()).find(
+        (m) =>
+          m.id === value.model &&
+          (m.backend ?? "codex") === (a.backend ?? "codex") &&
+          m.provider === (value.provider ?? a.provider),
+      );
       if (!model?.efforts.includes(value.effort))
         throw new Error("Choose a supported model and reasoning effort");
       const root = this.root(a);
@@ -719,6 +728,7 @@ export class Workspace {
       const requested = { ...value, serviceTier };
       const settings =
         current.model === value.model &&
+        current.provider === (value.provider ?? a.provider) &&
         current.effort === value.effort &&
         current.serviceTier === serviceTier
           ? current
@@ -776,7 +786,12 @@ export class Workspace {
             throw new Error("Session changed");
           Object.assign(a, current);
           this.save();
-          const model = models.find((m) => m.id === current.model);
+          const model = models.find(
+            (m) =>
+              m.id === current.model &&
+              (m.backend ?? "codex") === (a.backend ?? "codex") &&
+              m.provider === current.provider,
+          );
           if (!model) throw new Error("Model is unavailable");
           const serviceTier = fast ? (model.fastTier ?? "default") : "default";
           if (current.serviceTier !== serviceTier) {
@@ -1051,6 +1066,8 @@ export class Workspace {
           role: "orc",
           project,
           title: session.title,
+          backend: session.backend ?? "codex",
+          provider: session.provider,
           model: session.model ?? "",
           effort: session.effort ?? "",
           serviceTier: "default",
@@ -1096,18 +1113,33 @@ export class Workspace {
     if (!first) throw new Error("No models available");
     const value = settings ?? {
       fast: false,
-      orc: { model: first.id, effort: first.defaultEffort },
-      worker: { model: first.id, effort: first.defaultEffort },
+      orc: {
+        backend: first.backend ?? "codex",
+        provider: first.provider,
+        model: first.id,
+        effort: first.defaultEffort,
+      },
+      worker: {
+        backend: first.backend ?? "codex",
+        provider: first.provider,
+        model: first.id,
+        effort: first.defaultEffort,
+      },
     };
     const capture = (defaults: Settings["orc"]) => {
-      const model = models.find((m) => m.id === defaults.model);
+      const backend = defaults.backend ?? "codex";
+      const model = models.find(
+        (m) =>
+          m.id === defaults.model &&
+          (m.backend ?? "codex") === backend &&
+          m.provider === defaults.provider,
+      );
       if (!model?.efforts.includes(defaults.effort))
         throw new Error("Choose a supported model and reasoning effort");
-      if (value.fast && !model.fastTier)
-        throw new Error("Fast is not available for this model");
       return {
         ...defaults,
-        serviceTier: value.fast ? model.fastTier! : "default",
+        backend,
+        serviceTier: value.fast ? (model.fastTier ?? "default") : "default",
       };
     };
     return { orc: capture(value.orc), worker: capture(value.worker) };
@@ -1123,6 +1155,7 @@ export class Workspace {
       project,
       title: "New session",
       ...captured.orc,
+      treeFast: settings?.fast ?? false,
       workerDefaults: captured.worker,
       orcPromptSnapshot: await this.options.orcPrompt?.(),
       state: "idle",
@@ -1741,7 +1774,10 @@ export class Workspace {
     });
   }
   skills(id: string) {
-    return this.options.runtime.skills(this.agent(id).project.path);
+    return this.options.runtime.skills(
+      this.agent(id).project.path,
+      this.agent(id).backend ?? "codex",
+    );
   }
   private authenticated(token: string) {
     const a = this.state.agents.find((a) => a.token === token && !a.closed);
@@ -1802,6 +1838,8 @@ export class Workspace {
             project,
             title: input.title,
             ...(a.workerDefaults ?? {
+              backend: a.backend ?? "codex",
+              provider: a.provider,
               model: a.model,
               effort: a.effort,
               serviceTier: a.serviceTier,
@@ -1817,6 +1855,8 @@ export class Workspace {
               throw new Error("Researcher configuration is unavailable");
             const snapshot = await this.options.researcherSnapshot();
             w.researcherSnapshot = snapshot;
+            w.backend = snapshot.backend ?? "codex";
+            w.provider = snapshot.provider;
             w.model = snapshot.model;
             w.effort = snapshot.effort;
             w.researchQuestion = input.question;
@@ -1828,6 +1868,8 @@ export class Workspace {
               review.profile,
             );
             w.reviewerSnapshot = snapshot;
+            w.backend = snapshot.backend ?? "codex";
+            w.provider = snapshot.provider;
             w.model = snapshot.model;
             w.effort = snapshot.effort;
             w.reviewTarget = {
@@ -1838,7 +1880,12 @@ export class Workspace {
             };
           }
           {
-            const model = (await this.models()).find((m) => m.id === w.model);
+            const model = (await this.models()).find(
+              (m) =>
+                m.id === w.model &&
+                (m.backend ?? "codex") === (w.backend ?? "codex") &&
+                m.provider === w.provider,
+            );
             if (!model || !model.efforts.includes(w.effort))
               throw new Error(
                 "Assigned model or reasoning effort is unavailable",

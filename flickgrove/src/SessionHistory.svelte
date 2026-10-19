@@ -88,7 +88,7 @@
     catch(e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { resuming = false; }
   }
-  function label(s: HistorySession) { return s.role === "reviewer" ? "Reviewer" : s.role === "researcher" ? "Researcher" : s.role === "worker" ? m.worker() : s.agentId ? m.orc() : s.source; }
+  function label(s: HistorySession) { const role = s.role === "reviewer" ? "Reviewer" : s.role === "researcher" ? "Researcher" : s.role === "worker" ? m.worker() : s.agentId ? m.orc() : s.source; return `${s.backend === "pi" ? "Pi" : "Codex"} · ${role}`; }
   onMount(() => { void tick().then(() => input?.focus()); return () => { ++sequence; ++previewSequence; readAbort?.abort(); }; });
 </script>
 

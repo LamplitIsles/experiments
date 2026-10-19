@@ -30,7 +30,12 @@ export const imageSchema = z.object({
   availability: z.literal("missing").optional(),
 });
 export const answerSchema = z.object({ questionId: id, answer: text });
-const defaults = z.object({ model: id, effort: id });
+const defaults = z.object({
+  backend: z.enum(["codex", "pi"]).default("codex"),
+  provider: id.optional(),
+  model: id,
+  effort: id,
+});
 export const settingsSchema = z.object({
   fast: z.boolean(),
   orc: defaults,
@@ -86,7 +91,9 @@ export const inputs = {
     operationId: z.string().min(1).max(120),
   }),
   stop: z.object({ id, turnId: id }),
-  updateSettings: z.object({ id, model: id, effort: id }).strict(),
+  updateSettings: z
+    .object({ id, provider: id.optional(), model: id, effort: id })
+    .strict(),
   updateTreeFast: z
     .object({ id, fast: z.boolean(), retry: z.boolean().optional() })
     .strict(),
@@ -138,6 +145,8 @@ const question = z.object({
   at: z.number(),
 });
 const agent = z.object({
+  backend: z.enum(["codex", "pi"]).optional(),
+  provider: z.string().optional(),
   treeFast: z.boolean().optional(),
   treeFastBusy: z.boolean().optional(),
   treeFastError: z.string().optional(),

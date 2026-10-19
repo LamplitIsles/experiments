@@ -26,6 +26,8 @@ const modelsSchema = z.array(
   z.object({
     id: z.string(),
     name: z.string(),
+    backend: z.enum(["codex", "pi"]).optional(),
+    provider: z.string().optional(),
     efforts: z.array(z.string()),
     defaultEffort: z.string(),
     isDefault: z.boolean(),

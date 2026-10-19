@@ -1,3 +1,4 @@
+export type Backend = "codex" | "pi";
 export type Role = "orc" | "worker" | "reviewer" | "researcher";
 export type ReviewerProfile =
   | "standards"
@@ -18,6 +19,8 @@ export interface Project {
   path: string;
 }
 export interface Model {
+  backend?: Backend;
+  provider?: string;
   id: string;
   name: string;
   efforts: Effort[];
@@ -26,6 +29,8 @@ export interface Model {
   fastTier: string | null;
 }
 export interface Defaults {
+  backend?: Backend;
+  provider?: string;
   model: string;
   effort: Effort;
 }
@@ -58,6 +63,8 @@ export interface Message {
   at: number;
 }
 export interface HistorySession {
+  backend?: Backend;
+  provider?: string;
   threadId: string;
   title: string;
   preview: string;
@@ -120,6 +127,8 @@ export interface Delivery {
   at: number;
 }
 export interface Agent {
+  backend?: Backend;
+  provider?: string;
   researchQuestion?: string;
   reviewTarget?: ReviewTarget;
   treeFast?: boolean;

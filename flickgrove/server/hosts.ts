@@ -25,6 +25,8 @@ function qualified<T extends Agent>(host: Host, a: T): T {
   const publicAgent: Agent = {
     id: qualify(host.id, a.id),
     role: a.role,
+    backend: a.backend ?? "codex",
+    provider: a.provider,
     reviewTarget: a.reviewTarget,
     ownerId: a.ownerId ? qualify(host.id, a.ownerId) : undefined,
     project: a.project,
@@ -302,7 +304,7 @@ export class HostService {
   }
   async updateSettings(
     id: string,
-    settings: { model: string; effort: string },
+    settings: { model: string; effort: string; provider?: string },
   ) {
     return qualified(
       this.local(),
