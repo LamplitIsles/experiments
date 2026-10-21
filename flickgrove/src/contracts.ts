@@ -14,6 +14,7 @@ export interface ReviewTarget {
 export type WorkState = "idle" | "working" | "stopping" | "error";
 export type Effort = string;
 export interface Project {
+  owner?: string | null;
   alias: string;
   name: string;
   path: string;

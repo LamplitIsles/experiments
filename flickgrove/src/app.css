@@ -1901,3 +1901,44 @@ button.question-option {
   background: var(--card);
   font-size: 12px;
 }
+
+.org-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 6px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 5px;
+}
+.org-disclosure:hover {
+  background: var(--accent);
+}
+.org-disclosure:focus-visible {
+  outline: 1px solid var(--primary);
+  outline-offset: -1px;
+}
+.org-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-weight: 550;
+}
+.org-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.org-disclosure > svg,
+.org-status {
+  flex-shrink: 0;
+}
+.org-group + .org-group {
+  margin-top: 6px;
+}

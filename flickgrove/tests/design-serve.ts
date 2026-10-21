@@ -27,6 +27,7 @@ import { type RuntimeEvent, DeliveryRejected } from "../server/runtime";
 import { voiceHttp } from "../server/voice-http";
 import { fakeVoiceProvider } from "./voice-fixture";
 import { FakeRuntime } from "../server/testing";
+import { projectCatalogue } from "../server/projects";
 import type { Detail, WeeklyUsage } from "../src/contracts";
 const directory = mkdtempSync(join(tmpdir(), "grove-design-preview-"));
 const voiceProvider = fakeVoiceProvider();
@@ -42,6 +43,15 @@ const projects = [
     path: join(directory, "experiments"),
   },
 ];
+const orgProjects = [
+  ...projects,
+  { alias: "forge", name: "Forge", path: join(directory, "forge") },
+  { alias: "personal", name: "Personal", path: join(directory, "personal") },
+  { alias: "local", name: "Local", path: join(directory, "local") },
+];
+let orgFixture = false;
+let projectsDelay = 0;
+let projectsFailure = false;
 const defaults = {
   fast: true,
   orc: { model: "gpt-6.1-sol", effort: "low" },
@@ -76,7 +86,20 @@ function unit(
         ...project,
         path: branchPaths.get(name)![index],
       }))
-    : projects;
+    : orgFixture
+      ? projectCatalogue(
+          orgProjects.map((p, i) => ({
+            ...p,
+            remote: [
+              "https://github.com/GuionAI/one",
+              "ssh://git@forge.example/lamplitisles/two",
+              "git@forge.example:guionai/three",
+              "https://github.com/Personal/four",
+              "",
+            ][i],
+          })),
+        )
+      : projects;
   if (branchFixture)
     agents = agents.map((a) => ({
       ...a,
@@ -192,7 +215,11 @@ function unit(
   const app = new Workspace({
     directory: stateDirectory,
     runtime,
-    projects: async () => unitProjects,
+    projects: async () => {
+      if (projectsDelay) await Bun.sleep(projectsDelay);
+      if (projectsFailure) throw new Error("Synthetic catalogue failure");
+      return unitProjects;
+    },
     researcherSnapshot: async () => ({
       model: "gpt-6.1-sol",
       effort: "high",
@@ -266,7 +293,10 @@ function agent(
     id,
     role,
     title,
-    project: projects[project],
+    project: {
+      ...(orgFixture ? orgProjects : projects)[project],
+      ...(orgFixture && project === 2 ? { alias: "historic-forge-alias" } : {}),
+    },
     ownerId,
     model: "gpt-6.1-sol",
     effort: "low",
@@ -346,6 +376,9 @@ async function reset(mode = "working") {
     unit.app.dispose();
   }
   units = [];
+  orgFixture = mode === "org-groups";
+  projectsDelay = 0;
+  projectsFailure = false;
   branchFixture = mode === "branches";
   branchFailure = false;
   branchPaths = new Map();
@@ -402,6 +435,31 @@ async function reset(mode = "working") {
           ...(["host-selection", "device-questions"].includes(mode)
             ? [agent("second", "orc", "NUC second session", 0)]
             : []),
+          ...(orgFixture
+            ? [
+                agent(
+                  "forge-orc",
+                  "orc",
+                  "Forge repository in the same organization",
+                  2,
+                ),
+                agent("personal-orc", "orc", "Personal repository", 3),
+                agent("local-orc", "orc", "Local repository without remote", 4),
+                {
+                  ...agent(
+                    "missing-orc",
+                    "orc",
+                    "Project removed from catalogue",
+                    4,
+                  ),
+                  project: {
+                    alias: "missing",
+                    name: "Missing",
+                    path: join(directory, "missing"),
+                  },
+                },
+              ]
+            : []),
           ...(mode === "dense"
             ? Array.from({ length: 18 }, (_, i) =>
                 agent(`extra-${i}`, "orc", `Additional task ${i + 1}`, 0),
@@ -418,7 +476,7 @@ async function reset(mode = "working") {
                 agent(
                   "docs",
                   "worker",
-                  ["dense", "branches"].includes(mode)
+                  ["dense", "branches", "org-groups"].includes(mode)
                     ? "Documentation for a very long Worker assignment covering mobile navigation and persistent conversation drafts across hosts"
                     : "Documentation",
                   1,
@@ -617,6 +675,8 @@ const server = Bun.serve({
       });
     if (url.pathname === "/fixture/change" && request.method === "POST") {
       const body = (await request.json()) as {
+        projectsDelay?: number;
+        projectsFailure?: boolean;
         detailDelay?: number;
         detailFailure?: boolean;
         settingsLong?: boolean;
@@ -651,6 +711,9 @@ const server = Bun.serve({
         closedAgent?: string;
         append?: { agentId: string; text: string };
       };
+      if (body.projectsDelay !== undefined) projectsDelay = body.projectsDelay;
+      if (body.projectsFailure !== undefined)
+        projectsFailure = body.projectsFailure;
       if (body.detailDelay !== undefined) detailDelay = body.detailDelay;
       if (body.detailFailure !== undefined) detailFailure = body.detailFailure;
       if (body.settingsLong !== undefined) settingsLong = body.settingsLong;

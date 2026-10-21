@@ -44,11 +44,11 @@
   let selectedId = $state<string | null>(savedSelection.sessions[savedSelection.host] ?? null);
   let navigationReady = $state(false); let connectionReady = $state(false);
   let detail = $state<Detail | null>(null); let skills = $state<Skill[]>([]);
-  let projects = $state<Project[]>([]); let models = $state<Model[]>(preferences.models);
+  let projects = $state<Project[]>([]); let projectsLoading = $state(true); let models = $state<Model[]>(preferences.models);
   let connected = $state(false); let loading = $state(true); let error = $state("");
   let now = $state(Date.now()); let sessionList: { visibleIds(): string[]; keydown(event: KeyboardEvent): Promise<void>; expandFocused(): void; reveal(id: string): Promise<void>; closeTarget(): string | null; navigate(offset: number, index?: number): Promise<string | null> };
   let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | "abandon-close" | null>(null);
-  let search = $state(""); let projectId = $state(""); let projectHighlight=$state(""); let projectsLoading=$state(false); let projectError=$state(""); let saving = $state(false);
+  let search = $state(""); let projectId = $state(""); let projectHighlight=$state(""); let projectError=$state(""); let saving = $state(false);
   const projectListId=$props.id();
   let modelRefreshBusy = $state(false); let modalModelsLoading=$state(false); let modalModelSequence=0;
   let settings = $state<Settings | null>(null); let sequence = 0; let focusCreatedId = $state<string | null>(null);
@@ -88,16 +88,16 @@
   const visibleAgents = $derived(snapshot.agents.map(a => optimistic(a.id) && a.state !== "working" && a.state !== "stopping" ? {...a,state:"working" as const} : a));
   $effect(() => { if (navigationReady) preferences.selection = { host: instanceId, sessions: $state.snapshot(remembered) }; });
   async function loadProjects() {
-    projectId = ""; projects = []; projectError=""; projectsLoading=true; const seq = ++catalogSequence;
+    projectId = ""; projectError=""; projectsLoading=true; const seq = ++catalogSequence;
     try { const registered = await api<Project[]>("/projects"); if (seq === catalogSequence) { projects = registered; projectId = registered[0]?.alias ?? ""; } }
     catch(e) { if (seq === catalogSequence) projectError = e instanceof Error ? e.message : m.load_failure(); }
-    finally {if(seq===catalogSequence)projectsLoading=false;}
+    finally { if (seq === catalogSequence) projectsLoading = false; }
   }
   const roots = $derived(snapshot.agents.filter(a => a.role === "orc"));
   const settingsValid = $derived(!!settings && [settings.orc, settings.worker].every(role => models.some(model => model.id === role.model && (model.backend ?? "codex") === (role.backend ?? "codex") && model.provider === role.provider && model.efforts.includes(role.effort))));
   const fastAvailable = $derived(!!settings && [settings.orc, settings.worker].some(role => models.find(model => model.id === role.model && (model.backend ?? "codex") === (role.backend ?? "codex") && model.provider === role.provider)?.fastTier));
   const owner = $derived(snapshot.agents.find(a => a.id === shownDetail?.ownerId));
-  const filteredProjects = $derived(projects.filter(p => `${p.alias} ${p.name}`.toLowerCase().includes(search.toLowerCase())));
+  const filteredProjects = $derived((projectsLoading || projectError) ? [] : projects.filter(p => `${p.alias} ${p.name}`.toLowerCase().includes(search.toLowerCase())));
 
   $effect(() => { if (modal === "new" && !filteredProjects.some(p => p.alias === projectId)) projectId = filteredProjects[0]?.alias ?? ""; });
   $effect(()=>{projectHighlight=projectId;});
@@ -170,10 +170,10 @@
   }
   async function load() {
     loading = true; error = "";
-    if(!hosts.find(h=>h.id===snapshot.entryId)?.connected){if(selectedId)await restoreDetail(selectedId);loading=false;return;}
+    if(!hosts.find(h=>h.id===snapshot.entryId)?.connected){if(selectedId)await restoreDetail(selectedId);loading=false;projectsLoading=false;return;}
     try {
-      const [state, registered, catalog] = await Promise.all([api<Snapshot>("/snapshot"), api<Project[]>("/projects"), api<Model[]>("/models")]);
-      projects = registered; models = catalog;preferences.models=catalog; if(!preferences.settings&&catalog.length){const model=catalog.find(m=>m.isDefault)??catalog[0];preferences.settings={fast:false,orc:{backend:model.backend ?? "codex",provider:model.provider,model:model.id,effort:model.defaultEffort},worker:{backend:model.backend ?? "codex",provider:model.provider,model:model.id,effort:model.defaultEffort}};snapshot={...snapshot,settings:preferences.settings};} if(!connected) adopt(state, true);
+      const [state, , catalog] = await Promise.all([api<Snapshot>("/snapshot"), loadProjects(), api<Model[]>("/models")]);
+      models = catalog;preferences.models=catalog; if(!preferences.settings&&catalog.length){const model=catalog.find(m=>m.isDefault)??catalog[0];preferences.settings={fast:false,orc:{backend:model.backend ?? "codex",provider:model.provider,model:model.id,effort:model.defaultEffort},worker:{backend:model.backend ?? "codex",provider:model.provider,model:model.id,effort:model.defaultEffort}};snapshot={...snapshot,settings:preferences.settings};} if(!connected) adopt(state, true);
       if (selectedId) await restoreDetail(selectedId);
     } catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { loading = false; }
@@ -543,7 +543,7 @@
       for(const pending of outgoing.entries)if(pending.agentId.startsWith(id+":")&&pending.status==='pending')unknownOutgoing(pending.agentId,pending.id,m.sending());
     });
     setClient(client);
-    void client.start().then(()=>{connectionReady=true;return load();}).catch(e=>{loading=false;error=e.message;});
+    void client.start().then(()=>{connectionReady=true;return load();}).catch(e=>{loading=false;projectsLoading=false;error=e.message;});
     const compositionStart = () => composing = true;
     const compositionEnd = () => composing = false;
     window.addEventListener("compositionstart", compositionStart);
@@ -565,7 +565,7 @@
 </header>
 <div class:close-recovery-layout={closeRecovery.entries.some(i => modal !== "abandon-close" || abandon?.id !== i.agentId)}>
 <main class:with-detail={!!selectedId}>
-  <SessionList bind:this={sessionList} agents={visibleAgents} rootOrder={treeOrder[instanceId] ?? []} onreorder={ids => treeOrder = { ...treeOrder, [instanceId]: ids }} {hosts} {selectedId} {loading} {connected} {closingId} closeError={selectedId === closeError?.id ? null : closeError} onclosetree={closeTree} onopen={open} onnew={() => show("new")}>
+  <SessionList bind:this={sessionList} agents={visibleAgents} {projects} {projectsLoading} {instanceId} rootOrder={treeOrder[instanceId] ?? []} onreorder={ids => treeOrder = { ...treeOrder, [instanceId]: ids }} {hosts} {selectedId} {loading} {connected} {closingId} closeError={selectedId === closeError?.id ? null : closeError} onclosetree={closeTree} onopen={open} onnew={() => show("new")}>
     {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
   </SessionList>
   {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !shownDetail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
