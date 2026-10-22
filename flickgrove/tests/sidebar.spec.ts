@@ -68,6 +68,78 @@ test("desktop offcanvas persists, keeps draft/caret/tree and releases width", as
     .toBe(0);
   const composerBounds = (await page.locator(".composer").boundingBox())!;
   expect(composerBounds.y + composerBounds.height).toBeLessThanOrEqual(900);
+  // Wait for the actual offcanvas layout, including the right edge, before capture.
+  await expect
+    .poll(async () => {
+      const bounds = (await page.locator(".agent-detail").boundingBox())!;
+      return [bounds.x, bounds.width];
+    })
+    .toEqual([0, 1440]);
+  await expect
+    .poll(
+      async () =>
+        (await page.locator('[data-slot="sidebar-gap"]').boundingBox())!.width,
+    )
+    .toBe(0);
+  const usage = page.getByRole("button", { name: "Weekly usage", exact: true });
+  const settings = page.getByRole("button", { name: "Settings", exact: true });
+  const withinViewport = async (
+    control: import("@playwright/test").Locator,
+  ) => {
+    await expect(control).toHaveCount(1);
+    await expect(control).toBeVisible();
+    await expect
+      .poll(async () => {
+        const bounds = (await control.boundingBox())!;
+        return (
+          bounds.x >= 0 &&
+          bounds.y >= 0 &&
+          bounds.x + bounds.width <= 1440 &&
+          bounds.y + bounds.height <= 900
+        );
+      })
+      .toBe(true);
+  };
+  await withinViewport(usage);
+  await withinViewport(settings);
+  await settings.click();
+  const settingsDialog = page.getByRole("dialog", {
+    name: "Settings",
+    exact: true,
+  });
+  await withinViewport(settingsDialog);
+  await page.screenshot({
+    animations: "disabled",
+    path: shots + "/desktop-collapsed-settings.png",
+  });
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-slot="dialog-content"]')).toBeHidden();
+  await usage.click();
+  await withinViewport(page.locator(".weekly-popover"));
+  await page.screenshot({
+    animations: "disabled",
+    path: shots + "/desktop-collapsed-usage.png",
+  });
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".weekly-popover")).toBeHidden();
+  await composer.focus();
+  await composer.evaluate((el: HTMLTextAreaElement) =>
+    el.setSelectionRange(4, 9),
+  );
+  await expect(composer).toHaveValue("Unsent sidebar draft");
+  await withinViewport(usage);
+  await withinViewport(settings);
+  console.log(
+    "collapsed utility geometry",
+    JSON.stringify(
+      await page.locator(".global-actions button").evaluateAll((els) =>
+        els.map((el) => ({
+          label: el.getAttribute("aria-label"),
+          rect: el.getBoundingClientRect().toJSON(),
+        })),
+      ),
+    ),
+  );
   await page.screenshot({
     animations: "disabled",
     path: shots + "/desktop-collapsed.png",
