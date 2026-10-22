@@ -41,7 +41,10 @@ test("desktop offcanvas persists, keeps draft/caret/tree and releases width", as
   const original = (await page.locator(".agent-detail").boundingBox())!;
   expect(original.y).toBe(0);
   expect(original.height).toBe(900);
-  await page.screenshot({ path: shots + "/desktop-expanded.png" });
+  await page.screenshot({
+    animations: "disabled",
+    path: shots + "/desktop-expanded.png",
+  });
   await composer.press("Meta+b");
   await expect(
     page.locator('[data-slot="sidebar"][data-state]'),
@@ -65,7 +68,10 @@ test("desktop offcanvas persists, keeps draft/caret/tree and releases width", as
     .toBe(0);
   const composerBounds = (await page.locator(".composer").boundingBox())!;
   expect(composerBounds.y + composerBounds.height).toBeLessThanOrEqual(900);
-  await page.screenshot({ path: shots + "/desktop-collapsed.png" });
+  await page.screenshot({
+    animations: "disabled",
+    path: shots + "/desktop-collapsed.png",
+  });
   await page.reload();
   await expect(
     page.locator('[data-slot="sidebar"][data-state]'),
@@ -168,7 +174,10 @@ test("mobile drawer is transient, selection dismisses, Esc/Back respect foregrou
   await page.goto(origin);
   await expect(page.locator(".session-list")).toBeHidden();
   await openSidebar(page);
-  await page.screenshot({ path: shots + "/mobile-drawer.png" });
+  await page.screenshot({
+    animations: "disabled",
+    path: shots + "/mobile-drawer.png",
+  });
   await page
     .getByRole("button", { name: "Expand Workers", exact: true })
     .first()
@@ -178,7 +187,10 @@ test("mobile drawer is transient, selection dismisses, Esc/Back respect foregrou
     .click();
   await expect(page.locator(".role-project")).toContainText("Worker");
   await expect(page.locator(".session-list")).toBeHidden();
-  await page.screenshot({ path: shots + "/mobile-detail.png" });
+  await page.screenshot({
+    animations: "disabled",
+    path: shots + "/mobile-detail.png",
+  });
   await toggle(page).click();
   await page
     .getByRole("button", { name: "New session", exact: true })
@@ -295,22 +307,42 @@ test("empty/no-detail tools, compact quota popover, long text and disconnection"
   );
   await page.goto(origin);
   await expect(page.locator(".detail-empty")).toBeVisible();
-  await page.screenshot({ path: shots + "/desktop-empty.png" });
+  await page.screenshot({
+    animations: "disabled",
+    path: shots + "/desktop-empty.png",
+  });
   await toggle(page).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(
     page.getByRole("dialog", { name: "Settings", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(
-    page.getByRole("dialog", { name: "Settings", exact: true }),
-  ).toBeHidden();
-  await page.screenshot({ path: shots + "/desktop-no-detail-collapsed.png" });
+  await expect(page.locator("[data-slot=dialog-content]")).toBeHidden();
+  await expect(page.locator("[data-slot=dialog-overlay]")).toBeHidden();
+  await page.screenshot({
+    animations: "disabled",
+    path: shots + "/desktop-no-detail-collapsed.png",
+  });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(
     page.getByRole("button", { name: "Settings", exact: true }),
   ).toBeVisible();
-  await page.screenshot({ path: shots + "/mobile-empty.png" });
+  await expect
+    .poll(
+      async () => (await page.locator(".detail-empty").boundingBox())?.height,
+    )
+    .toBe(844);
+  await expect(page.locator(".global-actions")).toHaveCount(1);
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await page.screenshot({
+    animations: "disabled",
+    path: shots + "/mobile-empty.png",
+  });
   await page.setViewportSize({ width: 1440, height: 900 });
   await request.post(origin + "/fixture/reset", {
     data: { mode: "org-groups" },
@@ -330,14 +362,20 @@ test("empty/no-detail tools, compact quota popover, long text and disconnection"
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
-  await page.screenshot({ path: shots + "/mobile-popover.png" });
+  await page.screenshot({
+    animations: "disabled",
+    path: shots + "/mobile-popover.png",
+  });
   await page.keyboard.press("Escape");
   await toggle(page).click();
   await page
     .getByRole("button", { name: "Expand Workers", exact: true })
     .first()
     .click();
-  await page.screenshot({ path: shots + "/mobile-long-groups.png" });
+  await page.screenshot({
+    animations: "disabled",
+    path: shots + "/mobile-long-groups.png",
+  });
   await page.keyboard.press("Escape");
   await page.routeWebSocket("**/api/socket", (ws) => ws.close());
   await page.reload();
