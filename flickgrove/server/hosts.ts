@@ -150,6 +150,9 @@ export class HostService {
   projects(environment?: string) {
     return this.workspace.projects(environment);
   }
+  historyProjects() {
+    return this.workspace.historyProjects();
+  }
   environments() {
     return this.workspace.environmentCatalogue();
   }

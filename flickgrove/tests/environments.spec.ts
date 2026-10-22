@@ -117,3 +117,68 @@ for (const viewport of [
     ).toBe(true);
   });
 }
+
+for (const width of [1440, 390]) {
+  test(`closed remote history remains readable after restart and device loss at ${width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
+    for (const fault of ["lost", "removed", "moved"]) {
+      await page.goto("about:blank");
+      await page.goto("/");
+      await newSession(page);
+      const dialog = page.getByRole("dialog");
+      await dialog
+        .getByRole("button", { name: "Execution environment", exact: true })
+        .click();
+      await page
+        .getByRole("option", { name: `Saved ${fault} Mac`, exact: true })
+        .click();
+      await dialog
+        .getByRole("option", {
+          name: "Same project · Saved history",
+          exact: true,
+        })
+        .click();
+      await expect(
+        dialog.getByRole("button", { name: "New session", exact: true }),
+      ).toBeDisabled();
+      await dialog
+        .getByRole("button", { name: "Find history", exact: true })
+        .click();
+      await dialog
+        .getByRole("button")
+        .filter({ has: page.getByText(`Saved ${fault} task`, { exact: true }) })
+        .click();
+      await dialog
+        .getByRole("button", { name: "Read full message", exact: true })
+        .click();
+      await expect(
+        dialog.getByText(`Original ${fault} native transcript`, {
+          exact: true,
+        }),
+      ).toBeVisible();
+      if (fault === "removed")
+        await page.screenshot({
+          animations: "disabled",
+          path: `../.scratch/codex-project-environments/screenshots/closed-history-${width}.png`,
+        });
+      await dialog
+        .getByRole("button", { name: "Resume session", exact: true })
+        .click();
+      await expect(dialog.getByRole("alert")).toContainText(
+        fault === "lost"
+          ? "unavailable"
+          : fault === "removed"
+            ? "no longer configured"
+            : "target changed",
+        { ignoreCase: true },
+      );
+      await expect(
+        dialog.getByText(`Original ${fault} native transcript`, {
+          exact: true,
+        }),
+      ).toBeVisible();
+    }
+  });
+}

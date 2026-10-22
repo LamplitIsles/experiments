@@ -9,6 +9,9 @@ export async function invoke(app: HostService, member: Method, input: unknown) {
   switch (member) {
     case "projects":
       return await app.projects(parse(member).environment);
+    case "historyProjects":
+      parse(member);
+      return app.historyProjects();
     case "environments":
       parse(member);
       return await app.environments();

@@ -30,20 +30,41 @@ const mac = {
   name: "Mac studio · a long device name for layout verification",
   target: "owned-mac",
 };
+let faulted = false;
+const savedDevices = ["lost", "removed", "moved"].map((id) => ({
+  id,
+  name: `Saved ${id} Mac`,
+  target: `original-${id}`,
+}));
 class Environments extends ProjectEnvironments {
   async list() {
     return [
       local,
       mac,
+      ...savedDevices
+        .filter((e) => !faulted || e.id !== "removed")
+        .map((e) =>
+          faulted && e.id === "moved"
+            ? { ...e, target: "replacement-moved" }
+            : e,
+        ),
       { id: "offline", name: "Offline Mac", target: "offline" },
       { id: "empty", name: "Empty Mac", target: "empty" },
     ];
   }
   async binding(id = "local") {
-    return (await this.list()).find((e) => e.id === id)!;
+    const selected = (await this.list()).find((e) => e.id === id);
+    if (!selected)
+      throw new Error("Project execution environment is no longer configured");
+    return selected;
   }
   async assert(binding: any) {
-    return binding ?? local;
+    if (faulted && binding?.id === "lost")
+      throw new Error("Saved device is unavailable");
+    const current = await this.binding(binding?.id);
+    if (binding && current.target !== binding.target)
+      throw new Error("Execution target changed");
+    return current;
   }
   async branch() {
     return "remote-feature";
@@ -87,11 +108,13 @@ for (const [threadId, environmentId, title] of [
     { id: threadId + "-body", role: "assistant", text: title, at: 1000 },
   ]);
 }
-const app = new Workspace({
+const workspaceOptions = {
   directory: join(root, "state"),
   runtime,
   environments,
   projects: async (id = "local") => {
+    if (faulted && id === "lost")
+      throw new Error("Saved device is unavailable");
     if (id === "mac") await Bun.sleep(650);
     if (id === "offline")
       throw new Error(
@@ -109,7 +132,30 @@ const app = new Workspace({
     ];
   },
   branches: { read: async () => "local-main" },
-});
+};
+let app = new Workspace(workspaceOptions);
+const settings = {
+  fast: false,
+  orc: { backend: "codex" as const, model: "sol", effort: "medium" },
+  worker: { backend: "codex" as const, model: "sol", effort: "medium" },
+};
+for (const device of savedDevices) {
+  const agent = await app.createOrc(`${device.id}:same`, settings);
+  const thread = runtime.historySessions.get(agent.threadId!)!;
+  thread.title = `Saved ${device.id} task`;
+  runtime.historyItems.set(agent.threadId!, [
+    {
+      id: `body-${device.id}`,
+      role: "assistant",
+      at: 1000,
+      text: `Original ${device.id} native transcript` + " ".repeat(1100000),
+    },
+  ]);
+  await app.closeTree(agent.id);
+}
+app.dispose();
+faulted = true;
+app = new Workspace(workspaceOptions);
 const origin = "http://127.0.0.1:14325";
 const service = new HostService(app, {
   directory: join(root, "peer"),

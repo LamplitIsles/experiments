@@ -18,6 +18,8 @@ import {
 } from "./project-environments";
 import { Workspace } from "./workspace";
 import { FakeRuntime } from "./testing";
+import { createHandler } from "./http";
+import { invoke } from "./chord-methods";
 import { HostService } from "./hosts";
 import { filePreview, PREVIEW_TTL } from "./file-preview";
 import { DeliveryRejected } from "./runtime";
@@ -598,3 +600,163 @@ test("remote uncertainty is never replayed after restart, and device disconnecti
   expect(error).not.toContain("private transport detail");
   expect((await f.app.projects("local"))[0].name).toBe("Local same");
 }, 20000);
+
+test("saved history references and cursors isolate local and retargeted devices with identical aliases and paths", async () => {
+  const f = await fixture();
+  const local = await f.app.createOrc("same", f.settings);
+  const original = await f.app.createOrc("mac:same", f.settings);
+  await f.app.closeTree(original.id);
+  f.retarget();
+  const replacement = await f.app.createOrc("mac:same", f.settings);
+  await f.app.closeTree(replacement.id);
+  const saved = f.app.historyProjects();
+  const ref = (id: string) =>
+    saved.find((p) => p.historyRef === `@saved:${id}`)!.historyRef!;
+  expect(
+    (await f.app.history(ref(original.id), "")).sessions.map((s) => s.threadId),
+  ).toEqual([original.threadId!]);
+  expect(
+    (await f.app.history(ref(replacement.id), "")).sessions.map(
+      (s) => s.threadId,
+    ),
+  ).toEqual([replacement.threadId!]);
+  expect(
+    (await f.app.history(ref(local.id), "")).sessions.map((s) => s.threadId),
+  ).toEqual([local.threadId!]);
+  await expect(
+    f.app.historySession(ref(replacement.id), original.threadId!),
+  ).rejects.toThrow("does not belong");
+  for (let i = 0; i < 75; i++)
+    f.runtime.historySessions.set(`original-${i}`, {
+      threadId: `original-${i}`,
+      title: "Original target",
+      preview: "",
+      cwd: f.local,
+      environmentId: "mac",
+      environmentTarget: f.binding.target,
+      updatedAt: i,
+      source: "appServer",
+      role: "orc",
+      archived: false,
+    });
+  const page = await f.app.history(ref(original.id), "");
+  expect(page.nextCursor).toBeTruthy();
+  await expect(
+    f.app.history(ref(replacement.id), "", page.nextCursor!),
+  ).rejects.toThrow("Search changed");
+  await expect(
+    f.app.history(ref(local.id), "", page.nextCursor!),
+  ).rejects.toThrow("Search changed");
+}, 20000);
+
+for (const fault of ["offline", "removed", "retarget"] as const) {
+  test(`closed managed history stays readable without execution ${fault}`, async () => {
+    const f = await fixture();
+    let writerOpens = 0;
+    const open = f.runtime.open.bind(f.runtime);
+    f.runtime.open = async (...args) => {
+      writerOpens++;
+      return open(...args);
+    };
+    const remote = await f.app.createOrc("mac:same", f.settings);
+    const sent = await f.app.send(
+      remote.id,
+      "original remote transcript",
+      "owned-history-input",
+    );
+    f.runtime.emit(remote.id, {
+      type: "item",
+      turnId: sent.turnId!,
+      item: {
+        type: "agentMessage",
+        id: "owned-assistant",
+        text: "original remote response",
+      },
+    });
+    f.runtime.emit(remote.id, {
+      type: "completed",
+      turnId: sent.turnId!,
+      status: "completed",
+    });
+    await f.app.closeTree(remote.id);
+    await Bun.sleep(50); // settle the fixture's previously scheduled branch read
+    const app = f.restart();
+    const origin = "http://fixture.invalid";
+    const service = new HostService(app, {
+      directory: join(f.root, "peer"),
+      origin: () => origin,
+    });
+    cleanup.push(() => service.dispose());
+    expect(app.snapshot().agents).toHaveLength(0);
+    if (fault === "offline") f.disconnect();
+    if (fault === "removed") await writeFile(f.config, "");
+    if (fault === "retarget") f.retarget();
+    const before = {
+      commands: f.commands.length,
+      writerOpens,
+      sends: f.runtime.inputs.length,
+    };
+    const saved = service.historyProjects()[0];
+    expect(await invoke(service, "historyProjects", {})).toEqual([saved]);
+    expect((await service.environments()).some((e) => e.id === "mac")).toBe(
+      true,
+    );
+    expect(
+      await invoke(service, "history", {
+        project: saved.historyRef!,
+        query: "",
+      }),
+    ).toMatchObject({
+      sessions: [{ threadId: remote.threadId!, closed: true }],
+    });
+    expect(
+      await invoke(service, "historySession", {
+        project: saved.historyRef!,
+        threadId: remote.threadId!,
+      }),
+    ).toMatchObject({
+      threadId: remote.threadId!,
+      environmentTarget: f.binding.target,
+    });
+    const handler = createHandler(app, { service, origin: () => origin });
+    for (const [path, expected] of [
+      [
+        "messages",
+        {
+          messages: [
+            { text: "original remote transcript" },
+            { text: "original remote response" },
+          ],
+        },
+      ],
+      ["body", { text: "original remote response" }],
+    ] as const) {
+      const params = new URLSearchParams({
+        project: saved.historyRef!,
+        thread: remote.threadId!,
+        item: "owned-assistant",
+      });
+      const response = await handler(
+        new Request(`${origin}/api/read/${path}?${params}`, {
+          headers: { origin, "x-grove-peer": service.identity.id },
+        }),
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject(expected);
+    }
+    expect(f.commands.length).toBe(before.commands);
+    expect(writerOpens).toBe(before.writerOpens);
+    expect(f.runtime.inputs.length).toBe(before.sends);
+    if (fault !== "offline")
+      await expect(
+        app.resumeHistory(
+          saved.historyRef!,
+          remote.threadId!,
+          false,
+          f.settings,
+        ),
+      ).rejects.toThrow();
+    expect(writerOpens).toBe(before.writerOpens);
+    expect(f.runtime.inputs.length).toBe(before.sends);
+  }, 20000);
+}

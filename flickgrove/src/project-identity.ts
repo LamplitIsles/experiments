@@ -3,9 +3,10 @@ import type { Project } from "./contracts";
 export const environmentId = (project: Pick<Project, "environment">) =>
   project.environment?.id ?? "local";
 export const projectReference = (project: Project) =>
-  environmentId(project) === "local"
+  project.historyRef ??
+  (environmentId(project) === "local"
     ? project.alias
-    : `${environmentId(project)}:${project.alias}`;
+    : `${environmentId(project)}:${project.alias}`);
 export function parseProjectReference(reference: string) {
   const index = reference.indexOf(":");
   return index < 0

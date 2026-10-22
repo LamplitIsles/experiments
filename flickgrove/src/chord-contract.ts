@@ -48,6 +48,7 @@ export const inputs = {
   identity: z.object({}),
   projects: z.object({ environment: id.optional() }),
   environments: z.object({}),
+  historyProjects: z.object({}),
   models: z.object({}).strict(),
   weekly: z.object({}).strict(),
   history: z.object({
@@ -279,6 +280,7 @@ export function routeCall(
       { environment: url.searchParams.get("environment") ?? undefined },
     ],
     "/environments": ["environments", {}],
+    "/history/projects": ["historyProjects", {}],
     "/models": ["models", {}],
     "/weekly": ["weekly", {}],
     "/agents": ["createOrc", { ...(body as object) }],

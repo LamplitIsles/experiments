@@ -20,6 +20,7 @@ export interface ProjectEnvironment {
   target: string;
 }
 export interface Project {
+  historyRef?: string;
   environment?: ProjectEnvironment;
   owner?: string | null;
   alias: string;

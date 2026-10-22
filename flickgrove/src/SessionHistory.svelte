@@ -95,7 +95,7 @@
 
 <div class="session-history">
   <div class="history-heading"><Button variant="ghost" size="icon-sm" aria-label={m.back_history()} onclick={() => back()}><ArrowLeft /></Button><strong>{previewOpen ? m.session_preview() : m.find_history()}</strong></div>
-  <p class="history-context">{#if project.environment && project.environment.id!=="local"}{project.environment.name} · {/if}{!previewOpen || previewProject === projectReference(project) ? project.name : parseProjectReference(previewProject).alias}</p>
+  <p class="history-context">{#if project.environment && project.environment.id!=="local"}{project.environment.name} · {/if}{!previewOpen || previewProject === projectReference(project) ? project.name : previewProject.startsWith("@saved:") ? selected?.cwd : parseProjectReference(previewProject).alias}</p>
   {#if !previewOpen}
     <div class="history-controls">
     <Input bind:ref={input} bind:value={query} aria-label={m.search_history()} placeholder={m.search_history()} onkeydown={e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); void search(); } }} />

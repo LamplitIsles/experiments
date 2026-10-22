@@ -489,11 +489,28 @@ export class Workspace {
         this.store.byThread(threadId),
     )?.project;
   }
-  environmentCatalogue() {
-    return (
-      this.options.environments?.list() ??
-      Promise.resolve([{ id: "local", name: "This machine", target: "local" }])
-    );
+  historyProjects() {
+    const projects = new Map<string, Project>();
+    for (const { id, project } of this.store.historyProjects()) {
+      const key = JSON.stringify([project.alias, projectDirectoryKey(project)]);
+      if (!projects.has(key))
+        projects.set(key, { ...project, historyRef: `@saved:${id}` });
+    }
+    return [...projects.values()];
+  }
+  async environmentCatalogue() {
+    const entries = await (this.options.environments?.list() ??
+      Promise.resolve([
+        { id: "local", name: "This machine", target: "local" },
+      ]));
+    for (const project of this.historyProjects()) {
+      if (
+        project.environment &&
+        !entries.some((e) => e.id === project.environment!.id)
+      )
+        entries.push(project.environment);
+    }
+    return entries;
   }
   private async assertProject(project: Project, backend?: string) {
     if (environmentId(project) !== "local" && backend === "pi")
@@ -958,6 +975,11 @@ export class Workspace {
       : project.path === path;
   }
   private async historyProject(alias: string) {
+    if (alias.startsWith("@saved:")) {
+      const agent = this.readableAgent(this.store.byId(alias.slice(7)));
+      if (!agent) throw new Error("Saved project history not found");
+      return agent.project;
+    }
     const reference = parseProjectReference(alias);
     const project = (await this.projects(reference.environment)).find(
       (p) => p.alias === reference.alias,
@@ -984,7 +1006,7 @@ export class Workspace {
       ownerProject: owner
         ? environmentId(owner.project) === "local"
           ? owner.project.alias
-          : environmentId(owner.project) + ":" + owner.project.alias
+          : `@saved:${owner.id}`
         : undefined,
       environmentId: environmentId(agent.project),
       environmentTarget: agent.project.environment?.target,
