@@ -145,6 +145,8 @@ First opening a known agent immediately displays its target identity and stable 
 
 The native recent window and device-local pending messages are readable immediately. On a first visit, server recovery records wait for the first HTTP history check, with a localized loading status beside the recent content. Successful native identity matches retire temporary recovery rows; a failed read keeps unresolved records accessible and permits Retry without inferring that the Peer is offline or replaying submissions. Cached native reading remains immediate.
 
+A new Codex session saves its existing Grove title with native `thread/name/set` before creation succeeds. This persists an unsent paginated thread for passive reading after restart. Rejected, disconnected or timed-out saves fail creation without automatically repeating creation or naming; an unknown save may have persisted native state. Restoring an existing thread preserves its native title. Passive history never names, resumes or sends to repair missing history.
+
 A freshly started native thread is known empty until a send is attempted or a native event arrives. During that interval Grove serves an empty reading page without invoking native item listing, so a new unsent session shows its first-input state. This knowledge ends on release or connection replacement; resumed threads and uncertain sends still use normal native reads and expose genuine errors with Retry.
 
 ## Independent connections and recovery
@@ -155,7 +157,7 @@ Reconnection verifies identity and obtains a fresh authoritative snapshot. Each 
 
 Each message has an immutable operation ID and content envelope. Public receipts are **accepted** (the existing native start/steer confirmation) or **rejected** (definitely not received). Lookup on the local instance returns `null` when still processing, native admission is unknown or no record exists. Null supplies no rejection, recovery permission or replay. Browser-local results are **pending / accepted / rejected**; the existing single operation journal and backend execution states keep their internal encoding, without storage migration or a second decoder.
 
-If opening or resuming the original native thread fails before an input is sent, that new submission is rejected with the actual error and **Restore to draft**. For example, an empty thread created before a backend restart may have no native rollout to resume. Grove does not replace that thread or pretend it accepted the input. Failures after a native send attempt remain unknown unless receipt or matching native input proves an outcome; previously uncertain submissions are not reclassified or replayed. Unsupported history reads remain separate, actionable reading errors.
+If opening or resuming the original native thread fails before an input is sent, that new submission is rejected with the actual error and **Restore to draft**. For example, an older unsaved empty thread may have no native rollout to resume. Grove does not replace that thread or pretend it accepted the input. Failures after a native send attempt remain unknown unless receipt or matching native input proves an outcome; previously uncertain submissions are not reclassified or replayed. Unsupported history reads remain separate, actionable reading errors.
 
 ## Native runtime ownership
 

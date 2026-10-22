@@ -185,7 +185,11 @@ export async function nameThreadFromPrompt(
         includeTurns: false,
       });
       checkActive();
-      if (original.thread?.name == null)
+      // The initial Grove title is now persisted before the first turn.
+      if (
+        original.thread?.name == null ||
+        original.thread.name === "New session"
+      )
         await client.call("thread/name/set", { threadId, name: title });
     };
     await Promise.race([

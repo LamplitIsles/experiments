@@ -217,7 +217,10 @@ test("history uses indexed metadata for both archive states, reads paginated ite
     ).toBe(true);
     expect(
       requests.some(
-        (r) => r.method === "thread/search" || r.method === "turn/start",
+        (r) =>
+          r.method === "thread/search" ||
+          r.method === "turn/start" ||
+          r.method === "thread/name/set",
       ),
     ).toBe(false);
     expect(
@@ -346,6 +349,7 @@ test("the SDK adapter initializes isolated role configuration, discovers enabled
     });
     const title = await handle.title("Build a reader");
     expect(title).toBeTruthy();
+    expect(title).not.toBe("New session");
     const beforeRename = events.filter((e) => e.type === "working").length;
     await handle.rename("Manually named in Grove");
     expect(await runtime.readTitle(handle.threadId)).toBe(
@@ -402,6 +406,7 @@ test("the SDK adapter initializes isolated role configuration, discovers enabled
     );
     expect(resumed.threadId).toBe(handle.threadId);
     expect(resumed.threadName).toBe("Manual name wins");
+    expect(await runtime.readTitle(resumed.threadId)).toBe("Manual name wins");
     await resumed.close();
     const requests = (
       await readFile(join(directory, ".fake-app-server-requests.jsonl"), "utf8")
@@ -804,3 +809,96 @@ test("isolated app-server wire reads a multi-megabyte native page and oversized 
     await rm(directory, { recursive: true, force: true });
   }
 }, 15_000);
+
+test("new opens await native naming; failed and unknown saves never publish a handle or replay", async () => {
+  for (const mode of [
+    "success",
+    "failRename",
+    "disconnectRename",
+    "holdRename",
+    "loseRenameAck",
+  ]) {
+    const directory = await mkdtemp(join(tmpdir(), "grove-empty-save-"));
+    const controls = join(directory, ".fake-app-server-control.json");
+    const requests = async () =>
+      (
+        await readFile(
+          join(directory, ".fake-app-server-requests.jsonl"),
+          "utf8",
+        )
+      )
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+    const runtime = new CodexRuntime({
+      cwd: directory,
+      origin: () => "http://127.0.0.1:1",
+      codexPath: fileURLToPath(
+        new URL("../tests/fake-codex.mjs", import.meta.url),
+      ),
+      env: {
+        PATH: process.env.PATH,
+        HOME: join(directory, "home"),
+        CODEX_HOME: join(directory, "codex"),
+        XDG_CONFIG_HOME: join(directory, "config"),
+        XDG_DATA_HOME: join(directory, "data"),
+        FAKE_SERVER_ROOT: directory,
+      },
+    });
+    const app = new Workspace({
+      directory: join(directory, "workspace"),
+      runtime,
+      projects: async () => [
+        { alias: "owned", name: "Owned", path: directory },
+      ],
+    });
+    try {
+      await writeFile(controls, JSON.stringify({ [mode]: true }));
+      if (mode === "success") {
+        const created = await app.createOrc("owned");
+        expect(await runtime.readTitle(created.threadId!)).toBe(created.title);
+        const before = await requests();
+        expect(
+          before
+            .filter((r) => r.method === "thread/name/set")
+            .map((r) => r.params),
+        ).toEqual([{ threadId: created.threadId, name: created.title }]);
+        expect(
+          before.findIndex((r) => r.method === "thread/name/set"),
+        ).toBeGreaterThan(before.findIndex((r) => r.method === "thread/start"));
+      } else {
+        await expect(app.createOrc("owned")).rejects.toThrow();
+        expect(app.snapshot().agents).toHaveLength(0);
+        const calls = await requests();
+        expect(
+          calls.filter((r) => r.method === "thread/name/set"),
+        ).toHaveLength(1);
+        expect(calls.filter((r) => r.method === "thread/start")).toHaveLength(
+          1,
+        );
+        expect(
+          calls.some((r) => ["turn/start", "thread/resume"].includes(r.method)),
+        ).toBe(false);
+        if (mode === "loseRenameAck") {
+          const state = JSON.parse(
+            await readFile(
+              join(directory, ".fake-app-server-state.json"),
+              "utf8",
+            ),
+          );
+          const id = calls.find((r) => r.method === "thread/name/set").params
+            .threadId;
+          expect(state.threads[id].threadName).toBe("New session");
+        }
+        if (mode !== "disconnectRename")
+          expect(
+            calls.filter((r) => r.method === "thread/unsubscribe"),
+          ).toHaveLength(1);
+      }
+    } finally {
+      app.dispose();
+      await runtime.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+}, 30000);

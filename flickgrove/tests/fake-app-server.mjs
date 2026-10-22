@@ -1114,6 +1114,8 @@ async function handle(request) {
       return {};
     }
     case "thread/name/set":
+      if (control().disconnectRename) process.exit(42);
+      if (control().holdRename) return new Promise(() => {});
       if (control().failRename) rpcError(-32603, "fixture rename rejected");
       state.threadName = p.name;
       save();
@@ -1123,6 +1125,7 @@ async function handle(request) {
       });
       for (const notification of control().notificationsOnRename ?? [])
         send(notification);
+      if (control().loseRenameAck) return new Promise(() => {});
       return {};
     case "thread/unsubscribe": {
       if (control().failUnsubscribeThreads?.includes(p.threadId))

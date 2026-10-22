@@ -160,3 +160,19 @@ test("title text is bounded and normalized without splitting Unicode", () => {
   );
   expect(parseTitle('{"title":""}')).toBeUndefined();
 });
+
+test("replaces only the persisted new-session placeholder while preserving a later manual name", async () => {
+  for (const name of ["New session", "Manually renamed"]) {
+    const client = fixture(name);
+    await nameThreadFromPrompt(
+      client,
+      "original",
+      "/fixture",
+      "Fix login",
+      "fixture-model",
+    );
+    expect(client.calls.some((call) => call.method === "thread/name/set")).toBe(
+      name === "New session",
+    );
+  }
+});

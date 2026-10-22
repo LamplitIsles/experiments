@@ -746,8 +746,18 @@ export class CodexRuntime implements Runtime {
           });
       threadId = response.thread.id;
       this.threads.set(threadId, client);
-      if (!agent.threadId) this.emptyThreads.add(threadId);
       threadName = response.thread.name;
+      if (!agent.threadId) {
+        // Naming persists a paginated thread before its first turn. Do not
+        // publish a successful open until native storage confirms the save.
+        await client.call(
+          "thread/name/set",
+          { threadId, name: agent.title },
+          { timeoutMs: 5000 },
+        );
+        threadName = agent.title;
+        this.emptyThreads.add(threadId);
+      }
       if (
         "itemsBackwardsCursor" in response &&
         typeof response.itemsBackwardsCursor === "string"
