@@ -13,7 +13,7 @@ import { PiRuntime } from "./pi";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { CodexRuntime } from "./codex";
 import { Workspace } from "./workspace";
-import { registeredProjects } from "./projects";
+import { ProjectEnvironments } from "./project-environments";
 import { HostService } from "./hosts";
 import { servePeer } from "./http";
 
@@ -45,7 +45,10 @@ const directory =
 const configPath =
   values.config ?? join(homedir(), ".config", "flickgrove", "config.toml");
 await initializeReviewerConfig(configPath);
+const environments = new ProjectEnvironments(configPath);
 const codexRuntime = new CodexRuntime({
+  environments,
+  projectForThread: (id) => app.projectForThread(id),
   cwd: process.cwd(),
   origin: () => localOrigin,
   codexPath: values.codex,
@@ -62,7 +65,8 @@ const runtime: MixedRuntime = new MixedRuntime(
 const app: Workspace = new Workspace({
   directory,
   runtime,
-  projects: registeredProjects,
+  projects: (id) => environments.projects(id),
+  environments,
   orcPrompt: () => orcPrompt(configPath),
   researcherSnapshot: () => researcherSnapshot(configPath),
   reviewerSnapshot: (profile) => reviewerSnapshot(configPath, profile),

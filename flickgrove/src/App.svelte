@@ -13,6 +13,9 @@
   import { retainTranscriptPositions } from "./transcript-state";
   import { LocalConnection, preferences } from "./connection";
   import { onMount, tick, untrack } from "svelte";
+  import * as Select from "$lib/components/ui/select/index.js";
+  import { projectReference } from "./project-identity";
+  import type { ProjectEnvironment } from "./contracts";
   import type { Answer, Agent, Detail, HistorySession, Model, Project, Settings, Skill, Snapshot } from "./contracts";
   import { api, editable, setClient } from "./api";
   import { RequestRejected } from "./chord-client";
@@ -87,19 +90,25 @@
   const hostConnected = $derived(!!selectedHost?.connected);
   const visibleAgents = $derived(snapshot.agents.map(a => optimistic(a.id) && a.state !== "working" && a.state !== "stopping" ? {...a,state:"working" as const} : a));
   $effect(() => { if (navigationReady) preferences.selection = { host: instanceId, sessions: $state.snapshot(remembered) }; });
+  let environments = $state<ProjectEnvironment[]>([]);
+  let selectedEnvironment = $state("local");
+  async function loadEnvironments() { try { environments = await api<ProjectEnvironment[]>("/environments"); } catch(e) { error = e instanceof Error ? e.message : m.load_failure(); } }
+  const remotePi = $derived(selectedEnvironment !== "local" && !!settings && [settings.orc,settings.worker].some(s=>s.backend === "pi"));
   async function loadProjects() {
     projectId = ""; projectError=""; projectsLoading=true; const seq = ++catalogSequence;
-    try { const registered = await api<Project[]>("/projects"); if (seq === catalogSequence) { projects = registered; projectId = registered[0]?.alias ?? ""; } }
-    catch(e) { if (seq === catalogSequence) projectError = e instanceof Error ? e.message : m.load_failure(); }
-    finally { if (seq === catalogSequence) projectsLoading = false; }
+    const [live,saved] = await Promise.allSettled([api<Project[]>(`/projects?environment=${encodeURIComponent(selectedEnvironment)}`),api<Project[]>("/history/projects")]);
+    if(seq !== catalogSequence) return;
+    projects = [...(live.status==="fulfilled" ? live.value : []),...(saved.status==="fulfilled" ? saved.value.filter(p=>(p.environment?.id ?? "local")===selectedEnvironment) : [])];
+    projectError = [live,saved].flatMap(result=>result.status==="rejected" ? [result.reason instanceof Error ? result.reason.message : m.load_failure()] : []).join(" ");
+    projectId = projects[0] ? projectReference(projects[0]) : ""; projectsLoading=false;
   }
   const roots = $derived(snapshot.agents.filter(a => a.role === "orc"));
   const settingsValid = $derived(!!settings && [settings.orc, settings.worker].every(role => models.some(model => model.id === role.model && (model.backend ?? "codex") === (role.backend ?? "codex") && model.provider === role.provider && model.efforts.includes(role.effort))));
   const fastAvailable = $derived(!!settings && [settings.orc, settings.worker].some(role => models.find(model => model.id === role.model && (model.backend ?? "codex") === (role.backend ?? "codex") && model.provider === role.provider)?.fastTier));
   const owner = $derived(snapshot.agents.find(a => a.id === shownDetail?.ownerId));
-  const filteredProjects = $derived((projectsLoading || projectError) ? [] : projects.filter(p => `${p.alias} ${p.name}`.toLowerCase().includes(search.toLowerCase())));
+  const filteredProjects = $derived(projectsLoading ? [] : projects.filter(p => `${p.alias} ${p.name}`.toLowerCase().includes(search.toLowerCase())));
 
-  $effect(() => { if (modal === "new" && !filteredProjects.some(p => p.alias === projectId)) projectId = filteredProjects[0]?.alias ?? ""; });
+  $effect(() => { if (modal === "new" && !filteredProjects.some(p => projectReference(p) === projectId)) projectId = filteredProjects[0] ? projectReference(filteredProjects[0]) : ""; });
   $effect(()=>{projectHighlight=projectId;});
   $effect(()=>{const input=projectSearch;if(input)untrack(()=>{if(modal==="new"&&!navigation.surfaces.includes("history"))input.focus({preventScroll:true});});});
   function closeDetail() { if (navigation.surfaces.length || !desktop) void back(); else if (selectedId && questionPanels[selectedId]) setQuestionPanel(selectedId, false); }
@@ -172,7 +181,7 @@
     loading = true; error = "";
     if(!hosts.find(h=>h.id===snapshot.entryId)?.connected){if(selectedId)await restoreDetail(selectedId);loading=false;projectsLoading=false;return;}
     try {
-      const [state, , catalog] = await Promise.all([api<Snapshot>("/snapshot"), loadProjects(), api<Model[]>("/models")]);
+      const [state, , catalog] = await Promise.all([api<Snapshot>("/snapshot"), Promise.all([loadEnvironments(),loadProjects()]), api<Model[]>("/models")]);
       models = catalog;preferences.models=catalog; if(!preferences.settings&&catalog.length){const model=catalog.find(m=>m.isDefault)??catalog[0];preferences.settings={fast:false,orc:{backend:model.backend ?? "codex",provider:model.provider,model:model.id,effort:model.defaultEffort},worker:{backend:model.backend ?? "codex",provider:model.provider,model:model.id,effort:model.defaultEffort}};snapshot={...snapshot,settings:preferences.settings};} if(!connected) adopt(state, true);
       if (selectedId) await restoreDetail(selectedId);
     } catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
@@ -237,7 +246,7 @@
   }
   async function create() {
     if (!projectId || saving || !connected) return; saving = true;
-    try { const agent = await api<Agent>("/agents", { project: projectId, settings: await creationSettings() }); await closeModal(); adopt(await api<Snapshot>("/snapshot")); focusCreatedId = agent.id; open(agent.id); await sessionList?.reveal(agent.id); }
+    try { const agent = await api<Agent>("/agents", { project: projectReference(projects.find(p=>projectReference(p)===projectId)!), settings: await creationSettings() }); await closeModal(); adopt(await api<Snapshot>("/snapshot")); focusCreatedId = agent.id; open(agent.id); await sessionList?.reveal(agent.id); }
     catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { saving = false; }
   }
@@ -590,16 +599,23 @@
       <div class="flex flex-wrap justify-end gap-2"><Button variant="ghost" size="sm" disabled={!!closingId} onclick={closeModal}>{m.cancel()}</Button><Button variant="destructive" size="sm" disabled={!!closingId || !hosts.find(h => abandon?.id.startsWith(h.id + ":"))?.connected} onclick={confirmAbandon}>{closingId ? m.sending() : closeUnknown ? m.abandon_close_check() : m.abandon_close_title()}</Button></div>
     {:else if modal === "new"}
       <Dialog.Title>{navigation.surfaces.includes("history") ? m.open_session() : m.new_session()}</Dialog.Title>
-      {#if navigation.surfaces.includes("history") && projects.find(p => p.alias === projectId)}
-        {#key createHost + ":" + projectId}<SessionHistory hostId={createHost} project={projects.find(p => p.alias === projectId)!} connected={connected && !!hosts.find(h => h.id === createHost)?.connected} onresume={resumeHistory} />{/key}
+      {#if navigation.surfaces.includes("history") && projects.find(p => projectReference(p) === projectId)}
+        {#key createHost + ":" + selectedEnvironment + ":" + projectId}<SessionHistory hostId={createHost} project={projects.find(p => projectReference(p) === projectId)!} connected={connected && !!hosts.find(h => h.id === createHost)?.connected} onresume={resumeHistory} />{/key}
       {:else}
+      {#if environments.length > 1 || selectedEnvironment !== "local"}
+      <label class="form-section-label" for="execution-environment">Execution environment</label>
+      <Select.Root type="single" value={selectedEnvironment} onValueChange={value=>{selectedEnvironment=value;search="";void loadProjects();}} disabled={saving}>
+        <Select.Trigger id="execution-environment" class="w-full min-w-0"><span class="truncate">{environments.find(e=>e.id===selectedEnvironment)?.name ?? "Unavailable environment"}</span></Select.Trigger>
+        <Select.Content>{#each environments as environment}<Select.Item value={environment.id}>{environment.name}</Select.Item>{/each}</Select.Content>
+      </Select.Root>
+      {/if}
       <p class="form-section-label">{m.project_label()}</p>
       <Command.Root class="project-choice h-auto border border-input" shouldFilter={false} bind:value={projectHighlight} label={m.search_projects()}>
-        <Command.Input aria-controls={projectListId} bind:ref={projectSearch} aria-label={m.search_projects()} placeholder={m.search_projects()} bind:value={search} disabled={saving} onkeydown={event=>{if(event.key==="Tab"&&!event.isComposing&&!event.shiftKey){event.preventDefault();if(filteredProjects.some(project=>project.alias===projectHighlight))projectId=projectHighlight;}}} />
+        <Command.Input aria-controls={projectListId} bind:ref={projectSearch} aria-label={m.search_projects()} placeholder={m.search_projects()} bind:value={search} disabled={saving} onkeydown={event=>{if(event.key==="Tab"&&!event.isComposing&&!event.shiftKey){event.preventDefault();if(filteredProjects.some(project=>projectReference(project)===projectHighlight))projectId=projectHighlight;}}} />
         <Command.List id={projectListId} class="max-h-44" aria-label={m.project_label()} aria-busy={projectsLoading}>
-          {#each filteredProjects as project (project.alias)}
-            <Command.Item value={project.alias} aria-label={project.name} data-checked={project.alias===projectId} disabled={saving||!connected||!hosts.find(host=>host.id===createHost)?.connected} onSelect={()=>projectId=project.alias}>
-              <div class="min-w-0 flex-1"><strong class="block break-words font-medium">{project.name}</strong><span class="block break-all text-xs text-muted-foreground">{project.name!==project.alias ? project.alias+" · " : ""}{project.path}</span></div>
+          {#each filteredProjects as project (projectReference(project))}
+            <Command.Item value={projectReference(project)} aria-label={project.historyRef ? project.name+" · Saved history" : project.name} data-checked={projectReference(project)===projectId} disabled={saving||!connected||!hosts.find(host=>host.id===createHost)?.connected} onSelect={()=>projectId=projectReference(project)}>
+              <div class="min-w-0 flex-1"><strong class="block break-words font-medium">{project.name}</strong><span class="block break-all text-xs text-muted-foreground">{project.name!==project.alias ? project.alias+" · " : ""}{project.path}{#if project.historyRef} · Saved history{/if}</span></div>
             </Command.Item>
           {:else}<p class="px-2 py-3 text-sm text-muted-foreground" role="status">{projectsLoading ? m.loading() : !connected ? m.offline_help() : projectError ? m.load_failure() : m.no_projects()}</p>{/each}
         </Command.List>
@@ -608,8 +624,9 @@
       {#if !settings&&modalModelsLoading}<p role="status">{m.loading()}</p>{/if}
       {#if settings}{#each ["orc", "worker"] as role}{@const key = role as "orc" | "worker"}<section class="role-settings"><h3>{key === "orc" ? m.orc() : m.worker()}</h3><ModelFields bind:value={settings[key]} {models} loading={modelRefreshBusy||modalModelsLoading} disabled={saving||!connected} label={key === "orc" ? m.orc() : m.worker()} /></section>{/each}{/if}
       <Button variant="ghost" size="sm" disabled={modelRefreshBusy || !connected} onclick={refreshModels}>Refresh models</Button>
+      {#if remotePi}<p role="alert" class="inline-error">Pi supports this machine only. Choose Codex for Orc and Worker.</p>{/if}
       <p class="project-keyboard">{m.project_keyboard()}</p>
-      <div class="modal-action"><Button variant="ghost" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !projectId} onclick={() => setSurface("history", true)}><History />{m.find_history()}</Button><Button variant="default" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !settingsValid || !filteredProjects.some(p => p.alias === projectId)} onclick={create}>{saving ? m.sending() : m.new_session()}</Button></div>
+      <div class="modal-action"><Button variant="ghost" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !projectId} onclick={() => setSurface("history", true)}><History />{m.find_history()}</Button><Button variant="default" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || remotePi || !!projects.find(p=>projectReference(p)===projectId)?.historyRef || !settingsValid || !filteredProjects.some(p => projectReference(p) === projectId)} onclick={create}>{saving ? m.sending() : m.new_session()}</Button></div>
       {/if}
     {:else if modal === "settings"}
       <Dialog.Title>{m.settings()}</Dialog.Title><p class="modal-help">{m.settings_help()}</p>

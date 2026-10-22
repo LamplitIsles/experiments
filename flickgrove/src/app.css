@@ -1231,6 +1231,7 @@ pre {
   font-size: 14px;
 }
 .history-context {
+  overflow-wrap: anywhere;
   display: flex;
   align-items: center;
   gap: 9px;

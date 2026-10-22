@@ -95,7 +95,11 @@ export interface RuntimeHandle {
   close(): Promise<void>;
 }
 export interface Runtime {
-  history(cwd: string, cursor?: string): Promise<HistoryPage>;
+  history(
+    cwd: string,
+    cursor?: string,
+    environment?: import("../src/contracts").ProjectEnvironment,
+  ): Promise<HistoryPage>;
   historyThread(threadId: string): Promise<HistorySession>;
   historyImage?(threadId: string, imageId: string): Promise<File | null>;
   historyMessages(threadId: string, cursor?: string): Promise<HistoryMessages>;
@@ -105,6 +109,7 @@ export interface Runtime {
   skills(
     cwd: string,
     backend?: import("../src/contracts").Backend,
+    environment?: import("../src/contracts").ProjectEnvironment,
   ): Promise<Skill[]>;
   open(
     agent: RuntimeAgent,

@@ -1,6 +1,6 @@
 # FlickGrove
 
-A persistent local Orc/Worker/Reviewer/Researcher workspace. Open an instance to work with its own registered projects and durable session trees. Closing the browser leaves execution running. There is no remote host registration, selection, aggregation or forwarding.
+A persistent Orc/Worker/Reviewer/Researcher workspace. One instance owns its session trees and native agent processes. Codex projects execute on that instance's machine or a configured SSH Mac; the Mac runs an executor and project tools. Closing the browser leaves execution running.
 
 ```sh
 bun install
@@ -10,7 +10,58 @@ bun run --cwd flickgrove start --name "Neil’s Mac"
 bun run --cwd flickgrove start --name NUC
 ```
 
-The default address is **http://127.0.0.1:4318**. Each execution machine needs its own `og` project registry and credentials for the backends it uses. Codex sessions need an authenticated `codex` executable. Pi runs through the pinned local SDK installed by `bun install`, without upgrading a global Pi installation. Codex Orc and Worker threads use the full-access local policy; Codex Reviewer and Researcher threads use the native read-only sandbox on creation and restoration, including settings readback and close retry. Fixed role instructions keep all implementation and repairs with Workers and prohibit Reviewer verification. Responsibility instructions and native filesystem sandbox are separate from Grove's role-authorized MCP tools and server guards. Grove never rewrites the user's Codex configuration.
+The default address is **http://127.0.0.1:4318**. Codex authentication and App Server stay on the instance machine. Each project device needs its own `og` project registry and existing forge authentication. Pi runs through the pinned local SDK installed by `bun install`, without upgrading a global Pi installation, and supports projects on the instance machine only. Codex Orc and Worker threads use the full-access policy in their selected environment; Codex Reviewer and Researcher threads use the native read-only sandbox on creation and restoration, including settings readback and close retry. Fixed role instructions keep all implementation and repairs with Workers and prohibit Reviewer verification. Responsibility instructions and native filesystem sandbox are separate from Grove's role-authorized MCP tools and server guards. Grove never rewrites the user's Codex configuration.
+
+## Project execution environments
+
+Spec **#4424** keeps Grove, Codex App Server and agent sessions, FlickNote and FlickLog on the instance machine. An SSH Mac supplies checkout files, the compatible native `codex exec-server`, `og`, Git and `python3` (3.9 or newer) for bounded project/preview reads. It does not need a separate Grove or agent session. No deployment, device application installation, credentials synchronization or real n5pro→Mac connection is performed by this change.
+
+Administrators add the matching stable ID to the instance configuration (`~/.config/flickgrove/config.toml`, or `--config PATH`):
+
+```toml
+[[project_environments]]
+id = "mac"
+name = "Mac"
+ssh = "mac"
+og = "/absolute/path/to/og"
+```
+
+In the **instance machine's** `$CODEX_HOME/environments.toml` (normally `~/.codex/environments.toml`), use this non-interactive SSH argument order. Replace only the SSH alias and executor path:
+
+```toml
+include_local = true
+default = "local"
+
+[[environments]]
+id = "mac"
+program = "ssh"
+args = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=5", "mac", "/absolute/path/to/codex exec-server --listen stdio"]
+initialize_timeout_sec = 10
+```
+
+Both IDs and aliases must match. SSH aliases come from trusted administrator configuration. Existing host-key verification is mandatory: register the verified device key in a configured known-hosts file beforehand. Grove never accepts a new key, prompts for passwords or installs tools. It captures the effective SSH destination, native transport and public known-host keys as a non-secret digest in the existing Project snapshot. Changing the destination/key/transport refuses old-session execution and outstanding preview grants; restore the original configuration to continue the original tree. App Server captures its environment definitions at startup, so restart Grove after changing them before creating a session for the new configuration. Removing an environment retains saved conversations and attachments. No schema migration or cross-device session move occurs.
+
+New session offers **Execution environment** before the existing searchable Project choice when more than one environment is configured. With only the instance machine, the additional choice is omitted. Project discovery runs that environment's `og project list --json`. Same aliases and path strings on different devices remain distinct. Every tree fixes its environment; Workers, Reviewers and Researchers may choose another registered project in that same environment. Pi Orc/Worker defaults or Pi Reviewer/Researcher profiles are rejected before remote admission, without changing the backend. Change the corresponding application setting to Codex.
+
+Each new Codex thread and execution turn explicitly selects its saved environment. Original-thread recovery rechecks its captured target and uses the same binding for subsequent turns; steering keeps the already accepted native turn. Native environment lists after resume can include `local` as well as the saved executor; that list alone does not establish Grove ownership. Managed history uses the saved Project binding, and cursors cannot cross environments. A remote native history without Grove's original target snapshot cannot be assigned to a device or adopted for execution. In the existing environment/project picker, **Saved history** entries come from persisted Project snapshots, including closed trees and removed environments. Their history lists, previews and full message bodies read the centralized native transcript without live SSH project discovery or writer admission. Saved entries keep separate target identities when an environment ID is retargeted; history cursors cannot cross those targets. New-session creation uses live registered projects; explicit resume and remote file previews still require the original execution target to be available. Device unavailability reports an error for the requested operation; it never switches devices, changes engines or resends unknown submissions. Browser→Grove connectivity remains separate from project-device connectivity.
+
+`og mcp` runs through the selected native executor, with the same checkout and remote `og` executable used for discovery. Remote og is a required native MCP: startup failure refuses opening the thread. The Grove collaboration MCP explicitly runs in `local`, and its private token stays on the instance machine. Other MCP services keep their configured ownership; there is no “move all MCP” switch. User uploads and native message images retain instance storage ownership. Native image inputs are prepared by the centralized App Server rather than treating upload paths as Mac paths.
+
+For a remote conversation, Composer searches **Grove instance skills**: enabled user/admin/system/plugin skills and shipped Grove workflows discovered by native `skills/list` from the instance Codex configuration root, excluding repository-scoped results. It never queries that API with a remote checkout path. Native execution still loads the remote project's AGENTS/skills, and explicit selection of a centralized skill loads its body through native host skill roots. This does not scan, copy or install remote project candidates. Local project skill discovery keeps its existing behavior.
+
+HTML, Markdown, images and their relative resources use the existing conversation-authorized preview contract. A remote grant captures the environment/target digest and the device's canonical resource root. Every relative read rechecks the captured target, root and symlink containment, regular-file requirement and 20 MiB limit. Existing 15-minute TTL, read-only HTTP, CORS and HTML sandbox policies apply. Disconnects and changed targets fail closed, even when a same-named local file exists. There is no unauthenticated SSH file endpoint or general remote file browser.
+
+Browser, WeChat developer tools and Blender remain fixed to the Mac independently of the project environment. Configure each device MCP separately on the instance machine, for example an administrator-owned SSH stdio command with `environment_id = "local"` that launches that tool's actual Mac executable. Retain its normal authentication and application permissions. FlickNote's loopback service, FlickLog's collection/query entry point and the Grove bridge remain centralized. This PR does not configure those applications or verify real FlickLog hooks or production deployment.
+
+Verification uses the existing Workspace/FakeRuntime, strict wire, preview HTTP and isolated browser fixtures. From the repository root:
+
+```sh
+bun test --cwd flickgrove server/project-environments.test.ts
+bun run --cwd flickgrove test:browser --config tests/environments.config.ts
+TEST_CODEX_BINARY=/absolute/path/to/codex bun flickgrove/tests/native-environments.probe.ts
+```
+
+The opt-in native probe uses real App Server/stdio executor processes, test-owned HOME/CODEX_HOME, two temporary checkouts and a scripted loopback provider. It verifies actual shell files, og MCP checkout/HOME, centralized/shipped skill bodies, remote project instructions, local-token exclusion, process restart and missing-environment refusal. It makes no real model calls or SSH connections and removes only its owned fixture. It has been exercised with Codex **0.163.0** and client **0.2.1**. Native environment and MCP APIs are experimental; see [App Server](https://learn.chatgpt.com/docs/app-server) and [MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli). Actual n5pro→Mac connectivity and device permissions remain deployment acceptance work.
 
 ## Composer and voice input
 

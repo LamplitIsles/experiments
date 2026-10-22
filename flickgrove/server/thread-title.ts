@@ -166,6 +166,7 @@ export async function nameThreadFromPrompt(
       checkActive();
       const response = await client.call("turn/start", {
         threadId: temporaryId,
+        environments: [],
         input: [{ type: "text", text: titlePrompt(input), text_elements: [] }],
         outputSchema: schema,
         ...(effort ? { effort } : {}),

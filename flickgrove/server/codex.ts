@@ -10,11 +10,15 @@ import type {
 } from "@jaminzhou/codex-app-server-client/protocol";
 import { createHash } from "node:crypto";
 import { stat, readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { nativeCollaborationConfig } from "./native-collaboration";
 import { roleTools } from "./tools";
 import { roleInstructions } from "./role-instructions";
+import { environmentId } from "../src/project-identity";
+import type { ProjectEnvironments } from "./project-environments";
+import type { ProjectEnvironment, Backend } from "../src/contracts";
 import { sameDirectory } from "./directory";
 import { nameThreadFromPrompt } from "./thread-title";
 import type {
@@ -50,15 +54,28 @@ const historySourceKinds: v2.ThreadSourceKind[] = [
   "unknown",
 ];
 
-function historySession(thread: v2.Thread, archived: boolean): HistorySession {
+function historySession(
+  thread: v2.Thread,
+  archived: boolean,
+  binding?: import("../src/contracts").Project,
+): HistorySession {
   return {
+    environmentTarget: binding?.environment?.target,
+    environmentId: binding
+      ? environmentId(binding)
+      : thread.environments?.length === 1
+        ? thread.environments[0].environmentId
+        : thread.environments?.length
+          ? "@ambiguous"
+          : "local",
     threadId: thread.id,
     title:
       thread.name?.trim() ||
       thread.preview.split("\n")[0]?.slice(0, 160) ||
       "Untitled session",
     preview: thread.preview,
-    cwd: thread.cwd,
+    cwd:
+      binding && environmentId(binding) !== "local" ? binding.path : thread.cwd,
     updatedAt: thread.updatedAt * 1000,
     source: typeof thread.source === "string" ? thread.source : "subAgent",
     role:
@@ -74,6 +91,7 @@ function historySession(thread: v2.Thread, archived: boolean): HistorySession {
 
 export class CodexRuntime implements Runtime {
   private managed?: Promise<CodexAppServerClient>;
+  private managedTargets = new Map<string, string | undefined>();
   private readonly historyImages = new Map<
     string,
     { threadId: string; content: v2.UserInput }
@@ -89,6 +107,10 @@ export class CodexRuntime implements Runtime {
       origin: () => string;
       codexPath?: string;
       env?: NodeJS.ProcessEnv;
+      environments?: ProjectEnvironments;
+      projectForThread?: (
+        threadId: string,
+      ) => import("../src/contracts").Project | undefined;
     },
   ) {}
 
@@ -103,10 +125,17 @@ export class CodexRuntime implements Runtime {
       capabilities: { experimentalApi: true, requestAttestation: false },
       protocolValidation: "strict",
       configOverrides: ["thread_unload_delay_secs=0"],
-      env: this.options.env,
+      env: {
+        ...this.options.env,
+        FLICKGROVE_AGENT_TOKEN: undefined,
+        FLICKGROVE_ORIGIN: undefined,
+      },
     });
-    const connecting = client
-      .connect()
+    const connecting = (async () => {
+      this.managedTargets =
+        (await this.options.environments?.targets()) ?? new Map();
+      await client.connect();
+    })()
       .then(async () => {
         // Process-local native registration serves every project/thread in this
         // Grove-owned server; no Codex home, registry or global skill is written.
@@ -181,9 +210,15 @@ export class CodexRuntime implements Runtime {
       ).threadRead({ threadId, includeTurns: false })
     ).thread.name;
   }
-  async history(cwd: string, cursor?: string): Promise<HistoryPage> {
+  async history(
+    cwd: string,
+    cursor?: string,
+    environment?: ProjectEnvironment,
+  ): Promise<HistoryPage> {
     const schema = z.object({
       cwd: z.string(),
+      environment: z.string(),
+      environmentTarget: z.string(),
       positions: z.tuple([z.string().nullable(), z.string().nullable()]),
       done: z.tuple([z.boolean(), z.boolean()]),
     });
@@ -191,10 +226,16 @@ export class CodexRuntime implements Runtime {
       ? schema.parse(JSON.parse(cursor))
       : {
           cwd,
+          environment: environment?.id ?? "local",
+          environmentTarget: environment?.target ?? "local",
           positions: [null, null] as [string | null, string | null],
           done: [false, false] as [boolean, boolean],
         };
-    if (position.cwd !== cwd)
+    if (
+      position.cwd !== cwd ||
+      position.environment !== (environment?.id ?? "local") ||
+      position.environmentTarget !== (environment?.target ?? "local")
+    )
       throw new Error("Search changed. Start a new history search.");
     const client = await this.getCatalog();
     const sessions: HistorySession[] = [];
@@ -221,12 +262,29 @@ export class CodexRuntime implements Runtime {
           position.positions[index] = response.nextCursor;
           position.done[index] = !response.nextCursor;
           return response.data.map((thread) =>
-            historySession(thread, index === 1),
+            historySession(
+              thread,
+              index === 1,
+              this.options.projectForThread?.(thread.id),
+            ),
           );
         }),
       );
       for (const session of pages.flatMap((page) => page ?? [])) {
-        if (!sameDirectory(session.cwd, cwd)) continue;
+        if ((session.environmentId ?? "local") !== (environment?.id ?? "local"))
+          continue;
+        if (
+          environment &&
+          environment.id !== "local" &&
+          session.environmentTarget !== environment.target
+        )
+          continue;
+        if (
+          environment?.id && environment.id !== "local"
+            ? session.cwd !== cwd
+            : !sameDirectory(session.cwd, cwd)
+        )
+          continue;
         sessions.push(session);
       }
     }
@@ -258,12 +316,20 @@ export class CodexRuntime implements Runtime {
         useStateDbOnly: true,
       });
       if (page.data.some((thread) => thread.id === threadId))
-        return historySession(result.thread, true);
+        return historySession(
+          result.thread,
+          true,
+          this.options.projectForThread?.(threadId),
+        );
       if (page.nextCursor && page.nextCursor === cursor)
         throw new Error("History returned a repeated page");
       cursor = page.nextCursor;
     } while (cursor);
-    return historySession(result.thread, false);
+    return historySession(
+      result.thread,
+      false,
+      this.options.projectForThread?.(threadId),
+    );
   }
   async historyMessages(
     threadId: string,
@@ -399,13 +465,23 @@ export class CodexRuntime implements Runtime {
       fetchedAt: Date.now(),
     };
   }
-  async skills(cwd: string): Promise<Skill[]> {
+  async skills(
+    cwd: string,
+    _backend?: Backend,
+    environment?: ProjectEnvironment,
+  ): Promise<Skill[]> {
+    const central = !!environment && environment.id !== "local";
+    const discoveryCwd = central
+      ? (this.options.env?.CODEX_HOME ??
+        process.env.CODEX_HOME ??
+        join(this.options.env?.HOME ?? homedir(), ".codex"))
+      : cwd;
     const response = await (
       await this.getCatalog()
-    ).call("skills/list", { cwds: [cwd], forceReload: true });
+    ).call("skills/list", { cwds: [discoveryCwd], forceReload: true });
     return response.data.flatMap((d) =>
       d.skills
-        .filter((s) => s.enabled)
+        .filter((s) => s.enabled && (!central || s.scope !== "repo"))
         .map((s) => ({
           name: s.name,
           description: s.description,
@@ -420,7 +496,85 @@ export class CodexRuntime implements Runtime {
     agent: RuntimeAgent,
     notify: (event: RuntimeEvent) => void,
   ): Promise<RuntimeHandle> {
+    await this.options.environments?.assert(agent.project.environment);
     const client = await this.getCatalog();
+    const selectedEnvironment = environmentId(agent.project);
+    const checkTarget = async () => {
+      await this.options.environments?.assert(agent.project.environment);
+      if (
+        selectedEnvironment !== "local" &&
+        agent.project.environment?.target !==
+          this.managedTargets.get(selectedEnvironment)
+      )
+        throw new Error(
+          "Execution environment changed since App Server startup. Restore the original configuration or restart Grove before creating a new session.",
+        );
+    };
+    await checkTarget();
+    await client.call("environment/info", {
+      environmentId: selectedEnvironment,
+    });
+    const environments = [
+      { environmentId: selectedEnvironment, cwd: agent.project.path },
+    ];
+    const effectiveConfig = await client.call("config/read", {
+      includeLayers: false,
+      cwd:
+        selectedEnvironment === "local"
+          ? agent.project.path
+          : (this.options.env?.CODEX_HOME ??
+            process.env.CODEX_HOME ??
+            join(this.options.env?.HOME ?? homedir(), ".codex")),
+    });
+    const configMeta = z
+      .object({
+        additional: z
+          .object({ mcp_servers: z.record(z.string(), z.unknown()).optional() })
+          .optional(),
+      })
+      .safeParse(effectiveConfig.config);
+    const configuredOg =
+      configMeta.success && !!configMeta.data.additional?.mcp_servers?.og;
+    const ogConfig =
+      selectedEnvironment !== "local"
+        ? {
+            "mcp_servers.og": {
+              command: await this.options.environments!.og(
+                agent.project.environment!,
+              ),
+              args: ["mcp"],
+              enabled: true,
+              cwd: agent.project.path,
+              environment_id: selectedEnvironment,
+              required: true,
+            },
+          }
+        : configuredOg
+          ? {
+              "mcp_servers.og.environment_id": "local",
+              "mcp_servers.og.cwd": agent.project.path,
+            }
+          : {};
+    const sessionConfig = {
+      ...nativeCollaborationConfig,
+      ...ogConfig,
+      "mcp_servers.flickgrove": {
+        environment_id: "local",
+        command: process.execPath,
+        args: [fileURLToPath(new URL("./mcp.ts", import.meta.url))],
+        env: {
+          FLICKGROVE_ORIGIN: this.options.origin(),
+          FLICKGROVE_AGENT_TOKEN: agent.token,
+        },
+        enabled_tools: [...roleTools[agent.role]],
+        tools: Object.fromEntries(
+          roleTools[agent.role].map((name) => [
+            name,
+            { approval_mode: "approve" },
+          ]),
+        ),
+      },
+    };
     if (
       agent.threadId &&
       (this.threads.has(agent.threadId) ||
@@ -547,24 +701,6 @@ export class CodexRuntime implements Runtime {
           });
       }),
     ];
-    const sessionConfig = {
-      ...nativeCollaborationConfig,
-      "mcp_servers.flickgrove": {
-        command: process.execPath,
-        args: [fileURLToPath(new URL("./mcp.ts", import.meta.url))],
-        env: {
-          FLICKGROVE_ORIGIN: this.options.origin(),
-          FLICKGROVE_AGENT_TOKEN: agent.token,
-        },
-        enabled_tools: [...roleTools[agent.role]],
-        tools: Object.fromEntries(
-          roleTools[agent.role].map((name) => [
-            name,
-            { approval_mode: "approve" },
-          ]),
-        ),
-      },
-    };
     const rolePermissions = {
       approvalPolicy: "never" as const,
       sandbox:
@@ -605,6 +741,7 @@ export class CodexRuntime implements Runtime {
           })
         : await client.threadStart({
             ...params,
+            environments,
             historyMode: "paginated",
           });
       threadId = response.thread.id;
@@ -634,6 +771,21 @@ export class CodexRuntime implements Runtime {
         await client.call("thread/unsubscribe", { threadId }).catch(() => {});
       }
       if (
+        selectedEnvironment !== "local" &&
+        error instanceof AppServerRpcError &&
+        /required MCP servers failed to initialize/i.test(error.message)
+      ) {
+        const failed =
+          /required MCP servers failed to initialize:\s*([a-zA-Z0-9_-]+):/i.exec(
+            error.message,
+          )?.[1];
+        throw new Error(
+          failed === "og"
+            ? "Remote og MCP could not start. Check og on the project device and retry."
+            : "A required tool service could not start. Check the instance and project-device configuration and retry.",
+        );
+      }
+      if (
         error instanceof AppServerRpcError &&
         /already has an active writer/i.test(error.message)
       )
@@ -651,6 +803,7 @@ export class CodexRuntime implements Runtime {
       historyCursor,
       ...resumedSettings,
       readSettings: async () => {
+        await checkTarget();
         if (closed || this.threads.get(id) !== client)
           throw new Error("Session connection unavailable");
         // Loaded-thread resume returns its live config snapshot without rebuilding
@@ -675,6 +828,7 @@ export class CodexRuntime implements Runtime {
         };
       },
       updateSettings: async (settings) => {
+        await checkTarget();
         if (closed || this.threads.get(id) !== client)
           throw new Error("Session connection unavailable");
         const confirmation = Promise.withResolvers<ExecutionSettings>();
@@ -740,6 +894,18 @@ export class CodexRuntime implements Runtime {
         await client.call("thread/name/set", { threadId: id, name });
       },
       send: async (text, activeTurn, images = [], clientUserMessageId) => {
+        try {
+          await checkTarget();
+          await client.call("environment/info", {
+            environmentId: selectedEnvironment,
+          });
+        } catch (error) {
+          throw new DeliveryRejected(
+            error instanceof Error
+              ? error.message
+              : "Project execution environment is unavailable",
+          );
+        }
         // An unknown send outcome is not evidence that the thread is still empty.
         this.emptyThreads.delete(id);
         const input: v2.UserInput[] = [
@@ -760,6 +926,7 @@ export class CodexRuntime implements Runtime {
             await client.turnStart({
               threadId: id,
               clientUserMessageId,
+              environments,
               input,
             })
           ).turn.id;
@@ -795,7 +962,7 @@ export class CodexRuntime implements Runtime {
         await nameThreadFromPrompt(
           client,
           id,
-          agent.project.path,
+          this.options.cwd,
           input,
           lightweight?.id ?? agent.model,
           lightweight ? "low" : agent.effort,

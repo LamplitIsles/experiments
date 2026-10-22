@@ -216,6 +216,12 @@ export class WorkspaceStore {
       throw error;
     }
   }
+  historyProjects() {
+    return this.db
+      .select({ id: s.sessions.id, project: s.sessions.project })
+      .from(s.sessions)
+      .all();
+  }
   openAgents() {
     return this.db
       .select()

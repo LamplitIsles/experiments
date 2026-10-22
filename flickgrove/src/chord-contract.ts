@@ -46,7 +46,9 @@ export type RetrySend = z.infer<typeof retrySendSchema>;
 export const inputs = {
   select: z.object({ ids: z.array(id).max(100) }),
   identity: z.object({}),
-  projects: z.object({}),
+  projects: z.object({ environment: id.optional() }),
+  environments: z.object({}),
+  historyProjects: z.object({}),
   models: z.object({}).strict(),
   weekly: z.object({}).strict(),
   history: z.object({
@@ -163,7 +165,15 @@ const agent = z.object({
   role: z.enum(["orc", "worker", "reviewer", "researcher"]),
   ownerId: id.optional(),
   hostId: id.optional(),
-  project: z.object({ alias: id, name: z.string(), path: z.string() }),
+  project: z.object({
+    alias: id,
+    name: z.string(),
+    path: z.string(),
+    owner: z.string().nullable().optional(),
+    environment: z
+      .object({ id, name: z.string(), target: z.string() })
+      .optional(),
+  }),
   directoryBranch: z.string().optional(),
   title: z.string(),
   model: z.string(),
@@ -265,7 +275,12 @@ export function routeCall(
   const threadId = url.searchParams.get("thread") ?? "";
   const simple: Record<string, [Method, unknown]> = {
     "/identity": ["identity", {}],
-    "/projects": ["projects", {}],
+    "/projects": [
+      "projects",
+      { environment: url.searchParams.get("environment") ?? undefined },
+    ],
+    "/environments": ["environments", {}],
+    "/history/projects": ["historyProjects", {}],
     "/models": ["models", {}],
     "/weekly": ["weekly", {}],
     "/agents": ["createOrc", { ...(body as object) }],

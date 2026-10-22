@@ -5,7 +5,7 @@
   import { searchSkills } from './skill-search';
   import type { Skill } from './contracts';
   import * as m from './paraglide/messages';
-  let { open = $bindable(false), skills, project, onselect, onclose }: {open?:boolean; skills:Skill[]; project:string; onselect:(s:Skill)=>void; onclose:()=>void} = $props();
+  let { open = $bindable(false), skills, project, central = false, onselect, onclose }: {open?:boolean; skills:Skill[]; project:string; central?:boolean; onselect:(s:Skill)=>void; onclose:()=>void} = $props();
   const listId=$props.id();
   let query = $state(''); let selected = $state('');
   let input = $state<HTMLInputElement | null>(null); let panel = $state<HTMLDivElement | null>(null); let wasOpen = false;
@@ -21,7 +21,7 @@
 <svelte:window onpointerdown={e => { if(open && e.target instanceof Node && !panel?.contains(e.target)) open = false; }} />
 {#if open}
   <div class="completion skill-search" bind:this={panel}>
-    <div class="skill-search-heading"><span>{m.skills_scope({project})}</span><Kbd>Esc</Kbd></div>
+    <div class="skill-search-heading"><span>{central ? "Grove instance skills" : m.skills_scope({project})}</span><Kbd>Esc</Kbd></div>
     <Command.Root shouldFilter={false} bind:value={selected} label={m.search_skills()}>
       <Command.Input aria-controls={listId} bind:ref={input} bind:value={query} aria-label={m.search_skills()} placeholder={m.search_skills()} onkeydown={e => { if(e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return; if(e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); open = false; } else if(e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); if(!e.shiftKey) choose(); } }} />
       <Command.List id={listId} aria-label={m.skills()}>

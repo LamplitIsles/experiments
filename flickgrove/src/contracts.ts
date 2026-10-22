@@ -13,7 +13,15 @@ export interface ReviewTarget {
 }
 export type WorkState = "idle" | "working" | "stopping" | "error";
 export type Effort = string;
+export interface ProjectEnvironment {
+  id: string;
+  name: string;
+  /** Captured non-secret administrator target identity. */
+  target: string;
+}
 export interface Project {
+  historyRef?: string;
+  environment?: ProjectEnvironment;
   owner?: string | null;
   alias: string;
   name: string;
@@ -64,6 +72,8 @@ export interface Message {
   at: number;
 }
 export interface HistorySession {
+  environmentId?: string;
+  environmentTarget?: string;
   backend?: Backend;
   provider?: string;
   threadId: string;

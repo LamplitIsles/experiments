@@ -7,10 +7,14 @@ import {
   deliveryMetadata,
 } from "./conversation-reading";
 import { ImageStore } from "./images";
-import { DirectoryBranches, type BranchReader } from "./directory-branches";
+import {
+  DirectoryBranches,
+  readDirectoryBranch,
+  type BranchReader,
+} from "./directory-branches";
 import type { MessageImage } from "../src/contracts";
 import { WorkspaceStore } from "./workspace-store";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import type {
   Agent,
@@ -31,6 +35,12 @@ import type {
   RuntimeHandle,
 } from "./runtime";
 import { sameDirectory } from "./directory";
+import {
+  environmentId,
+  parseProjectReference,
+  projectDirectoryKey,
+} from "../src/project-identity";
+import type { ProjectEnvironments } from "./project-environments";
 import { DeliveryRejected, StaleTurn } from "./runtime";
 import { z } from "zod";
 import { roleTools, toolDefinitions, sessionTitle } from "./tools";
@@ -69,7 +79,8 @@ export class Workspace {
     private readonly options: {
       directory: string;
       runtime: Runtime;
-      projects: () => Promise<Project[]>;
+      projects: (environment?: string) => Promise<Project[]>;
+      environments?: ProjectEnvironments;
       orcPrompt?: () => Promise<string>;
       researcherSnapshot?: () => Promise<
         import("./reviewer-config").ReviewerSnapshot
@@ -89,11 +100,25 @@ export class Workspace {
       agents: this.store.openAgents().map((a) => this.store.track(a)),
       revision: 0,
     };
-    this.branches = new DirectoryBranches(() => {
-      if (this.disposed) return;
-      this.state.revision++;
-      for (const listener of this.subscribers) listener();
-    }, options.branches);
+    this.branches = new DirectoryBranches(
+      () => {
+        if (this.disposed) return;
+        this.state.revision++;
+        for (const listener of this.subscribers) listener();
+      },
+      {
+        ...options.branches,
+        canonicalize: (key, previous) =>
+          key.startsWith("remote:") ? key : this.localBranchKey(key, previous),
+        read: (key, signal) =>
+          key.startsWith("remote:")
+            ? this.options.environments!.branch(
+                this.remoteBranchProject(key),
+                signal,
+              )
+            : (options.branches?.read ?? readDirectoryBranch)(key, signal),
+      },
+    );
     for (const a of this.state.agents) {
       if (
         a.backend !== "pi" &&
@@ -135,6 +160,22 @@ export class Workspace {
       }).catch(() => {});
     }
   }
+  private localBranchKey(path: string, previous = path) {
+    try {
+      return realpathSync(path);
+    } catch {
+      return previous;
+    }
+  }
+  private remoteBranchProject(key: string): Project {
+    const [id, target, path] = JSON.parse(key.slice(7));
+    return { alias: "", name: "", path, environment: { id, target, name: id } };
+  }
+  private branchKey(project: Project) {
+    return environmentId(project) === "local"
+      ? project.path
+      : "remote:" + projectDirectoryKey(project);
+  }
   private save() {
     if (this.disposed) return;
     for (const a of this.store.windows) {
@@ -149,7 +190,9 @@ export class Workspace {
       throw error;
     }
     this.state.agents = this.state.agents.filter((a) => !a.closed);
-    this.branches.update(this.state.agents.map((a) => a.project.path));
+    this.branches.update(
+      this.state.agents.map((a) => this.branchKey(a.project)),
+    );
     this.state.revision++;
     for (const listener of this.subscribers) listener();
   }
@@ -428,6 +471,54 @@ export class Workspace {
     if (!agent) throw new Error("Session not found");
     return agent.project.path;
   }
+  previewProject(id: string) {
+    const agent = this.readableAgent(
+      this.state.agents.find((a) => a.id === id) ?? this.store.byId(id),
+    );
+    if (!agent) throw new Error("Session not found");
+    return agent.project;
+  }
+  remoteProjectRead(project: Project, request: Record<string, unknown>) {
+    if (!project.environment || !this.options.environments)
+      throw new Error("Project device reader is unavailable");
+    return this.options.environments.operation(project.environment, request);
+  }
+  projectForThread(threadId: string) {
+    return this.readableAgent(
+      this.state.agents.find((a) => a.threadId === threadId) ??
+        this.store.byThread(threadId),
+    )?.project;
+  }
+  historyProjects() {
+    const projects = new Map<string, Project>();
+    for (const { id, project } of this.store.historyProjects()) {
+      const key = JSON.stringify([project.alias, projectDirectoryKey(project)]);
+      if (!projects.has(key))
+        projects.set(key, { ...project, historyRef: `@saved:${id}` });
+    }
+    return [...projects.values()];
+  }
+  async environmentCatalogue() {
+    const entries = await (this.options.environments?.list() ??
+      Promise.resolve([
+        { id: "local", name: "This machine", target: "local" },
+      ]));
+    for (const project of this.historyProjects()) {
+      if (
+        project.environment &&
+        !entries.some((e) => e.id === project.environment!.id)
+      )
+        entries.push(project.environment);
+    }
+    return entries;
+  }
+  private async assertProject(project: Project, backend?: string) {
+    if (environmentId(project) !== "local" && backend === "pi")
+      throw new Error(
+        "Pi supports this machine only. Change the corresponding backend in Settings.",
+      );
+    await this.options.environments?.assert(project.environment);
+  }
   private readableAgent(a: RuntimeAgent | undefined) {
     if (this.writeFailure && a && this.state.agents.includes(a))
       throw new Error(
@@ -459,7 +550,11 @@ export class Workspace {
     } = a;
     const owner = this.state.agents.find((o) => o.id === a.ownerId);
     const sharedDirectory =
-      owner && this.branches.shares(owner.project.path, a.project.path);
+      owner &&
+      this.branches.shares(
+        this.branchKey(owner.project),
+        this.branchKey(a.project),
+      );
     return structuredClone({
       ...agent,
       unansweredCount: a.questions.filter((q) => q.state === "unanswered")
@@ -479,7 +574,7 @@ export class Workspace {
       treeFastBusy: this.treeActions.has(owner?.id ?? a.id),
       directoryBranch: sharedDirectory
         ? undefined
-        : this.branches.value(a.project.path),
+        : this.branches.value(this.branchKey(a.project)),
     });
   }
   snapshot(): Snapshot {
@@ -863,11 +958,32 @@ export class Workspace {
   models() {
     return this.options.runtime.models();
   }
-  projects() {
-    return this.options.projects();
+  projects(environment = "local") {
+    return this.options.projects(environment);
+  }
+  private sameProjectDirectory(
+    project: Project,
+    path: string,
+    selected = "local",
+    target?: string,
+  ) {
+    if (environmentId(project) !== selected) return false;
+    if (selected !== "local" && target !== project.environment?.target)
+      return false;
+    return selected === "local"
+      ? sameDirectory(project.path, path)
+      : project.path === path;
   }
   private async historyProject(alias: string) {
-    const project = (await this.projects()).find((p) => p.alias === alias);
+    if (alias.startsWith("@saved:")) {
+      const agent = this.readableAgent(this.store.byId(alias.slice(7)));
+      if (!agent) throw new Error("Saved project history not found");
+      return agent.project;
+    }
+    const reference = parseProjectReference(alias);
+    const project = (await this.projects(reference.environment)).find(
+      (p) => p.alias === reference.alias,
+    );
     if (!project) throw new Error("Registered project not found");
     return project;
   }
@@ -887,27 +1003,48 @@ export class Workspace {
       agentId: agent.id,
       closed: agent.closed,
       ownerThreadId: owner?.threadId,
-      ownerProject: owner?.project.alias,
+      ownerProject: owner
+        ? environmentId(owner.project) === "local"
+          ? owner.project.alias
+          : `@saved:${owner.id}`
+        : undefined,
+      environmentId: environmentId(agent.project),
+      environmentTarget: agent.project.environment?.target,
     };
   }
   async history(alias: string, query: string, cursor?: string) {
     const project = await this.historyProject(alias);
     const schema = z.object({
+      environment: z.string(),
       cwd: z.string(),
       query: z.string(),
       cursor: z.string(),
     });
     const position = cursor ? schema.parse(JSON.parse(cursor)) : undefined;
-    if (position && (position.cwd !== project.path || position.query !== query))
+    if (
+      position &&
+      (position.environment !== projectDirectoryKey(project) ||
+        position.cwd !== project.path ||
+        position.query !== query)
+    )
       throw new Error("Search changed. Start a new history search.");
     let nextCursor = position?.cursor;
     const sessions: HistorySession[] = [];
     for (let scan = 0; scan < 8 && sessions.length < 30; scan++) {
-      const page = await this.options.runtime.history(project.path, nextCursor);
+      const page = await this.options.runtime.history(
+        project.path,
+        nextCursor,
+        project.environment,
+      );
       for (const entry of page.sessions) {
         const session = this.historyIdentity(entry);
         if (
-          sameDirectory(session.cwd, project.path) &&
+          this.sameProjectDirectory(
+            project,
+            session.cwd,
+            session.environmentId,
+            session.environmentTarget,
+          ) &&
           `${session.title} ${session.preview}`
             .toLocaleLowerCase()
             .includes(query.toLocaleLowerCase())
@@ -926,14 +1063,28 @@ export class Workspace {
     return {
       sessions,
       nextCursor: nextCursor
-        ? JSON.stringify({ cwd: project.path, query, cursor: nextCursor })
+        ? JSON.stringify({
+            environment: projectDirectoryKey(project),
+            cwd: project.path,
+            query,
+            cursor: nextCursor,
+          })
         : null,
     };
   }
   async historySession(alias: string, threadId: string) {
     const project = await this.historyProject(alias);
-    const session = await this.options.runtime.historyThread(threadId);
-    if (!sameDirectory(session.cwd, project.path))
+    const session = this.historyIdentity(
+      await this.options.runtime.historyThread(threadId),
+    );
+    if (
+      !this.sameProjectDirectory(
+        project,
+        session.cwd,
+        session.environmentId,
+        session.environmentTarget,
+      )
+    )
       throw new Error("Session does not belong to this project directory");
     return this.historyIdentity(session);
   }
@@ -1051,11 +1202,26 @@ export class Workspace {
         this.store.byThread(threadId);
       if (
         existing?.project.path !== undefined &&
-        !sameDirectory(existing.project.path, project.path)
+        !(
+          environmentId(existing.project) === environmentId(project) &&
+          (environmentId(project) === "local" ||
+            existing.project.environment?.target ===
+              project.environment?.target) &&
+          this.sameProjectDirectory(
+            project,
+            existing.project.path,
+            environmentId(existing.project),
+            existing.project.environment?.target,
+          )
+        )
       )
         throw new Error("Session does not belong to this project directory");
       if (existing && existing.role !== "orc")
         throw new Error("Continue this owned agent through its original Orc");
+      if (!existing && environmentId(project) !== "local")
+        throw new Error(
+          "Original execution target binding is unavailable for this remote history",
+        );
       const restore = async () => {
         if (existing && !existing.closed) {
           if (
@@ -1068,6 +1234,7 @@ export class Workspace {
         const session = await this.historySession(alias, threadId);
         if (session.role !== "orc" && session.role !== "session")
           throw new Error("Continue this owned agent through its original Orc");
+        await this.assertProject(project, existing?.backend ?? session.backend);
         const workerDefaults = existing
           ? existing.workerDefaults
           : (await this.executionSettings(settings)).worker;
@@ -1156,9 +1323,18 @@ export class Workspace {
     return { orc: capture(value.orc), worker: capture(value.worker) };
   }
   async createOrc(alias: string, settings?: Settings) {
-    const project = (await this.projects()).find((p) => p.alias === alias);
+    const reference = parseProjectReference(alias);
+    const project = (await this.projects(reference.environment)).find(
+      (p) => p.alias === reference.alias,
+    );
     if (!project) throw new Error("Registered project not found");
+    if (settings) {
+      await this.assertProject(project, settings.orc.backend);
+      await this.assertProject(project, settings.worker.backend);
+    }
     const captured = await this.executionSettings(settings);
+    await this.assertProject(project, captured.orc.backend);
+    await this.assertProject(project, captured.worker.backend);
     const a: RuntimeAgent = {
       id: crypto.randomUUID(),
       token: crypto.randomUUID(),
@@ -1188,6 +1364,7 @@ export class Workspace {
     return this.publicAgent(a);
   }
   private async handle(a: RuntimeAgent, refreshTitle = true) {
+    await this.assertProject(a.project, a.backend);
     let handle = this.handles.get(a.id);
     if (!handle) {
       let opening = this.opening.get(a.id);
@@ -1803,6 +1980,7 @@ export class Workspace {
     return this.options.runtime.skills(
       this.agent(id).project.path,
       this.agent(id).backend ?? "codex",
+      this.agent(id).project.environment,
     );
   }
   private authenticated(token: string) {
@@ -1848,8 +2026,17 @@ export class Workspace {
           : undefined;
         return this.serialize(a.id, async () => {
           this.agent(a.id);
-          const project = (await this.projects()).find(
-            (p) => p.alias === input.project,
+          await this.assertProject(a.project, a.backend);
+          const requested = parseProjectReference(input.project);
+          if (
+            input.project.includes(":") &&
+            requested.environment !== environmentId(a.project)
+          )
+            throw new Error(
+              "Delegation cannot change the tree execution environment",
+            );
+          const project = (await this.projects(environmentId(a.project))).find(
+            (p) => p.alias === requested.alias,
           );
           if (!project) throw new Error("Registered project not found");
           const w: RuntimeAgent = {
@@ -1905,6 +2092,7 @@ export class Workspace {
               reviewedHead: review.reviewedHead,
             };
           }
+          await this.assertProject(project, w.backend);
           {
             const model = (await this.models()).find(
               (m) =>

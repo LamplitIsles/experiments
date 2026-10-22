@@ -4,7 +4,12 @@ import type {
   RuntimeEvent,
   RuntimeHandle,
 } from "./runtime";
-import type { Backend, HistoryPage, Model } from "../src/contracts";
+import type {
+  Backend,
+  HistoryPage,
+  Model,
+  ProjectEnvironment,
+} from "../src/contracts";
 import { piThread, threadIdentity } from "./backend";
 
 /** Routes native identities, including cursors, before touching either backend. */
@@ -39,19 +44,33 @@ export class MixedRuntime implements Runtime {
   weekly() {
     return this.codex.weekly();
   }
-  skills(cwd: string, backend: Backend = "codex") {
-    return this.runtime(backend).skills(cwd);
+  skills(
+    cwd: string,
+    backend: Backend = "codex",
+    environment?: ProjectEnvironment,
+  ) {
+    if (backend === "pi" && environment && environment.id !== "local")
+      throw new Error("Pi supports this machine only");
+    return this.runtime(backend).skills(cwd, backend, environment);
   }
-  async history(cwd: string, cursor?: string): Promise<HistoryPage> {
+  async history(
+    cwd: string,
+    cursor?: string,
+    environment?: ProjectEnvironment,
+  ): Promise<HistoryPage> {
     const state: Partial<Record<Backend, string | null>> = cursor
       ? JSON.parse(Buffer.from(cursor, "base64url").toString())
       : {};
     const results = await Promise.allSettled(
-      (["codex", "pi"] as const).map(async (backend) => {
+      (environment && environment.id !== "local"
+        ? (["codex"] as const)
+        : (["codex", "pi"] as const)
+      ).map(async (backend) => {
         if (state[backend] === null) return { sessions: [], nextCursor: null };
         const page = await this.runtime(backend).history(
           cwd,
           state[backend] ?? undefined,
+          environment,
         );
         state[backend] = page.nextCursor;
         return {
@@ -105,6 +124,12 @@ export class MixedRuntime implements Runtime {
     notify: (event: RuntimeEvent) => void,
   ): Promise<RuntimeHandle> {
     const backend = agent.backend ?? "codex";
+    if (
+      backend === "pi" &&
+      agent.project.environment &&
+      agent.project.environment.id !== "local"
+    )
+      throw new Error("Pi supports this machine only");
     const native = agent.threadId ? threadIdentity(agent.threadId) : undefined;
     if (native && native.backend !== backend)
       throw new Error("Session backend cannot change");

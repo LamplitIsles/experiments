@@ -147,8 +147,23 @@ export class HostService {
         .agents.map((a) => qualified(this.local(), a)),
     };
   }
-  projects() {
-    return this.workspace.projects();
+  projects(environment?: string) {
+    return this.workspace.projects(environment);
+  }
+  historyProjects() {
+    return this.workspace.historyProjects();
+  }
+  environments() {
+    return this.workspace.environmentCatalogue();
+  }
+  previewProject(id: string) {
+    return this.workspace.previewProject(this.raw(id));
+  }
+  remoteProjectRead(
+    project: import("../src/contracts").Project,
+    request: Record<string, unknown>,
+  ) {
+    return this.workspace.remoteProjectRead(project, request);
   }
   models() {
     return this.workspace.models();
