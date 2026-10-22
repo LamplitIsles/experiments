@@ -5,8 +5,8 @@
   import { weeklyCache, weeklyKey, loadWeekly, acceptWeekly, requestWeekly } from "./weekly-cache.svelte";
   import { onMount, untrack } from "svelte";
   import * as m from "./paraglide/messages";
-  let { hostId, connected, surface = "weekly" }: { hostId?: string; connected: boolean; surface?: "weekly" | "weekly-detail" } = $props();
-  const value = $derived(weeklyCache[weeklyKey(hostId)] ?? null); const open = $derived(navigation.surfaces.includes(surface)); let sequence = 0; let root: HTMLDivElement;
+  let { hostId, connected }: { hostId?: string; connected: boolean } = $props();
+  const value = $derived(weeklyCache[weeklyKey(hostId)] ?? null); const open = $derived(navigation.surfaces.includes("weekly")); let sequence = 0; let root: HTMLDivElement;
   const remaining = $derived(value?.remaining ?? null);
   const used = $derived(remaining === null ? null : 100 - remaining);
   const measuresId = $props.id();
@@ -39,15 +39,15 @@
     <circle class="ring-track" cx="18" cy="18" r="12.5"/><circle class="ring-value" cx="18" cy="18" r="12.5" pathLength="100" stroke-dasharray={`${used ?? 0} 100`}/>
   </svg>
 {/snippet}
-<svelte:window onclick={e => { if (e.target instanceof Node && root && !root.contains(e.target)) setSurface(surface, false); }} />
+<svelte:window onclick={e => { if (e.target instanceof Node && root && !root.contains(e.target)) setSurface("weekly", false); }} />
 <!-- Escape belongs to the focused quota control before global session/detail shortcuts. -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<div class="weekly-control" role="group" aria-label={m.weekly_usage()} bind:this={root} onkeydown={e => { if (open && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setSurface(surface, false); } }}>
+<div class="weekly-control" role="group" aria-label={m.weekly_usage()} bind:this={root} onkeydown={e => { if (open && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setSurface("weekly", false); } }}>
   <span id={measuresId} class="sr-only">{measures}</span>
-  <button class="weekly-button" aria-label={m.weekly_usage()} aria-describedby={measuresId} aria-expanded={open} onclick={() => setSurface(surface, !open)}>
-    {@render rings()}<strong>{used === null ? "—" : `${Math.round(used)}%`}</strong><span>{m.weekly_usage()}</span>
+  <button class="weekly-button" aria-label={m.weekly_usage()} aria-describedby={measuresId} aria-expanded={open} onclick={() => setSurface("weekly", !open)}>
+    {@render rings()}<strong>{used === null ? "—" : `${Math.round(used)}%`}</strong>
   </button>
-  {#if open}<section class="weekly-popover" aria-label={m.weekly_usage()}><header><h2>{m.weekly_usage()}</h2><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => setSurface(surface, false)}><X /></Button></header>
+  {#if open}<section class="weekly-popover" aria-label={m.weekly_usage()}><header><h2>{m.weekly_usage()}</h2><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => setSurface("weekly", false)}><X /></Button></header>
     <div role="group" aria-label={measures} class="weekly-number" class:host-warning={remaining !== null && remaining <= 20}>{@render rings()}<div><strong>{used === null ? "—" : `${Math.round(used)}%`}</strong><span>{remaining === null ? m.weekly_unknown() : m.quota_used()}</span></div></div>
     {#if remaining === null}<p>{m.weekly_unknown_help()}</p>{/if}
     <dl class="weekly-source">{#if elapsed !== null}<div><dt>{m.period_elapsed()}</dt><dd>{Math.round(elapsed)}%</dd></div>{/if}{#if typeof reset === "number" && Number.isFinite(reset) && reset > 0}<div><dt>{m.reset_label()}</dt><dd>{new Date(reset * 1000).toLocaleString()}</dd></div>{/if}{#if value?.accountId}<div><dt>{m.account_label()}</dt><dd>{value.accountId}</dd></div>{/if}<div><dt>{m.source_label()}</dt><dd>{value?.source ?? "—"}</dd></div></dl>

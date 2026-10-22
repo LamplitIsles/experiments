@@ -1,3 +1,4 @@
+import { openSidebar } from "./browser-actions";
 import {
   expect,
   test,
@@ -20,6 +21,7 @@ async function start(page: Page, request: APIRequestContext, width = 1440) {
   await request.post(origin + "/fixture/reset", { data: { mode: "working" } });
   await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
   await page.goto(origin);
+  await openSidebar(page);
   if (width === 390) await page.locator(".session-open").first().click();
   await expect(composer(page)).toBeVisible();
 }

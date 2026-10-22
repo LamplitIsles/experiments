@@ -1,3 +1,4 @@
+import { openSidebar } from "./browser-actions";
 import { expect, test, type Page } from "@playwright/test";
 const origin = "http://127.0.0.1:14319";
 const shots = "../.scratch/flickgrove-direct-actions/screenshots";
@@ -30,6 +31,7 @@ test("skill panel preserves independent multiword query, insertion, caret and Ba
     data: { mode: "no-workers" },
   });
   await page.goto(origin);
+  await openSidebar(page);
   await page.getByRole("button", { name: orcName }).click();
   const input = page.getByRole("textbox", { name: "Message Orc" });
   const search = page.getByRole("combobox", { name: "Search skills…" });
@@ -108,6 +110,7 @@ test("Close shortcut uses detail before navigation, blocks surfaces/IME and neve
     data: { mode: "no-workers" },
   });
   await page.goto(origin);
+  await openSidebar(page);
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown"); // navigation stays within this device
   await page.getByRole("button", { name: orcName }).click();
@@ -182,6 +185,7 @@ test("mobile swipe only reveals, one row at a time; right/outside collapse and e
   await request.post(`${origin}/fixture/reset`, { data: { mode: "dense" } });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(origin);
+  await openSidebar(page);
   const first = page.locator(".session-row").first();
   const box = (await first.boundingBox())!;
   await swipe(page, 300, box.y + 30, -150);
@@ -190,7 +194,7 @@ test("mobile swipe only reveals, one row at a time; right/outside collapse and e
   await page.screenshot({ path: `${shots}/mobile-swipe.png` });
   await first.locator(".tree-close-action").click();
   await expect(first.getByRole("alert")).toContainText(
-    "Workers, Reviewers and Researchers first",
+    "is still working or has an unconfirmed delivery",
   );
   await page.screenshot({ path: `${shots}/mobile-close-refused.png` });
   await swipe(page, 100, box.y + 30, 150);
@@ -201,7 +205,7 @@ test("mobile swipe only reveals, one row at a time; right/outside collapse and e
   await swipe(page, 300, secondBox.y + 30, -150);
   await expect(page.locator(".tree-close-action")).toHaveCount(1);
   await expect(second.locator(".tree-close-action")).toBeVisible();
-  await page.locator(".session-list h1").click();
+  await page.locator(".session-list-heading h1").click();
   await expect(page.locator(".tree-close-action")).toHaveCount(0);
   await swipe(page, 300, 650, 0, -250);
   await expect
@@ -237,6 +241,7 @@ test("mobile swipe only reveals, one row at a time; right/outside collapse and e
     data: { mode: "no-workers" },
   });
   await page.reload();
+  await openSidebar(page);
   const clean = (await first.boundingBox())!;
   await swipe(page, 300, clean.y + 30, -150);
   await expect(first.locator(".tree-close-action")).toBeVisible();
@@ -254,6 +259,7 @@ for (const width of [1440, 390])
       await request.post(`${origin}/fixture/reset`, { data: { mode: "long" } });
       await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
       await page.goto(origin);
+      await openSidebar(page);
       await page.getByRole("button", { name: orcName }).click();
       if (role === "Worker") {
         if (width === 390) {
@@ -342,6 +348,7 @@ test("mobile dollar stays ordinary text; explicit icon preserves the replacement
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(origin);
+  await openSidebar(page);
   await page.getByRole("button", { name: orcName }).click();
   const input = page.getByRole("textbox", { name: "Message Orc" });
   const search = page.getByRole("combobox", { name: "Search skills…" });

@@ -1,4 +1,10 @@
+<script lang="ts" module>
+  // Responsive Sidebar branches remount the same business tree. Re-observe a
+  // selection only when its identity changes, not when its container changes.
+  let revealedSelection: string | null = null;
+</script>
 <script lang="ts">
+  import * as Sidebar from "$lib/components/ui/sidebar/index.js";
   import {environmentId} from "./project-identity";
   import { ChevronDown, ChevronRight, Plus, Zap, MessageCircle, GitBranch } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -11,7 +17,7 @@
   let collapsed = $state<Record<string, string[]>>(JSON.parse(localStorage.getItem(`${storagePrefix}/collapsed-orgs`) ?? "{}"));
   const folded = $derived(collapsed[instanceId] ?? []);
   function groupKey(agent: Agent) {
-    const catalogue = projects.filter(p=>environmentId(p)===environmentId(agent.project) && (environmentId(p)==="local" || p.environment?.target===agent.project.environment?.target));
+    const catalogue = projects.filter(p=>!p.historyRef && environmentId(p)===environmentId(agent.project) && (environmentId(p)==="local" || p.environment?.target===agent.project.environment?.target));
     const project = catalogue.find(p => p.alias === agent.project.alias && p.path === agent.project.path)
       ?? catalogue.find(p => p.path === agent.project.path)
       ?? catalogue.find(p => p.alias === agent.project.alias);
@@ -91,7 +97,7 @@
   }
   export function visibleIds() { return visible.map(a => a.id); }
   export function closeTarget() { return agents.find(a => a.id === focusedId && a.role === "orc")?.id ?? null; }
-  let list: HTMLElement;
+  let list = $state<HTMLElement>(null!);
   const roots = $derived.by(() => {
     const backend = agents.filter(a => a.role === "orc");
     const saved = rootOrder.flatMap(id => backend.find(a => a.id === id) ?? []);
@@ -116,6 +122,8 @@
     return selected ? JSON.stringify([selected.id, selected.ownerId, root ? groupKey(root) : ""]) : null;
   });
   $effect(() => {
+    if (selection === revealedSelection) return;
+    revealedSelection = selection;
     if (!selection) return;
     const [id, ownerId, key] = JSON.parse(selection) as [string, string | null, string];
     untrack(() => {
@@ -178,11 +186,11 @@
   });
 </script>
 <svelte:window onpointerdown={e => { if (revealedId && e.target instanceof Element && !e.target.closest(`[data-swipe-id="${revealedId}"]`)) revealedId = null; }} />
-<section class="session-list" aria-label={m.sessions()} bind:this={list} onscroll={() => localStorage.setItem(`${storagePrefix}/list-scroll`, String(list.scrollTop))}>
-  <div class="session-list-heading">
-    <h1>{m.sessions()}</h1>
+<Sidebar.Header class="session-list-heading">
+    <h1>{m.product()}</h1>
     <Button variant="ghost" size="icon-sm" aria-label={m.new_session()} onclick={onnew}><Plus /></Button>
-  </div>
+  </Sidebar.Header>
+<Sidebar.Content class="session-list" aria-label={m.sessions()} bind:ref={list} onscroll={() => localStorage.setItem(`${storagePrefix}/list-scroll`, String(list.scrollTop))}>
   {@render children?.()}
   {#if loading && !agents.length}<p class="list-empty" role="status">{m.loading()}</p>{:else if !roots.length}<div class="list-empty"><h2>{m.empty_heading()}</h2><p>{m.empty_help()}</p><Button size="sm" disabled={!connected} onclick={onnew}><Plus />{m.new_session()}</Button></div>{/if}
   {#each groups as group (group.key)}
@@ -210,5 +218,4 @@
   {/each}
     </div>
   {/each}
-  <Button class="mobile-new" size="sm" disabled={!connected} onclick={onnew}><Plus />{m.new_session()}</Button>
-</section>
+</Sidebar.Content>

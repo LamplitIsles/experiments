@@ -1,4 +1,5 @@
 export type Surface =
+  | "sidebar"
   | "abandon-close"
   | "choice"
   | "new"
@@ -9,7 +10,6 @@ export type Surface =
   | "keys"
   | "skill"
   | "weekly"
-  | "weekly-detail"
   | "title"
   | "questions"
   | "file-preview";
@@ -17,16 +17,18 @@ type Route = {
   details: string[];
   surfaces: Surface[];
   preview?: { agent: string; href: string };
+  sidebarReturn?: boolean;
 };
 export const navigation = $state<Route>({ details: [], surfaces: [] });
 let initialized = false;
 let pending: { promise: Promise<void>; resolve: () => void } | null = null;
 let validIds: Set<string> | null = null;
-let retiringQuestionDrawer: Route | null = null;
+let retiringDrawer: Route | null = null;
 function route(): Route {
   return {
     details: [...navigation.details],
     surfaces: [...navigation.surfaces],
+    sidebarReturn: navigation.sidebarReturn,
     preview: navigation.preview ? { ...navigation.preview } : undefined,
   };
 }
@@ -35,6 +37,7 @@ function apply(next: Route) {
     ? next.details.filter((id) => validIds!.has(id))
     : next.details;
   navigation.details = details;
+  navigation.sidebarReturn = next.sidebarReturn;
   navigation.preview =
     details.length === next.details.length &&
     next.surfaces.includes("file-preview")
@@ -51,7 +54,15 @@ export function initializeNavigation(selected: string | null) {
   initialized = true;
   validIds = null;
   const saved = history.state?.grove as Route | undefined;
-  if (saved) apply(saved);
+  if (saved)
+    write(
+      {
+        ...saved,
+        surfaces: saved.surfaces.filter((surface) => surface !== "sidebar"),
+        sidebarReturn: undefined,
+      },
+      true,
+    );
   else {
     write({ details: [], surfaces: [] }, true);
     if (selected) write({ details: [selected], surfaces: [] });
@@ -65,11 +76,13 @@ export function initializeNavigation(selected: string | null) {
       }),
     );
     const next = history.state?.grove ?? { details: [], surfaces: [] };
-    if (retiringQuestionDrawer) {
-      const retained = retiringQuestionDrawer;
-      retiringQuestionDrawer = null;
+    if (retiringDrawer) {
+      const retained = retiringDrawer;
+      retiringDrawer = null;
       // Resume below the drawer and rebuild only the retained foreground history.
-      const lowerCount = next.surfaces.length;
+      const lowerCount =
+        next.surfaces.length -
+        (next.sidebarReturn && !retained.surfaces.includes("sidebar") ? 1 : 0);
       write(
         { ...retained, surfaces: retained.surfaces.slice(0, lowerCount) },
         true,
@@ -96,6 +109,19 @@ export function initializeNavigation(selected: string | null) {
   };
 }
 export function back(): Promise<void> {
+  // Revealing the list after returning must preserve Forward. Its drawer replaces
+  // that list entry rather than pushing a new entry; explicit dismissal stays here.
+  if (navigation.sidebarReturn && navigation.surfaces.at(-1) === "sidebar") {
+    write(
+      {
+        ...route(),
+        surfaces: navigation.surfaces.slice(0, -1),
+        sidebarReturn: undefined,
+      },
+      true,
+    );
+    return Promise.resolve();
+  }
   if (
     !initialized ||
     (!navigation.details.length && !navigation.surfaces.length)
@@ -125,7 +151,7 @@ function move(delta: number): Promise<void> {
   } else history.go(delta);
   return deferred.promise;
 }
-export function setSurface(name: Surface, open: boolean) {
+export function setSurface(name: Surface, open: boolean, replace = false) {
   const next = route();
   const index = next.surfaces.indexOf(name);
   if (open && index < 0) {
@@ -133,22 +159,45 @@ export function setSurface(name: Surface, open: boolean) {
       name !== "choice" && next.surfaces.at(-1) === "choice";
     if (replaceChoice) next.surfaces.pop();
     next.surfaces.push(name);
-    write(next, replaceChoice);
+    if (name === "sidebar") next.sidebarReturn = replace || undefined;
+    write(next, replace || replaceChoice);
   } else if (!open && index >= 0) {
     if (index === next.surfaces.length - 1) void back();
   }
 }
 // The wide question rail is not a foreground navigation layer.
 export function removeQuestionDrawer() {
+  removeDrawer("questions");
+}
+export function removeSidebarDrawer() {
+  removeDrawer("sidebar");
+}
+function removeDrawer(surface: "questions" | "sidebar") {
   const next = route();
-  const index = next.surfaces.indexOf("questions");
-  if (index < 0 || retiringQuestionDrawer || pending) return;
-  retiringQuestionDrawer = {
+  const index = next.surfaces.indexOf(surface);
+  if (index < 0 || retiringDrawer || pending) return;
+  retiringDrawer = {
     ...next,
-    surfaces: next.surfaces.filter((surface) => surface !== "questions"),
+    surfaces: next.surfaces.filter((candidate) => candidate !== surface),
+    sidebarReturn: surface === "sidebar" ? undefined : next.sidebarReturn,
   };
-  apply(retiringQuestionDrawer);
-  void move(-(next.surfaces.length - index));
+  if (
+    surface === "sidebar" &&
+    next.sidebarReturn &&
+    next.surfaces.length === 1
+  ) {
+    write(retiringDrawer, true);
+    retiringDrawer = null;
+    return;
+  }
+  apply(retiringDrawer);
+  void move(
+    -(
+      next.surfaces.length -
+      index -
+      (surface === "sidebar" && next.sidebarReturn ? 1 : 0)
+    ),
+  );
 }
 export async function openConversation(
   id: string | null,
@@ -156,7 +205,12 @@ export async function openConversation(
   ownerId?: string | null,
 ) {
   if (pending) await pending.promise;
-  if (navigation.surfaces.length) await move(-navigation.surfaces.length);
+  if (navigation.sidebarReturn && navigation.surfaces[0] === "sidebar") {
+    if (navigation.surfaces.length > 1)
+      await move(-(navigation.surfaces.length - 1));
+    await back();
+  } else if (navigation.surfaces.length)
+    await move(-navigation.surfaces.length);
   const next = route();
   if (id === null) {
     if (next.details.length) write({ details: [], surfaces: [] }, true);

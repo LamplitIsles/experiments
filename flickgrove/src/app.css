@@ -52,41 +52,41 @@ select:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.app-header {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 30;
-  height: 60px;
-  padding: 0 24px;
+.grove-shell {
+  height: 100dvh;
+  min-height: 0;
+}
+.workbench {
   display: flex;
-  align-items: center;
-  gap: 18px;
-  border-bottom: 1px solid var(--border);
-  background: #202023;
-}
-.app-header > strong {
-  font-size: 17px;
-  font-weight: 650;
-  letter-spacing: -0.5px;
-}
-.session-count {
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
-.header-actions {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  margin-left: auto;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
 }
 main {
-  height: calc(100dvh - 60px);
-  margin-top: 60px;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   position: relative;
   display: flex;
   background: #242424;
+}
+.global-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.empty-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 20px;
+}
+.empty-message {
+  flex: 1;
+  display: grid;
+  place-content: center;
 }
 .detail-status > span {
   display: inline-flex;
@@ -238,11 +238,11 @@ main {
   color: var(--muted-foreground);
 }
 .detail-meta {
+  min-width: 0;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px 12px;
-  padding-right: 28px;
 }
 .detail-model {
   color: #85858e;
@@ -846,54 +846,7 @@ pre {
 .mobile-back {
   display: none;
 }
-@media (max-width: 1100px) {
-  .session-count {
-    display: none;
-  }
-}
 @media (max-width: 700px) {
-  .app-header {
-    height: 100px;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 12px 16px;
-  }
-  .app-header > strong {
-    font-size: 16px;
-  }
-  .header-actions {
-    gap: 2px;
-  }
-  .header-actions > button {
-    padding: 0 8px;
-    font-size: 12px;
-  }
-  .weekly-button span {
-    display: none;
-  }
-  main {
-    height: calc(100dvh - 100px);
-    margin-top: 100px;
-  }
-  .mobile-new {
-    position: fixed;
-    bottom: 20px;
-    left: 16px;
-    width: calc(100% - 32px);
-    height: 40px;
-  }
-  .app-header.has-selection {
-    display: none;
-  }
-  main.with-detail {
-    margin-top: 0;
-    height: 100dvh;
-  }
-  .with-detail .session-list {
-    visibility: hidden;
-    position: absolute;
-    inset: 0;
-  }
   .agent-detail {
     width: 100%;
     height: 100dvh;
@@ -903,18 +856,22 @@ pre {
   }
   .mobile-back {
     display: flex;
-    gap: 8px;
-    align-items: center;
-    padding: 12px 16px;
-  }
-  .mobile-back .weekly-control {
-    margin-left: auto;
-  }
-  .mobile-back .weekly-button {
-    padding: 0;
   }
   .detail-heading {
-    padding: 12px 20px 18px;
+    padding: 10px 12px 12px;
+  }
+  .detail-meta {
+    gap: 6px;
+  }
+  .role-project {
+    flex: 1;
+    min-width: 80px;
+  }
+  .global-actions {
+    gap: 2px;
+  }
+  .empty-tools {
+    padding: 10px 12px;
   }
   .detail-heading > button {
     position: static;
@@ -952,23 +909,26 @@ pre {
 }
 
 .session-list {
-  flex: 0 0 320px;
+  gap: 0;
+  flex: 1;
   min-width: 0;
-  padding: 18px 12px;
+  padding: 0 12px 18px;
   overflow-y: auto;
-  border-right: 1px solid var(--border);
   background: var(--background);
 }
 .session-list-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: 0 8px 14px;
+  flex-direction: row;
+  flex-shrink: 0;
+  padding: 14px 20px;
+  margin: 0;
 }
-.session-list h1 {
+.session-list-heading h1 {
   margin: 0;
   font-size: 13px;
-  color: var(--muted-foreground);
+  color: var(--foreground);
   font-weight: 550;
 }
 .session-item {
@@ -1111,8 +1071,8 @@ pre {
 .detail-empty {
   flex: 1;
   min-width: 0;
-  display: grid;
-  place-content: center;
+  display: flex;
+  flex-direction: column;
   text-align: center;
   color: var(--muted-foreground);
 }
@@ -1129,25 +1089,11 @@ pre {
   margin: 12px 0;
   white-space: pre-line;
 }
-.mobile-new {
-  display: none;
-}
 @media (max-width: 700px) {
   .session-list {
-    flex-basis: 100%;
     width: 100%;
     border-right: 0;
-    padding-bottom: 84px;
-  }
-  .mobile-new {
-    display: flex;
-  }
-  .detail-empty {
-    display: none;
-  }
-  .with-detail .detail-empty {
-    display: grid;
-    width: 100%;
+    padding-bottom: 18px;
   }
 }
 
@@ -1340,9 +1286,6 @@ pre {
   font-size: inherit;
 }
 @media (max-width: 700px) {
-  .session-list {
-    padding-top: 12px;
-  }
   .history-action {
     align-items: stretch;
     flex-direction: column;
@@ -1942,4 +1885,20 @@ button.question-option {
 }
 .org-group + .org-group {
   margin-top: 6px;
+}
+
+[data-slot="sidebar"] {
+  --sidebar: var(--background);
+  --sidebar-foreground: var(--foreground);
+}
+[data-slot="sidebar-container"] {
+  border-right: 1px solid var(--border);
+}
+[data-mobile="true"][data-slot="sidebar"] {
+  gap: 0;
+  width: var(--sidebar-width);
+  max-width: calc(100vw - 40px);
+}
+.detail-meta > [data-sidebar="trigger"] {
+  flex-shrink: 0;
 }

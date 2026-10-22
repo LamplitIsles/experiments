@@ -1,3 +1,4 @@
+import { openSidebar } from "./browser-actions";
 import { expect, test } from "@playwright/test";
 const origin = "http://127.0.0.1:14319";
 const shots = "../.scratch/sessions-new-button/screenshots";
@@ -10,12 +11,16 @@ for (const width of [1440, 390]) {
     await request.post(origin + "/fixture/reset", { data: { mode: "idle" } });
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.goto(origin);
+    await openSidebar(page);
     const header = page.locator(".session-list-heading");
     const plus = header.getByRole("button", {
       name: "New session",
       exact: true,
     });
-    const dialog = page.getByRole("dialog");
+    const dialog = page.getByRole("dialog", {
+      name: "New session",
+      exact: true,
+    });
     const search = dialog.getByRole("combobox", { name: "Search projects" });
     await expect(plus).toBeVisible();
     await expect(plus).toHaveText("");
@@ -72,6 +77,7 @@ for (const width of [1440, 390]) {
     // Existing empty Peer and a blocked socket are entirely fixture-owned.
     await request.post(origin + "/fixture/reset", { data: { mode: "empty" } });
     await page.goto(origin);
+    await openSidebar(page);
     await expect(page.locator(".session-open")).toHaveCount(0);
     for (const via of ["plus", "n"] as const) {
       if (via === "plus") await plus.click();
@@ -81,6 +87,7 @@ for (const width of [1440, 390]) {
     }
     await page.routeWebSocket("**/api/socket", (ws) => ws.close());
     await page.reload();
+    await openSidebar(page);
     await expect(
       page
         .locator(".list-empty")

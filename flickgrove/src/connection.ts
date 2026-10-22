@@ -39,6 +39,17 @@ const selectionSchema = z.object({
   sessions: z.record(z.string(), z.string()),
 });
 export const preferences = {
+  get sidebarOpen(): boolean {
+    const value = read<unknown>("sidebar-open", true);
+    return typeof value === "boolean" ? value : true;
+  },
+  set sidebarOpen(value: boolean) {
+    try {
+      localStorage.setItem(`${prefix}/sidebar-open`, JSON.stringify(value));
+    } catch {
+      /* Layout remains usable in memory. */
+    }
+  },
   get treeOrder(): Record<string, string[]> {
     const result = z
       .record(z.string(), z.array(z.string()))
