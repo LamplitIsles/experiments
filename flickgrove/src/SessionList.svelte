@@ -9,12 +9,14 @@
   import { ChevronDown, ChevronRight, Plus, Zap, MessageCircle, GitBranch } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { onMount, tick, untrack, type Snippet } from "svelte";
-  import { storagePrefix } from "./api";
+  import { readPreference, writePreference } from "./connection";
   import type { Agent, Host, Project } from "./contracts";
   import * as m from "./paraglide/messages";
   let { agents, projects, projectsLoading, instanceId, rootOrder, onreorder, hosts, selectedId, loading, connected, onopen, onnew, onclosetree, closingId, closeError, children }: { agents: Agent[]; projects: Project[]; projectsLoading: boolean; instanceId: string; rootOrder: string[]; onreorder: (ids: string[]) => void; hosts: Host[]; selectedId: string | null; loading: boolean; connected: boolean; onopen: (id: string) => void; onnew: () => void; onclosetree: (id: string) => Promise<void>; closingId: string | null; closeError: { id: string; reason: string } | null; children?: Snippet } = $props();
-  let expanded = $state<string[]>(JSON.parse(localStorage.getItem(`${storagePrefix}/expanded`) ?? "[]"));
-  let collapsed = $state<Record<string, string[]>>(JSON.parse(localStorage.getItem(`${storagePrefix}/collapsed-orgs`) ?? "{}"));
+  const savedExpanded = readPreference<unknown>("expanded", []);
+  let expanded = $state<string[]>(Array.isArray(savedExpanded) ? savedExpanded.filter((v): v is string => typeof v === "string") : []);
+  const savedCollapsed = readPreference<unknown>("collapsed-orgs", {});
+  let collapsed = $state<Record<string, string[]>>(savedCollapsed && typeof savedCollapsed === "object" && !Array.isArray(savedCollapsed) ? Object.fromEntries(Object.entries(savedCollapsed).filter(([, v]) => Array.isArray(v) && v.every(x => typeof x === "string"))) : {});
   const folded = $derived(collapsed[instanceId] ?? []);
   function groupKey(agent: Agent) {
     const catalogue = projects.filter(p=>!p.historyRef && environmentId(p)===environmentId(agent.project) && (environmentId(p)==="local" || p.environment?.target===agent.project.environment?.target));
@@ -25,7 +27,7 @@
   }
   function expandGroup(key: string) { if (folded.includes(key)) collapsed = { ...collapsed, [instanceId]: folded.filter(k => k !== key) }; }
   function toggleGroup(key: string) { endDrag(); collapsed = { ...collapsed, [instanceId]: folded.includes(key) ? folded.filter(k => k !== key) : [...folded, key] }; }
-  $effect(() => { localStorage.setItem(`${storagePrefix}/collapsed-orgs`, JSON.stringify(collapsed)); });
+  $effect(() => { writePreference("collapsed-orgs", collapsed); });
   let seenRoots: Set<string> | undefined;
   $effect(() => {
     if (projectsLoading) return;
@@ -115,7 +117,7 @@
     });
   });
   const visible = $derived(groups.flatMap(group => group.visible));
-  $effect(() => { localStorage.setItem(`${storagePrefix}/expanded`, JSON.stringify(expanded)); });
+  $effect(() => { writePreference("expanded", expanded); });
   const selection = $derived.by(() => {
     const selected = agents.find(a => a.id === selectedId);
     const root = agents.find(a => a.id === (selected?.ownerId ?? selected?.id));
@@ -181,7 +183,7 @@
     const media = matchMedia("(min-width: 701px)");
     const resize = () => { desktop = media.matches; if (!desktop) endDrag(); };
     media.addEventListener("change", resize);
-    void tick().then(() => { list.scrollTop = Number(localStorage.getItem(`${storagePrefix}/list-scroll`) ?? 0); });
+    void tick().then(() => { const saved = readPreference<unknown>("list-scroll", 0); list.scrollTop = typeof saved === "number" && Number.isFinite(saved) ? saved : 0; });
     return () => media.removeEventListener("change", resize);
   });
 </script>
@@ -190,7 +192,7 @@
     <h1>{m.product()}</h1>
     <Button variant="ghost" size="icon-sm" aria-label={m.new_session()} onclick={onnew}><Plus /></Button>
   </Sidebar.Header>
-<Sidebar.Content class="session-list" aria-label={m.sessions()} bind:ref={list} onscroll={() => localStorage.setItem(`${storagePrefix}/list-scroll`, String(list.scrollTop))}>
+<Sidebar.Content class="session-list" aria-label={m.sessions()} bind:ref={list} onscroll={() => writePreference("list-scroll", list.scrollTop)}>
   {@render children?.()}
   {#if loading && !agents.length}<p class="list-empty" role="status">{m.loading()}</p>{:else if !roots.length}<div class="list-empty"><h2>{m.empty_heading()}</h2><p>{m.empty_help()}</p><Button size="sm" disabled={!connected} onclick={onnew}><Plus />{m.new_session()}</Button></div>{/if}
   {#each groups as group (group.key)}
