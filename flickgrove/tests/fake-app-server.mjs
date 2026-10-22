@@ -90,6 +90,7 @@ function threadRecord(cwd, model) {
   const timestamp = nowSeconds();
   return {
     id: state.threadId,
+    environments: state.environments,
     cliVersion: "0.154.0",
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -836,6 +837,13 @@ async function handle(request) {
       };
     case "skills/extraRoots/set":
       return {};
+    case "environment/info":
+      if (control().missingEnvironment === p.environmentId)
+        throw new Error(`unknown environment id ${p.environmentId}`);
+      return {
+        shell: { name: "sh", path: "/bin/sh" },
+        cwd: new URL(`file://${state.cwd ?? process.cwd()}`).href,
+      };
     case "skills/list":
       return {
         data: [
@@ -880,6 +888,21 @@ async function handle(request) {
         overriddenMetadata: null,
       };
     case "thread/start": {
+      state.environments = p.environments?.map((e) => ({
+        ...e,
+        runtimeWorkspaceRoots: e.runtimeWorkspaceRoots ?? [e.cwd],
+      }));
+      if (p.environments?.some((e) => e.environmentId !== "local"))
+        send({
+          method: "mcpServer/startupStatus/updated",
+          params: {
+            threadId: state.threadId,
+            name: "og",
+            status: control().failRemoteMcp ? "failed" : "ready",
+            error: null,
+            failureReason: null,
+          },
+        });
       state.cwd = p.cwd ?? state.cwd;
       state.config = p.config ?? state.config;
       state.developerInstructions =
@@ -939,6 +962,17 @@ async function handle(request) {
       };
     }
     case "thread/resume": {
+      if (state.environments?.some((e) => e.environmentId !== "local"))
+        send({
+          method: "mcpServer/startupStatus/updated",
+          params: {
+            threadId: state.threadId,
+            name: "og",
+            status: control().failRemoteMcp ? "failed" : "ready",
+            error: null,
+            failureReason: null,
+          },
+        });
       if (state.unloadPending)
         rpcError(-32600, `thread ${p.threadId} is closing; retry after closed`);
       if (control().lockedThreads?.includes(p.threadId))

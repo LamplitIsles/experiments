@@ -2,7 +2,10 @@ import { browserOrigin } from "./browser-origin";
 import { previewMarkdown } from "./preview-markdown";
 import { constants } from "node:fs";
 import { open, realpath } from "node:fs/promises";
-import { basename, dirname, extname, resolve, sep } from "node:path";
+import { basename, dirname, extname, resolve, sep, posix } from "node:path";
+import { environmentId } from "../src/project-identity";
+import type { Project } from "../src/contracts";
+import { z } from "zod";
 import { localFile } from "../src/local-file";
 import type { HostService } from "./hosts";
 
@@ -70,7 +73,29 @@ async function read(root: string, target: string) {
   }
 }
 export function filePreview(service: HostService, now = Date.now) {
-  const grants = new Map<string, { root: string; expires: number }>();
+  const grants = new Map<
+    string,
+    { root: string; expires: number; project?: Project }
+  >();
+  const remote = async (project: Project, request: Record<string, unknown>) => {
+    const value = z
+      .object({
+        canonical: z.string(),
+        root: z.string().optional(),
+        bytes: z.string().max(Math.ceil(((PREVIEW_BYTES + 1) * 4) / 3) + 4),
+      })
+      .parse(
+        await service.remoteProjectRead(project, {
+          ...request,
+          extensions: Object.keys(types),
+        }),
+      );
+    const type = types[posix.extname(value.canonical).toLowerCase()];
+    if (!type) throw new Error("File type is not supported");
+    const bytes = Buffer.from(value.bytes, "base64");
+    if (bytes.length > PREVIEW_BYTES) throw new Error("File exceeds 20 MiB");
+    return { ...value, bytes, type };
+  };
   return async (
     request: Request,
     origins: string[],
@@ -105,7 +130,13 @@ export function filePreview(service: HostService, now = Date.now) {
         clean(path);
         if (path.startsWith("/"))
           return fail("File is outside the preview directory", 403);
-        const file = await read(grant.root, resolve(grant.root, path));
+        const file = grant.project
+          ? await remote(grant.project, {
+              operation: "preview-read",
+              root: grant.root,
+              target: posix.resolve(grant.root, path),
+            })
+          : await read(grant.root, resolve(grant.root, path));
         headers.set("Content-Type", file.type);
         headers.set("Access-Control-Allow-Origin", "*");
         const markdown = file.type.startsWith("text/markdown");
@@ -159,6 +190,35 @@ export function filePreview(service: HostService, now = Date.now) {
       const link = localFile(body.href);
       if (!link) return fail("File type is not supported");
       clean(link.path);
+      const project = service.previewProject(body.agent);
+      if (environmentId(project) !== "local") {
+        // No remote path reaches host realpath/stat. The grant captures both
+        // target identity and the canonical root returned by that device.
+        const requested = posix.resolve(project.path, link.path);
+        const file = await remote(project, {
+          operation: "preview-grant",
+          target: requested,
+          allowed: [project.path],
+        });
+        if (!file.root || !localFile(file.canonical))
+          throw new Error("File type is not supported");
+        const id =
+          crypto.randomUUID().replaceAll("-", "") +
+          crypto.randomUUID().replaceAll("-", "");
+        if (grants.size >= 256) grants.delete(grants.keys().next().value!);
+        grants.set(id, {
+          root: file.root,
+          project: structuredClone(project),
+          expires: now() + PREVIEW_TTL,
+        });
+        return Response.json(
+          {
+            url: `${origin}/preview/${id}/${encodeURIComponent(posix.basename(file.canonical))}${link.fragment}`,
+            kind: localFile(file.canonical)!.kind,
+          },
+          { headers },
+        );
+      }
       const session = resolve(service.previewDirectory(body.agent));
       const requested = resolve(session, link.path);
       const target = await realpath(requested);

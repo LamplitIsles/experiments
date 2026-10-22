@@ -1,4 +1,5 @@
 <script lang="ts">
+  import {environmentId} from "./project-identity";
   import { ChevronDown, ChevronRight, Plus, Zap, MessageCircle, GitBranch } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { onMount, tick, untrack, type Snippet } from "svelte";
@@ -10,10 +11,11 @@
   let collapsed = $state<Record<string, string[]>>(JSON.parse(localStorage.getItem(`${storagePrefix}/collapsed-orgs`) ?? "{}"));
   const folded = $derived(collapsed[instanceId] ?? []);
   function groupKey(agent: Agent) {
-    const project = projects.find(p => p.alias === agent.project.alias && p.path === agent.project.path)
-      ?? projects.find(p => p.path === agent.project.path)
-      ?? projects.find(p => p.alias === agent.project.alias);
-    return project?.owner ?? (projectsLoading && !projects.length ? "@loading" : "");
+    const catalogue = projects.filter(p=>environmentId(p)===environmentId(agent.project) && (environmentId(p)==="local" || p.environment?.target===agent.project.environment?.target));
+    const project = catalogue.find(p => p.alias === agent.project.alias && p.path === agent.project.path)
+      ?? catalogue.find(p => p.path === agent.project.path)
+      ?? catalogue.find(p => p.alias === agent.project.alias);
+    return project?.owner ?? agent.project.owner ?? (projectsLoading && !projects.length ? "@loading" : "");
   }
   function expandGroup(key: string) { if (folded.includes(key)) collapsed = { ...collapsed, [instanceId]: folded.filter(k => k !== key) }; }
   function toggleGroup(key: string) { endDrag(); collapsed = { ...collapsed, [instanceId]: folded.includes(key) ? folded.filter(k => k !== key) : [...folded, key] }; }
@@ -199,7 +201,7 @@
     <div class="session-item" class:worker-item={agent.role !== "orc"} class:active={selectedId === agent.id} class:navigation-focus={!selectedId && focusedId === agent.id}>
       <button class="session-open" draggable={desktop && agent.role === "orc" && groupKey(agent) !== "@loading"} ondragstart={e => dragStart(e, agent)} ondragend={endDrag} tabindex="-1" data-agent-id={agent.id} aria-current={selectedId === agent.id ? "true" : undefined} aria-label={m.open_agent({ title: agent.title, role: agent.role === "orc" ? m.orc() : agent.role === "reviewer" ? "Reviewer" : agent.role === "researcher" ? "Researcher" : m.worker() })} onclick={e => { if(Date.now() < suppressClickUntil) { e.preventDefault(); return; } if(revealedId) { revealedId = null; return; } onopen(agent.id); }}>
         <span class="session-title-row"><strong>{agent.title}</strong><span class="session-indicators">{#if agent.role === "orc" && agent.treeFast}<Zap size={12} role="img" aria-label={m.tree_fast()}><title>{m.tree_fast()} — {m.session_next_turn()}</title></Zap>{/if}<span class="session-state-dot" class:working={agent.state === "working"} class:attention={agent.state === "error" || !!agent.closeRequest || agent.stop?.status === "unknown" || agent.state === "stopping"} title={status} role="img" aria-label={status}></span>{#if agent.questions.some(q => q.state !== "answered")}<MessageCircle class="needs-input-icon" aria-label={m.needs_input()} role="img" />{/if}</span></span>
-        <span class="session-meta">{#if agent.role === "orc"}{:else}<span>{agent.role === "reviewer" ? "Reviewer" : agent.role === "researcher" ? "Researcher" : m.worker()}</span>{/if}<span>{agent.backend === "pi" ? "Pi" : "Codex"} · {agent.project.alias}</span>{#if agent.directoryBranch}<span class="session-branch" title={agent.directoryBranch}><GitBranch aria-hidden="true" /><span>{agent.directoryBranch}</span></span>{/if}</span>
+        <span class="session-meta">{#if agent.role === "orc"}{:else}<span>{agent.role === "reviewer" ? "Reviewer" : agent.role === "researcher" ? "Researcher" : m.worker()}</span>{/if}<span>{agent.backend === "pi" ? "Pi" : "Codex"} · {agent.project.alias}{#if environmentId(agent.project)!=="local"} · {agent.project.environment?.name}{/if}</span>{#if agent.directoryBranch}<span class="session-branch" title={agent.directoryBranch}><GitBranch aria-hidden="true" /><span>{agent.directoryBranch}</span></span>{/if}</span>
       </button>
       {#if agent.role === "orc" && children.length}<button class="worker-disclosure" tabindex="-1" aria-label={children.some(w => w.role !== "worker") ? (expanded.includes(agent.id) ? "Collapse Workers, Reviewers and Researchers" : "Expand Workers, Reviewers and Researchers") : expanded.includes(agent.id) ? m.collapse_workers() : m.expand_workers()} title={(children.some(w => w.role !== "worker") ? `${children.filter(w => w.role === "worker").length} Workers · ${children.filter(w => w.role === "reviewer").length} Reviewers · ${children.filter(w => w.role === "researcher").length} Researchers` : m.current_workers({ count: children.length })) + " · " + m.working_count({ count: children.filter(w => w.state === "working").length })} aria-expanded={expanded.includes(agent.id)} onclick={() => { if(Date.now() >= suppressClickUntil) toggle(agent.id); }}><span>{#if expanded.includes(agent.id)}<ChevronDown />{:else}<ChevronRight />{/if}{children.length}</span>{#if children.some(w => w.state === "working")}<span class="working worker-working-count">{children.filter(w => w.state === "working").length}<i></i></span>{/if}</button>{/if}
     </div>

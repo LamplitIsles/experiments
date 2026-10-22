@@ -12,7 +12,7 @@
   import type { Skill } from './contracts';
   import SkillSearch from './SkillSearch.svelte';
   import * as m from './paraglide/messages';
-  let { agentId, project, skills, connected, suspended = false, working = false, stopping = false, onstop, onsend }: { agentId: string; project: string; skills: Skill[]; connected: boolean; suspended?: boolean; working?: boolean; stopping?: boolean; onstop?: () => Promise<boolean>; onsend: (agentId: string, text: string, requestId: string, images?: ImageDraft[]) => Promise<boolean> } = $props();
+  let { agentId, project, centralSkills = false, skills, connected, suspended = false, working = false, stopping = false, onstop, onsend }: { agentId: string; project: string; centralSkills?: boolean; skills: Skill[]; connected: boolean; suspended?: boolean; working?: boolean; stopping?: boolean; onstop?: () => Promise<boolean>; onsend: (agentId: string, text: string, requestId: string, images?: ImageDraft[]) => Promise<boolean> } = $props();
   let text = $state(untrack(() => localStorage.getItem(`${storagePrefix}/composer/${agentId}`) ?? ''));
   let input = $state<HTMLTextAreaElement | null>(null);
   let composing = false;
@@ -168,7 +168,7 @@
 </script>
 <svelte:window onkeydown={skillShortcut} oncompositionstart={() => { composing = true; }} oncompositionend={() => { composing = false; }} />
 <div class="composer-wrap">
-  <SkillSearch bind:open={() => skillOpen, value => setSurface("skill", value)} {skills} {project} onselect={skill => void insertSkill(skill)} onclose={() => void restoreInput()} />
+  <SkillSearch bind:open={() => skillOpen, value => setSurface("skill", value)} {skills} {project} central={centralSkills} onselect={skill => void insertSkill(skill)} onclose={() => void restoreInput()} />
   <form class="composer" ondragover={e=>{if(e.dataTransfer?.types.includes("Files"))e.preventDefault();}} ondrop={e=>{e.preventDefault();void addFiles(Array.from(e.dataTransfer?.files ?? []));}} onsubmit={e => {e.preventDefault();void send();}}>
     <input class="image-picker" bind:this={picker} type="file" accept={IMAGE_ACCEPT} multiple aria-label="Choose message images" onchange={e=>{void addFiles(Array.from(e.currentTarget.files ?? []));e.currentTarget.value='';}} />
     {#if images.length}<div class="image-drafts">{#each images as image,index (image.id)}<div class="image-draft"><img src={previews[index]} alt={image.file.name} /><Button variant="secondary" size="icon-sm" disabled={voiceBusy} aria-label={`Remove image ${index+1}`} onclick={()=>removeImage(image.id)}><X /></Button></div>{/each}</div>{/if}

@@ -13,6 +13,9 @@
   import { retainTranscriptPositions } from "./transcript-state";
   import { LocalConnection, preferences } from "./connection";
   import { onMount, tick, untrack } from "svelte";
+  import * as Select from "$lib/components/ui/select/index.js";
+  import { projectReference } from "./project-identity";
+  import type { ProjectEnvironment } from "./contracts";
   import type { Answer, Agent, Detail, HistorySession, Model, Project, Settings, Skill, Snapshot } from "./contracts";
   import { api, editable, setClient } from "./api";
   import { RequestRejected } from "./chord-client";
@@ -87,9 +90,13 @@
   const hostConnected = $derived(!!selectedHost?.connected);
   const visibleAgents = $derived(snapshot.agents.map(a => optimistic(a.id) && a.state !== "working" && a.state !== "stopping" ? {...a,state:"working" as const} : a));
   $effect(() => { if (navigationReady) preferences.selection = { host: instanceId, sessions: $state.snapshot(remembered) }; });
+  let environments = $state<ProjectEnvironment[]>([]);
+  let selectedEnvironment = $state("local");
+  async function loadEnvironments() { try { environments = await api<ProjectEnvironment[]>("/environments"); } catch(e) { error = e instanceof Error ? e.message : m.load_failure(); } }
+  const remotePi = $derived(selectedEnvironment !== "local" && !!settings && [settings.orc,settings.worker].some(s=>s.backend === "pi"));
   async function loadProjects() {
     projectId = ""; projectError=""; projectsLoading=true; const seq = ++catalogSequence;
-    try { const registered = await api<Project[]>("/projects"); if (seq === catalogSequence) { projects = registered; projectId = registered[0]?.alias ?? ""; } }
+    try { const registered = await api<Project[]>(`/projects?environment=${encodeURIComponent(selectedEnvironment)}`); if (seq === catalogSequence) { projects = registered; projectId = registered[0]?.alias ?? ""; } }
     catch(e) { if (seq === catalogSequence) projectError = e instanceof Error ? e.message : m.load_failure(); }
     finally { if (seq === catalogSequence) projectsLoading = false; }
   }
@@ -172,7 +179,7 @@
     loading = true; error = "";
     if(!hosts.find(h=>h.id===snapshot.entryId)?.connected){if(selectedId)await restoreDetail(selectedId);loading=false;projectsLoading=false;return;}
     try {
-      const [state, , catalog] = await Promise.all([api<Snapshot>("/snapshot"), loadProjects(), api<Model[]>("/models")]);
+      const [state, , catalog] = await Promise.all([api<Snapshot>("/snapshot"), Promise.all([loadEnvironments(),loadProjects()]), api<Model[]>("/models")]);
       models = catalog;preferences.models=catalog; if(!preferences.settings&&catalog.length){const model=catalog.find(m=>m.isDefault)??catalog[0];preferences.settings={fast:false,orc:{backend:model.backend ?? "codex",provider:model.provider,model:model.id,effort:model.defaultEffort},worker:{backend:model.backend ?? "codex",provider:model.provider,model:model.id,effort:model.defaultEffort}};snapshot={...snapshot,settings:preferences.settings};} if(!connected) adopt(state, true);
       if (selectedId) await restoreDetail(selectedId);
     } catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
@@ -237,7 +244,7 @@
   }
   async function create() {
     if (!projectId || saving || !connected) return; saving = true;
-    try { const agent = await api<Agent>("/agents", { project: projectId, settings: await creationSettings() }); await closeModal(); adopt(await api<Snapshot>("/snapshot")); focusCreatedId = agent.id; open(agent.id); await sessionList?.reveal(agent.id); }
+    try { const agent = await api<Agent>("/agents", { project: projectReference(projects.find(p=>p.alias===projectId)!), settings: await creationSettings() }); await closeModal(); adopt(await api<Snapshot>("/snapshot")); focusCreatedId = agent.id; open(agent.id); await sessionList?.reveal(agent.id); }
     catch (e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { saving = false; }
   }
@@ -593,6 +600,13 @@
       {#if navigation.surfaces.includes("history") && projects.find(p => p.alias === projectId)}
         {#key createHost + ":" + projectId}<SessionHistory hostId={createHost} project={projects.find(p => p.alias === projectId)!} connected={connected && !!hosts.find(h => h.id === createHost)?.connected} onresume={resumeHistory} />{/key}
       {:else}
+      {#if environments.length > 1 || selectedEnvironment !== "local"}
+      <label class="form-section-label" for="execution-environment">Execution environment</label>
+      <Select.Root type="single" value={selectedEnvironment} onValueChange={value=>{selectedEnvironment=value;search="";void loadProjects();}} disabled={saving}>
+        <Select.Trigger id="execution-environment" class="w-full min-w-0"><span class="truncate">{environments.find(e=>e.id===selectedEnvironment)?.name ?? "Unavailable environment"}</span></Select.Trigger>
+        <Select.Content>{#each environments as environment}<Select.Item value={environment.id}>{environment.name}</Select.Item>{/each}</Select.Content>
+      </Select.Root>
+      {/if}
       <p class="form-section-label">{m.project_label()}</p>
       <Command.Root class="project-choice h-auto border border-input" shouldFilter={false} bind:value={projectHighlight} label={m.search_projects()}>
         <Command.Input aria-controls={projectListId} bind:ref={projectSearch} aria-label={m.search_projects()} placeholder={m.search_projects()} bind:value={search} disabled={saving} onkeydown={event=>{if(event.key==="Tab"&&!event.isComposing&&!event.shiftKey){event.preventDefault();if(filteredProjects.some(project=>project.alias===projectHighlight))projectId=projectHighlight;}}} />
@@ -608,8 +622,9 @@
       {#if !settings&&modalModelsLoading}<p role="status">{m.loading()}</p>{/if}
       {#if settings}{#each ["orc", "worker"] as role}{@const key = role as "orc" | "worker"}<section class="role-settings"><h3>{key === "orc" ? m.orc() : m.worker()}</h3><ModelFields bind:value={settings[key]} {models} loading={modelRefreshBusy||modalModelsLoading} disabled={saving||!connected} label={key === "orc" ? m.orc() : m.worker()} /></section>{/each}{/if}
       <Button variant="ghost" size="sm" disabled={modelRefreshBusy || !connected} onclick={refreshModels}>Refresh models</Button>
+      {#if remotePi}<p role="alert" class="inline-error">Pi supports this machine only. Choose Codex for Orc and Worker.</p>{/if}
       <p class="project-keyboard">{m.project_keyboard()}</p>
-      <div class="modal-action"><Button variant="ghost" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !projectId} onclick={() => setSurface("history", true)}><History />{m.find_history()}</Button><Button variant="default" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !settingsValid || !filteredProjects.some(p => p.alias === projectId)} onclick={create}>{saving ? m.sending() : m.new_session()}</Button></div>
+      <div class="modal-action"><Button variant="ghost" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || !projectId} onclick={() => setSurface("history", true)}><History />{m.find_history()}</Button><Button variant="default" size="sm" disabled={!connected || !hosts.find(h => h.id === createHost)?.connected || saving || remotePi || !settingsValid || !filteredProjects.some(p => p.alias === projectId)} onclick={create}>{saving ? m.sending() : m.new_session()}</Button></div>
       {/if}
     {:else if modal === "settings"}
       <Dialog.Title>{m.settings()}</Dialog.Title><p class="modal-help">{m.settings_help()}</p>

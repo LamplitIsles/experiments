@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { projectReference, parseProjectReference } from "./project-identity";
   import { ArrowLeft, History } from "@lucide/svelte";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Switch } from "$lib/components/ui/switch/index.js";
@@ -22,7 +23,7 @@
   const visibleSessions = $derived(onlyOrc ? sessions.filter(s => s.role === "orc") : sessions);
   let loading = $state(false); let error = $state(""); let sequence = 0;
   let record = $state<{item?: string; operation?: string} | null>(null);
-  let selected = $state<HistorySession | null>(null); let previewProject = $state(untrack(() => project.alias));
+  let selected = $state<HistorySession | null>(null); let previewProject = $state(untrack(() => projectReference(project)));
   let messages = $state<Message[]>([]); let messageCursor = $state<string | null>(null);
   let reading = $state(false); let resuming = $state(false); let previewSequence = 0;
   let retryOperation = $state<"search" | "read" | "owner" | "resume">("search");
@@ -31,7 +32,7 @@
   const previewOpen = $derived(navigation.surfaces.includes("history-preview") && !!selected);
   $effect(() => { if (!previewOpen) record = null; });
   $effect(() => { if (!previewOpen) void tick().then(() => { if (results) results.scrollTop = listScroll; }); });
-  function params(alias = project.alias) { return new URLSearchParams({ project: alias }); }
+  function params(alias = projectReference(project)) { return new URLSearchParams({ project: alias }); }
   async function search(more = false) {
     const seq = ++sequence; loading = true; error = ""; retryOperation = "search";
     const p = params(); p.set("query", query.trim()); if (more && cursor) p.set("cursor", cursor);
@@ -68,16 +69,16 @@
     } catch(e) { if (seq === previewSequence) error = e instanceof Error ? e.message : m.load_failure(); }
     finally { if (seq === previewSequence) reading = false; }
   }
-  async function select(session: HistorySession, alias = project.alias) {
+  async function select(session: HistorySession, alias = projectReference(project)) {
     if (!previewOpen) listScroll = results?.scrollTop ?? 0;
     ++previewSequence; record = null; selected = session; previewProject = alias; messages = []; messageCursor = null;
     setSurface("history-preview", true); await read();
   }
   async function owningOrc() {
     if (!selected?.ownerThreadId) return;
-    const p = params(selected.ownerProject ?? project.alias); p.set("thread", selected.ownerThreadId);
+    const p = params(selected.ownerProject ?? projectReference(project)); p.set("thread", selected.ownerThreadId);
     reading = true; error = ""; retryOperation = "owner";
-    try { await select(await api<HistorySession>(`/history/session?${p}`), selected.ownerProject ?? project.alias); }
+    try { await select(await api<HistorySession>(`/history/session?${p}`), selected.ownerProject ?? projectReference(project)); }
     catch(e) { error = e instanceof Error ? e.message : m.load_failure(); }
     finally { reading = false; }
   }
@@ -94,7 +95,7 @@
 
 <div class="session-history">
   <div class="history-heading"><Button variant="ghost" size="icon-sm" aria-label={m.back_history()} onclick={() => back()}><ArrowLeft /></Button><strong>{previewOpen ? m.session_preview() : m.find_history()}</strong></div>
-  <p class="history-context">{!previewOpen || previewProject === project.alias ? project.name : previewProject}</p>
+  <p class="history-context">{#if project.environment && project.environment.id!=="local"}{project.environment.name} · {/if}{!previewOpen || previewProject === projectReference(project) ? project.name : parseProjectReference(previewProject).alias}</p>
   {#if !previewOpen}
     <div class="history-controls">
     <Input bind:ref={input} bind:value={query} aria-label={m.search_history()} placeholder={m.search_history()} onkeydown={e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); void search(); } }} />

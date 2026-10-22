@@ -82,6 +82,7 @@ export class DirectoryBranches {
     private readonly options: {
       read?: BranchReader;
       intervalMs?: number;
+      canonicalize?: (path: string, previous?: string) => string;
     } = {},
   ) {}
   value(path: string) {
@@ -95,7 +96,10 @@ export class DirectoryBranches {
   update(paths: string[]) {
     if (this.disposed) return;
     const nextKeys = new Map(
-      paths.map((path) => [path, key(path, this.keys.get(path))]),
+      paths.map((path) => [
+        path,
+        (this.options.canonicalize ?? key)(path, this.keys.get(path)),
+      ]),
     );
     const remapped = [...nextKeys].some(
       ([path, resolved]) =>
