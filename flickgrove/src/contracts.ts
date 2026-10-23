@@ -95,6 +95,18 @@ export interface HistoryPage {
   sessions: HistorySession[];
   nextCursor: string | null;
 }
+export interface UserMessageAnchor {
+  operation: string;
+  summary: string;
+  images: number;
+  status: Delivery["status"];
+}
+export interface MessageWindow {
+  messages: Message[];
+  olderCursor: string | null;
+  newerCursor: string | null;
+  target?: string;
+}
 export interface HistoryMessages {
   messages: Message[];
   nextCursor: string | null;

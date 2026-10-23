@@ -400,3 +400,22 @@ Only open aggregates load at startup. Closed histories load by identity/thread o
 Browsers retain their device reading cache. Opening without reading content shows the existing conversation spinner until native history succeeds; failure or a 15-second read timeout ends loading and offers Retry. Existing reading remains visible across empty server-memory publications, reconnects, failed reads and reload. A successful empty native conversation settles normally. Reconnection advances the reading entry’s in-memory generation independently of server revision reuse. In-flight responses/errors from the preceding generation cannot publish content or a synchronized revision; once they settle the current generation fetches again. Native item/client identities merge arrivals and prevent duplicate report cards. Failed submission deletion/retry checks native history as well as the durable journal, so memory eviction cannot weaken acceptance guards. History preview performs reads without resuming a native writer.
 
 Validation uses test-owned SQLite databases, homes/configuration, FakeRuntime, strict native wire and isolated Peer/Chord/browser fixtures. `bun test server/workspace-store.test.ts` exercises the real Bun migrator, complete durable roundtrips, rollback/refusal, cold-row isolation, long ledgers and admission failure. The isolated scale comparison and HTML review are local scratch artifacts, not deployed data. These measurements establish removal of the cumulative save overhead; they do not establish the sole cause of the original Mac disconnection or verify live deployment.
+
+## User-message outline
+
+Open an Orc and use **Message outline**, immediately to the right of Settings, to revisit inputs submitted through Grove. It lists all Grove user submissions in order, including image-only and unresolved inputs, with bounded text summaries. Reports and question answers are excluded. The directory has no visible title, count or previous/next controls. It opens as a 280px right rail above 1100px and a temporary right Sheet below that width, without saving a panel preference or changing the left Sidebar.
+
+Selecting a summary centers its original input and reads a bounded native context window. **Load earlier messages** and **Later messages** continue adjacent context; **Jump to bottom** returns to the live tail. Loaded provisional inputs can be located directly. An input without a readable native position reports that fact and can be retried explicitly; navigation never sends, resumes or confirms a submission. Failure, cancellation and disconnection preserve existing reading and drafts. The directory covers Grove submissions, not external CLI inputs or closed-session previews.
+
+The directory is a read-only projection of existing delivery rows. Target reads resolve the saved agent/operation through Codex's turn/clientId and opaque native cursors, or Pi Durable's request/entry identity and bounded entry ranges. Directional HTTP cursors are signed for the original agent, thread, backend, project and execution target. No new table, transcript copy, native version upgrade or full-thread fallback is used. Historical reading retains the existing 100-item/1MiB HTTP and 8MiB cache limits. Pi uses the existing readonly SDK storage attachment without starting a Harness or repairing native files.
+
+Focused verification from `flickgrove`:
+
+```sh
+bun test server/message-navigation.test.ts server/message-navigation-native.test.ts server/pi-native.test.ts tests/history-cache.test.ts
+bun run typecheck
+bun run build
+bunx playwright test -c tests/outline.config.ts
+```
+
+The Codex fixture accepts `GROVE_CODEX_PATH` for a fixed native binary; all native preparation uses test-owned homes and loopback fake providers. Navigation is then checked separately for zero additional provider calls. Browser checks use the production App/Chord and temporary workspace fixtures, with screenshots at 1440×900 and 390×844; Chrome emulation does not establish physical phone keyboard or system gesture behavior.

@@ -222,3 +222,26 @@ for (const phase of ["load", "refresh"] as const) {
     expect(entry.messages.at(-1)?.id).toBe("fresh");
   });
 }
+test("a target window replaces the tail and bounded continuation keeps exact opposite page boundaries", () => {
+  const cache = new HistoryCache(12, 6000),
+    entry = cache.get("peer:a", "thread");
+  const page = (start: number) => ({
+    messages: Array.from({ length: 10 }, (_, i) => ({
+      ...message(String(start + i)),
+      text: "x".repeat(200),
+    })),
+    olderCursor: `old-${start}`,
+    newerCursor: `new-${start + 10}`,
+  });
+  cache.replaceWindow("peer:a", entry, page(10), 1);
+  expect(entry.messages.map((m) => m.id)).toEqual(
+    Array.from({ length: 10 }, (_, i) => String(10 + i)),
+  );
+  cache.extendWindow("peer:a", entry, page(20), "newer");
+  expect(JSON.stringify(entry.messages).length * 2).toBeLessThan(6000);
+  expect(entry.messages[0].id).toBe("20");
+  expect(entry.window?.olderCursor).toBe("old-20");
+  cache.extendWindow("peer:a", entry, page(10), "older");
+  expect(entry.messages.at(-1)?.id).toBe("19");
+  expect(entry.window?.newerCursor).toBe("new-20");
+});

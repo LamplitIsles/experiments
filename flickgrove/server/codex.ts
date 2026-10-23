@@ -337,14 +337,57 @@ export class CodexRuntime implements Runtime {
   ): Promise<HistoryMessages> {
     if (this.emptyThreads.has(threadId))
       return { messages: [], nextCursor: null };
-    const response = await (
-      await this.getCatalog()
-    ).call("thread/items/list", {
-      threadId,
+    const page = await this.itemsWindow(threadId, {
       cursor,
       sortDirection: "desc",
-      limit: 100,
     });
+    return { messages: page.messages, nextCursor: page.olderCursor };
+  }
+  async messageWindow(
+    threadId: string,
+    read: import("./runtime").WindowRead,
+  ): Promise<import("../src/contracts").MessageWindow> {
+    if ("cursor" in read)
+      return this.itemsWindow(threadId, {
+        cursor: read.cursor,
+        sortDirection: read.direction === "older" ? "desc" : "asc",
+      });
+    if (!read.turnId)
+      throw new Error("This input has no confirmed native position");
+    let cursor: string | undefined;
+    do {
+      const page = await this.itemsWindow(threadId, {
+        turnId: read.turnId,
+        cursor,
+        sortDirection: "desc",
+      });
+      const target = page.messages.find(
+        (m) => m.clientId === read.operation && m.role === "user",
+      );
+      if (target) {
+        if (!page.newerCursor)
+          throw new Error("Native navigation cursor unavailable");
+        const window = await this.itemsWindow(threadId, {
+          cursor: page.newerCursor,
+          sortDirection: "desc",
+        });
+        if (!window.messages.some((m) => m.id === target.id))
+          throw new Error("Native target window unavailable");
+        return { ...window, target: target.id };
+      }
+      if (page.olderCursor === cursor)
+        throw new Error("Repeated native cursor");
+      cursor = page.olderCursor ?? undefined;
+    } while (cursor);
+    throw new Error("This input is not available in native history");
+  }
+  private async itemsWindow(
+    threadId: string,
+    params: { cursor?: string; turnId?: string; sortDirection: "asc" | "desc" },
+  ) {
+    const response = await (
+      await this.getCatalog()
+    ).call("thread/items/list", { threadId, ...params, limit: 100 });
     const messages: Message[] = [];
     // thread/items/list materializes completed native items, including commentary.
     // Starts/deltas are not stored here; optional timestamps are not completion flags.
@@ -418,7 +461,17 @@ export class CodexRuntime implements Runtime {
         });
       }
     }
-    return { messages: messages.reverse(), nextCursor: response.nextCursor };
+    return {
+      messages: params.sortDirection === "desc" ? messages.reverse() : messages,
+      olderCursor:
+        params.sortDirection === "desc"
+          ? response.nextCursor
+          : response.backwardsCursor,
+      newerCursor:
+        params.sortDirection === "asc"
+          ? response.nextCursor
+          : response.backwardsCursor,
+    };
   }
   async historyImage(threadId: string, imageId: string): Promise<File | null> {
     // Membership comes only from an actual thread/items/list response. Browser

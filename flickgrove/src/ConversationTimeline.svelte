@@ -3,14 +3,14 @@
   import { onMount, tick, untrack, type Snippet } from "svelte";
   import { LoaderCircle } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
-  import type { HistoryMessages, Message } from "./contracts";
+  import type { HistoryMessages, Message, MessageWindow } from "./contracts";
   import { reading, readingCache } from "./api";
   import { historyCache, type LoadedHistory } from "./history-cache";
   import { transcriptPositions, saveTranscriptPosition } from "./transcript-state";
   import * as m from "./paraglide/messages";
-  let { syncRevision = 0, agentId, boundary, live, ready, connected, detailError = "", renderMessage, header, footer, onfollow, reports, pinned }: {
+  let { syncRevision = 0, agentId, boundary, live, ready, connected, detailError = "", renderMessage, header, footer, onfollow, onanchor = () => {}, reports, pinned }: {
     agentId: string; boundary?: string; syncRevision?: number; live: Message[]; ready: boolean; connected: boolean; detailError?: string;
-    renderMessage: Snippet<[Message]>; header: Snippet; footer: Snippet<[boolean]>; onfollow: (follow: boolean) => void; reports: Set<string>; pinned?: string;
+    renderMessage: Snippet<[Message]>; header: Snippet; footer: Snippet<[boolean]>; onfollow: (follow: boolean) => void; onanchor?: (operation:string) => void; reports: Set<string>; pinned?: string;
   } = $props();
   const id = untrack(() => agentId);
   const initiallyReady = untrack(() => ready);
@@ -19,7 +19,64 @@
   let historyLoaded = $state(untrack(() => !!history?.loaded));
   let historical = $state.raw(untrack(() => history?.messages ?? []));
   let cursor = $state(untrack(() => history?.cursor ?? null)), error = $state(untrack(() => history?.error ?? "")), loading = $state(false);
+  let windowState = $state<LoadedHistory["window"]>(untrack(()=>history?.window));
+  let errorDirection=$state<"older"|"newer">("older");
+  let locating: AbortController | undefined;
+  let locationGeneration = 0;
   const request = new AbortController();
+  function cancelLocation() { locationGeneration++; locating?.abort(); locating=undefined; }
+  export function cancelNavigation() { cancelLocation(); }
+  $effect(()=>{if(!connected) untrack(cancelLocation);});
+  export async function locate(operation:string) {
+    cancelLocation();
+    const generation = locationGeneration;
+    let target = messages.find(m=>m.clientId===operation || (m.provisional && m.id===operation))?.id;
+    if (!target) {
+      if (!connected) throw new Error(m.outline_offline());
+      locating = new AbortController();
+      const page = await reading<MessageWindow>(`/window?${new URLSearchParams({agent:id,operation})}`,id,locating.signal);
+      if (!active || generation!==locationGeneration) return false;
+      if (!page.target || !page.messages.some(m=>m.id===page.target)) throw new Error(m.outline_unavailable());
+      target=page.target;
+      if(!history) return false;
+      historyCache.replaceWindow(id,history,page,syncRevision);
+      windowState=history.window;
+      historical=history.messages; historyLoaded=true; error="";
+    }
+    lastFollow=false; onfollow(false);
+    await tick();
+    // The virtualizer mounts by index, then measurements refine the coordinates.
+    // Limit correction to a few frames; any deliberate reading cancels it.
+    for(let attempt=0;attempt<6;attempt++) {
+      if(!active || generation!==locationGeneration || !transcript?.isConnected) return false;
+      const index=messages.findIndex(m=>m.id===target)+1;
+      if(index<1) return false;
+      const item=$virtualizer.getVirtualItems().find(item=>item.index===index);
+      const tall=!!item && item.size>transcript.clientHeight;
+      $virtualizer.scrollToIndex(index,{align:tall?"start":"center"});
+      if(tall && item) $virtualizer.scrollToOffset(Math.max(0,item.start-transcript.clientHeight*0.35));
+      await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
+      await tick();
+    }
+    if(generation!==locationGeneration) return false;
+    onanchor(operation); return true;
+  }
+  async function loadWindow(direction:"older"|"newer") {
+    const position=windowState?.[direction==="older"?"olderCursor":"newerCursor"];
+    if(!position || !connected || loading) return;
+    const generation=locationGeneration;
+    loading=true; error="";
+    try {
+      const page=await reading<MessageWindow>(`/window?${new URLSearchParams({agent:id,cursor:position,direction})}`,id,request.signal);
+      if(!active || generation!==locationGeneration) return;
+      if(!history) return;
+      historyCache.extendWindow(id,history,page,direction);
+      historical=history.messages; windowState=history.window;
+      // Join the live tail only after a real native overlap, never by adjacency.
+      if(windowState && !windowState.newerCursor && historical.some(m=>live.some(l=>l.id===m.id))) windowState.joined=true;
+    } catch(e) { if(active && generation===locationGeneration) {errorDirection=direction;error=(e as Error).message;} }
+    finally { if(active) loading=false; }
+  }
   let active = true, attempted: LoadedHistory | null = null;
   let retained = $state.raw<Message[]>([]);
   // Server recovery metadata can refer to native items outside the recent
@@ -34,7 +91,7 @@
       retained = [...retained.filter(m => !ids.has(m.id) && !clients.has(m.id) && !m.provisional), ...current];
       let bytes = retained.reduce((sum, m) => sum + JSON.stringify(m).length * 2, 0);
       while (bytes > 8 * 1024 * 1024 && retained.length > 1) bytes -= JSON.stringify(retained.shift()).length * 2;
-      if (history && history.synchronized === revision) historyCache.remember(id, history, retained);
+      if (!windowState && history && history.synchronized === revision) historyCache.remember(id, history, retained);
     });
   });
   const messages = $derived.by(() => {
@@ -43,7 +100,7 @@
     // than appending it after the page and rotating the conversation order.
     const overlap = historical.length ? retained.findIndex(m => m.id === historical[0].id) : -1;
     const prefix = overlap > 0 ? retained.slice(0, overlap) : [];
-    const rows = [...prefix, ...historical, ...retained, ...live];
+    const rows = windowState && !windowState.joined ? historical : [...prefix, ...historical, ...retained, ...live];
     const clients = new Set(rows.filter(m => !m.provisional && m.clientId).map(m => m.clientId));
     return [...new Map(rows.filter(m => (!m.provisional || !clients.has(m.clientId)) && (readingSettled || !m.provisional || !m.delivery?.recoveryRef || m.delivery.status === "sent")).map(m => [m.id, m])).values()];
   });
@@ -128,7 +185,7 @@
     });
   });
   function virtualChanged(instance: Virtualizer<HTMLDivElement, HTMLDivElement>) {
-    if (active && transcript?.isConnected && transcript.clientHeight) onfollow(instance.isAtEnd());
+    if (active && transcript?.isConnected && transcript.clientHeight) onfollow(windowState && !windowState.joined ? false : instance.isAtEnd());
   }
   // The published Svelte adapter applies options before Svelte commits the
   // sizer. A public options refresh after a size commit lets the adapter retry
@@ -166,9 +223,10 @@
   });
   async function load() {
     const entry = history;
+    if(windowState) { await loadWindow("older"); return; }
     if (!entry || !connected || loading) return;
     const initial = !entry.loaded;
-    const revision = syncRevision;
+    const revision = syncRevision, generation=locationGeneration, cacheGeneration=entry.generation ?? 0;
     loading = true; error = "";
     const fetchPage = async (cursor?: string) => {
       const params = new URLSearchParams(); if (cursor) params.set("cursor", cursor);
@@ -178,7 +236,11 @@
     if (entry.loaded && entry.synchronized !== revision) await historyCache.refresh(id, entry, revision, () => fetchPage());
     else await historyCache.load(id, entry, fetchPage, revision);
     if (!active || entry !== history) return;
-    historical = entry.messages; cursor = entry.cursor; error = entry.error; loading = false; historyLoaded = entry.loaded;
+    loading = false;
+    // A target window replaces this read even when the cache rejects its page.
+    // Do not publish or remember the retained live tail into that window.
+    if ((entry.generation ?? 0) !== cacheGeneration) return;
+    historical = entry.messages; cursor = entry.cursor; error = entry.error; historyLoaded = entry.loaded;
     // The page may arrive after the last live publication. Cache the retained
     // native prefix now as well, so its reading anchor survives a revisit.
     historyCache.remember(id, entry, retained);
@@ -186,11 +248,11 @@
       const copy = readingCache.readDetail(id);
       if (copy) readingCache.saveDetail({ ...copy, messages: entry.messages.slice(-100) });
     }
-    if (initial && (!saved || saved.follow)) { await tick(); if (active) $virtualizer.scrollToEnd(); }
+    if (generation===locationGeneration && initial && (!saved || saved.follow)) { await tick(); if (active && generation===locationGeneration && (entry.generation ?? 0)===cacheGeneration) $virtualizer.scrollToEnd(); }
   }
   $effect(() => {
     const entry = history;
-    if (ready && connected && entry && !loading && (attempted !== entry || entry.synchronized !== syncRevision) && (!entry.loaded || entry.pending || entry.synchronized !== syncRevision) && !entry.error) {
+    if (!windowState && ready && connected && entry && !loading && (attempted !== entry || entry.synchronized !== syncRevision) && (!entry.loaded || entry.pending || entry.synchronized !== syncRevision) && !entry.error) {
       attempted = entry; untrack(() => { void load(); });
     }
   });
@@ -199,15 +261,35 @@
     if (!transcript?.isConnected || !transcript.clientHeight || !ready) return;
     lastScroll = transcript.scrollTop;
     lastFollow = transcript.scrollHeight - lastScroll - transcript.clientHeight < 80;
+    if(windowState && !windowState.joined) lastFollow=false;
     onfollow(lastFollow);
+    const measurements=$virtualizer.getVirtualItems();
+    const midpoint=lastScroll+transcript.clientHeight/2;
+    const current=measurements.find(item=>item.index>0 && item.end>=midpoint);
+    const index=current ? current.index-1 : messages.length-1;
+    const user=messages.slice(0,index+1).reverse().find(m=>m.role==="user" && m.delivery?.source==="user");
+    if(user?.clientId) onanchor(user.clientId);
   }
   function measure(node: HTMLDivElement) {
     $virtualizer.measureElement(node);
     return { destroy: () => $virtualizer.measureElement(null) };
   }
-  export function jumpToBottom() { $virtualizer.scrollToEnd(); }
+  export async function jumpToBottom() {
+    cancelLocation();
+    if(windowState) {
+      windowState=undefined; historical=[];
+      if(history) {history.window=undefined; history.messages=[];history.loaded=false;history.cursor=null;history.synchronized=undefined;}
+      await load(); await tick();
+    }
+    $virtualizer.scrollToEnd();
+  }
   onMount(() => {
     footerHeight = tail.getBoundingClientRect().height;
+    const readingKey=(event:KeyboardEvent)=>{
+      if(!["PageUp","PageDown","Home","End","ArrowUp","ArrowDown"," "].includes(event.key) || event.isComposing) return;
+      if(event.target===document.body || (event.target instanceof Node && transcript?.contains(event.target))) cancelLocation();
+    };
+    window.addEventListener("keydown",readingKey,true);
     const observer = new ResizeObserver(() => {
       if (!active) return;
       footerHeight = tail.getBoundingClientRect().height;
@@ -215,7 +297,7 @@
     observer.observe(tail);
     if (!saved || saved.follow) void tick().then(() => { if (active) $virtualizer.scrollToEnd(); });
     return () => {
-      active = false; request.abort(); observer.disconnect();
+      active = false; cancelLocation(); request.abort(); observer.disconnect(); window.removeEventListener("keydown",readingKey,true);
       if (!transcript || !initiallyReady) return;
       const scroll = lastScroll;
       const measurements = $virtualizer.takeSnapshot();
@@ -231,15 +313,15 @@
   });
 </script>
 <div class="conversation-region" aria-busy={initialLoading}>
-<div class="conversation" bind:this={transcript} onscroll={saveReading}>
+<div class="conversation" role="region" aria-label={m.conversation_region()} bind:this={transcript} onscroll={saveReading} onwheel={cancelLocation} ontouchstart={cancelLocation} onpointerdown={cancelLocation}>
   <div class="message-timeline" class:historical-messages={!!boundary} style:height={`${$virtualizer.getTotalSize()}px`}>
     <!-- Always mounted, but measured as the leading item so header changes
          use the same library anchoring as messages, rather than padding. -->
     <div class="timeline-header" data-index="0" use:measure>
       {@render header()}
       {#if boundary}<div class="history-controls">
-        {#if error}<span class="inline-error" role="alert">{error}</span><Button variant="ghost" size="sm" disabled={!connected || loading} onclick={load}>{m.retry()}</Button>
-        {:else}{#if cursor}<Button variant="ghost" size="sm" disabled={loading || !connected} onclick={load}>{m.earlier_messages()}</Button>{/if}
+        {#if error}<span class="inline-error" role="alert">{error}</span><Button variant="ghost" size="sm" disabled={!connected || loading} onclick={()=>windowState?loadWindow(errorDirection):load()}>{m.retry()}</Button>
+        {:else}{#if windowState ? windowState.olderCursor : cursor}<Button variant="ghost" size="sm" disabled={loading || !connected} onclick={load}>{m.earlier_messages()}</Button>{/if}
         {#if loading && readingSettled}<span role="status">{m.loading_history()}</span>{/if}{/if}
       </div>{/if}
     </div>
@@ -248,7 +330,7 @@
         {@render renderMessage(messages[row.index - 1])}
       </div>{/if}
     {/each}
-    <div class="timeline-footer" bind:this={tail} style:top={`${$virtualizer.getTotalSize() - footerHeight - 24}px`}>{@render footer(readingSettled)}</div>
+    <div class="timeline-footer" bind:this={tail} style:top={`${$virtualizer.getTotalSize() - footerHeight - 24}px`}>{#if windowState}<div class="history-controls">{#if windowState.newerCursor}<Button variant="ghost" size="sm" disabled={loading || !connected} onclick={()=>loadWindow("newer")}>{m.later_messages()}</Button>{/if}{#if error}<span class="inline-error" role="alert">{error}</span><Button variant="ghost" size="sm" disabled={loading || !connected} onclick={()=>loadWindow(errorDirection)}>{m.retry()}</Button>{/if}</div>{/if}{@render footer(readingSettled)}</div>
   </div>
 </div>
 {#if initialLoading}<div class="conversation-loading" role="status" aria-label={m.loading_conversation()}><LoaderCircle size={28} aria-hidden="true" class="conversation-spinner" /></div>{/if}

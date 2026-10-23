@@ -179,5 +179,13 @@
   "abandon_close_help": "Reception of these submissions is still unknown. Closing stops tracking them on this device. No message will be resent, and native history will be kept.",
   "abandon_close_submissions": "Unconfirmed submissions ({count})",
   "abandon_close_check": "Check close status",
-  "abandon_close_recovery": "Finish session close"
+  "abandon_close_recovery": "Finish session close",
+  "message_outline": "Message outline",
+  "outline_empty": "No user messages yet.",
+  "outline_images": "Image input",
+  "outline_offline": "Reconnect to locate this message.",
+  "outline_unavailable": "This input is not available in native history.",
+  "outline_loading": "Locating message…",
+  "later_messages": "Later messages",
+  "conversation_region": "Conversation"
 }

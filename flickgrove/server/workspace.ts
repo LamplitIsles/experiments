@@ -1,3 +1,4 @@
+import { MessageNavigation } from "./message-navigation";
 import {
   associate,
   questionEntry,
@@ -57,6 +58,7 @@ export class Workspace {
   private readonly branches: DirectoryBranches;
   readonly images: ImageStore;
   private readonly store: WorkspaceStore;
+  private readonly messageNavigation = new MessageNavigation();
   private readonly state: State;
   private readonly handles = new Map<string, RuntimeHandle>();
   private readonly subscribers = new Set<() => void>();
@@ -1234,6 +1236,28 @@ export class Workspace {
       message = { ...message, images: restored };
     }
     return message;
+  }
+  userMessageOutline(id: string) {
+    const a = this.agent(id);
+    if (a.role !== "orc")
+      throw new Error("Message outline is available for open Orcs");
+    return this.store.userMessageOutline(a.id);
+  }
+  async agentMessageWindow(
+    id: string,
+    selection: { operation?: string; cursor?: string; direction?: string },
+    project?: (m: Message) => Message,
+  ) {
+    const a = this.agent(id);
+    if (a.role !== "orc")
+      throw new Error("Message outline is available for open Orcs");
+    await this.assertProject(a.project, a.backend);
+    return this.messageNavigation.read(
+      this.options.runtime,
+      a,
+      selection,
+      project,
+    );
   }
   async agentHistory(
     id: string,

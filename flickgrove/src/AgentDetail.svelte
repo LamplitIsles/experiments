@@ -8,7 +8,7 @@
   import MessageImages from "./MessageImages.svelte";
   import { type ImageDraft } from "./image-drafts";
   import { Badge } from "$lib/components/ui/badge/index.js";
-  import { X, Square, ArrowDown, MessageCircle, ChevronDown, RotateCcw } from "@lucide/svelte";
+  import { X, Square, ArrowDown, MessageCircle, ChevronDown, RotateCcw, PanelRight } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { questionPanels, setQuestionPanel } from "./question-state.svelte";
   import { navigation, setSurface, removeQuestionDrawer, back } from "./navigation.svelte";
@@ -21,6 +21,7 @@
   import MessageTime from "./MessageTime.svelte";
   import Markdown from "./Markdown.svelte";
   import WorkerReport from "./WorkerReport.svelte";
+  import MessageOutline from "./MessageOutline.svelte";
   import ConversationTimeline from "./ConversationTimeline.svelte";
   import Composer from "./Composer.svelte";
   import Questions from "./Questions.svelte";
@@ -41,6 +42,8 @@
   const displayWorking = $derived(detail.state === "working" || optimisticWorking);
   let timeline = $state<ConversationTimeline>();
   let follow = $state(true);
+  let outlineOpen=$state(false), currentAnchor=$state<string>();
+  let outlineTrigger=$state<HTMLButtonElement|null>(null);
   let pinnedImage = $state<string>();
   const expandedReports = untrack(() => transcriptPositions.get(detail.id)?.reports ?? new Set<string>());
   let record = $state<{item?: string; operation?: string} | null>(null);
@@ -153,11 +156,11 @@
 
 </script>
 <aside class="agent-detail" aria-label={detail.title}>
-  <header class="detail-heading"><div class="detail-meta"><Sidebar.Trigger /><div class="mobile-back"><Button variant="ghost" size="sm" onclick={onclose}>{navigation.details.length > 1 ? m.back_orc() : m.back_sessions()}</Button></div><div class="role-project">{detail.role === "orc" ? m.orc() : detail.role === "reviewer" ? "Reviewer" : detail.role === "researcher" ? "Researcher" : m.worker()} / {detail.project.alias}{#if detail.project.environment && detail.project.environment.id!=="local"} · {detail.project.environment.name}{/if}</div><div class="detail-status">{#if detail.error && !optimisticWorking}<button class="execution-feedback" class:failed={!detail.execution?.retrying} class:working={detail.execution?.retrying} aria-expanded={reasonOpen} aria-controls="execution-reason" onclick={() => reasonOpen = !reasonOpen}><i></i>{executionLabel}{#if detail.execution?.retrying && detail.state === "working"}<span>{elapsed(detail.workingSince, now)}</span>{/if}<ChevronDown size={12} /></button>{:else}<span class:working={displayWorking} class:failed={detail.state === "error" && !optimisticWorking}><i></i>{detail.closeRequest ? m.closing_worker() : detail.stop?.status === "unknown" ? m.stop_unconfirmed() : detail.state === "stopping" ? m.stopping() : displayWorking ? m.working() + (detail.state === "working" ? " " + elapsed(detail.workingSince, now) : "") : detail.state === "error" ? m.failed() : m.idle()}</span>{/if}{#if pendingCount}<Badge variant="outline" class="border-amber-500/30 text-amber-200">{m.needs_input()}</Badge>{/if}</div>{#if detail.role !== "reviewer" && detail.role !== "researcher"}<SessionSettings {detail} {tree} connected={connected && ready} {onupdate} />{:else}<span>{detail.backend === "pi" ? "Pi" : "Codex"} · {detail.provider ? detail.provider + "/" : ""}{detail.model} · {detail.effort}</span>{/if}{@render globalActions()}</div>{#if detail.error && reasonOpen}<div class="execution-reason" id="execution-reason" role="status">{detail.error}</div>{/if}<TitleEditor title={detail.title} editable={ready && detail.role === "orc" && connected} {onrename} /></header>
+  <header class="detail-heading"><div class="detail-meta"><Sidebar.Trigger /><div class="mobile-back"><Button variant="ghost" size="sm" onclick={onclose}>{navigation.details.length > 1 ? m.back_orc() : m.back_sessions()}</Button></div><div class="role-project">{detail.role === "orc" ? m.orc() : detail.role === "reviewer" ? "Reviewer" : detail.role === "researcher" ? "Researcher" : m.worker()} / {detail.project.alias}{#if detail.project.environment && detail.project.environment.id!=="local"} · {detail.project.environment.name}{/if}</div><div class="detail-status">{#if detail.error && !optimisticWorking}<button class="execution-feedback" class:failed={!detail.execution?.retrying} class:working={detail.execution?.retrying} aria-expanded={reasonOpen} aria-controls="execution-reason" onclick={() => reasonOpen = !reasonOpen}><i></i>{executionLabel}{#if detail.execution?.retrying && detail.state === "working"}<span>{elapsed(detail.workingSince, now)}</span>{/if}<ChevronDown size={12} /></button>{:else}<span class:working={displayWorking} class:failed={detail.state === "error" && !optimisticWorking}><i></i>{detail.closeRequest ? m.closing_worker() : detail.stop?.status === "unknown" ? m.stop_unconfirmed() : detail.state === "stopping" ? m.stopping() : displayWorking ? m.working() + (detail.state === "working" ? " " + elapsed(detail.workingSince, now) : "") : detail.state === "error" ? m.failed() : m.idle()}</span>{/if}{#if pendingCount}<Badge variant="outline" class="border-amber-500/30 text-amber-200">{m.needs_input()}</Badge>{/if}</div>{#if detail.role !== "reviewer" && detail.role !== "researcher"}<SessionSettings {detail} {tree} connected={connected && ready} {onupdate} />{:else}<span>{detail.backend === "pi" ? "Pi" : "Codex"} · {detail.provider ? detail.provider + "/" : ""}{detail.model} · {detail.effort}</span>{/if}{@render globalActions()}{#if detail.role==="orc"}<Button onkeydown={event=>{if(event.key==="Enter" || event.key===" ") event.stopPropagation();}} bind:ref={outlineTrigger} variant="ghost" size="icon-sm" aria-label={m.message_outline()} title={m.message_outline()} disabled={navigation.surfaces.some(surface=>surface!=="outline")} aria-expanded={outlineOpen} onclick={()=>outlineOpen=!outlineOpen}><PanelRight /></Button>{/if}</div>{#if detail.error && reasonOpen}<div class="execution-reason" id="execution-reason" role="status">{detail.error}</div>{/if}<TitleEditor title={detail.title} editable={ready && detail.role === "orc" && connected} {onrename} /></header>
   {#if detail.researchQuestion}<div class="review-target">Question: {detail.researchQuestion}</div>{/if}
   {#if detail.reviewTarget}<p class="review-target">{detail.reviewTarget.profile} · {detail.reviewTarget.spec} · {detail.reviewTarget.fixedPoint} → {detail.reviewTarget.reviewedHead}</p>{/if}
   {#if closeError}<p class="detail-close-error" role="alert">{closeError}</p>{/if}
-  <div class="detail-body"><div class="dialogue-column"><div class="conversation-wrap">{#key ready ? detail.threadId ?? "live" : "pending"}<ConversationTimeline bind:this={timeline} agentId={detail.id} boundary={ready ? detail.threadId : undefined} syncRevision={detail.readingRevision ?? 0} live={ready ? timelineMessages : []} {ready} {connected} detailError={!ready ? actionError : ""} reports={expandedReports} pinned={pinnedImage} onfollow={value => follow = value}>
+  <div class="detail-body"><div class="dialogue-column"><div class="conversation-wrap">{#key ready ? detail.threadId ?? "live" : "pending"}<ConversationTimeline bind:this={timeline} agentId={detail.id} boundary={ready ? detail.threadId : undefined} syncRevision={detail.readingRevision ?? 0} live={ready ? timelineMessages : []} {ready} {connected} detailError={!ready ? actionError : ""} reports={expandedReports} pinned={pinnedImage} onfollow={value => follow = value} onanchor={operation=>currentAnchor=operation}>
     {#snippet header()}
     {#if !connected}<p class="host-outage" role="status">{m.host_offline()}{#if lastSeen}<br/>{m.last_seen({ time: new Date(lastSeen).toLocaleString() })}{/if}</p>{/if}
     {#if detail.closeRequest}<p class="model-note">{detail.closeRequest.reason}</p>{/if}
@@ -200,7 +203,7 @@
     <div class:question-hidden={panelVisible}>
     {#if detail.role === "orc"}<Composer suspended={panelVisible} agentId={detail.id} project={detail.project.alias} centralSkills={!!detail.project.environment && detail.project.environment.id!=="local"} {skills} connected={connected && ready} working={detail.state === "working" && !!detail.turnId} stopping={detail.state === "stopping"} {onstop} {onsend} />{:else}<footer class="read-only"><p>{m.read_only()}</p>{#if owner}<button onclick={() => onopen(owner.id)}>{m.through_orc()}</button>{/if}</footer>{/if}
     </div>
-  </div></div></div>
+  </div></div>{#if detail.role==="orc"}<MessageOutline agent={detail.id} revision={JSON.stringify([detail.readingRevision,detail.deliveries.map(d=>[d.id,d.status])])} {connected} bind:open={outlineOpen} current={currentAnchor} onselect={async operation=>timeline?.locate(operation)} oncancel={()=>timeline?.cancelNavigation()} onclose={()=>outlineTrigger?.focus({preventScroll:true})} />{/if}</div>
   {#if navigation.preview}<div class:preview-hidden={navigation.surfaces.at(-1) !== "file-preview"}><FilePreview {connected} agent={navigation.preview.agent} href={navigation.preview.href} onclose={() => void back()} /></div>{/if}
 </aside>
 
