@@ -65,6 +65,8 @@ for (const speed of ["priority", "default"]) {
 }
 const runtime = new FakeRuntime();
 let heldReads = 0;
+let forceLoading = false;
+const tpsReads: unknown[] = [];
 let quotaFailure = false,
   remaining = 72,
   delay = 0,
@@ -80,14 +82,34 @@ const app = new Workspace({
   branches: { read: async () => null },
 });
 const origin = "http://127.0.0.1:14328";
+// Opt-in real-budget liveness fixture: one owned child, no native provider.
+const liveness = process.env.GROVE_TPS_LIVENESS === "1";
+const slowChild = join(root, "slow-child.ts");
+if (liveness)
+  await writeFile(
+    slowChild,
+    `
+import {createInterface} from 'node:readline';
+createInterface({input:process.stdin}).on('line', async line => {
+  const {tier} = JSON.parse(line);
+  await Bun.sleep(18000);
+  const w = {tps:tier === 'fast' ? 11 : 22, samples:1};
+  console.log(JSON.stringify({summary:{hour:w,fourHours:w,week:w}}));
+});
+`,
+  );
 const service = new HostService(app, {
   directory: join(root, "state"),
   origin: () => origin,
-  outputSpeed: { root: logs, timeoutMs: 2000 },
+  outputSpeed: liveness
+    ? { command: [process.execPath, slowChild] }
+    : { root: logs, timeoutMs: 2000 },
 });
 const original = service.tps.bind(service);
 service.tps = ((id: string, refresh?: boolean) => {
   const result = original(id, refresh);
+  if (forceLoading) result.status = "loading";
+  if (liveness) tpsReads.push({ at: Date.now(), id, ...result });
   if (delay) heldReads++;
   return delay
     ? new Promise((resolve) => setTimeout(() => resolve(result), delay))
@@ -120,16 +142,20 @@ const server = Bun.serve<SocketData>({
   websocket: groveWebsocket,
   async fetch(req, server) {
     const url = new URL(req.url);
+    if (url.pathname === "/fixture/result")
+      return Response.json(original(`${service.identity.id}:${agents[1]}`));
     if (url.pathname === "/fixture/info")
       return Response.json({
         agents,
         heldReads,
+        tpsReads,
         inputs: runtime.inputs,
         interruptions: runtime.interruptions,
         diagnostics: service.outputSpeed.diagnostics,
       });
     if (url.pathname === "/fixture/control" && req.method === "POST") {
       const p = await req.json();
+      if ("forceLoading" in p) forceLoading = p.forceLoading;
       if ("quotaFailure" in p) quotaFailure = p.quotaFailure;
       if ("remaining" in p) remaining = p.remaining;
       if ("delay" in p) delay = p.delay;

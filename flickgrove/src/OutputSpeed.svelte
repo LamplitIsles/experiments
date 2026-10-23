@@ -27,7 +27,12 @@
         value = { ...next, summary: next.summary ?? previous?.summary ?? null };
         speedValues.delete(capturedKey); speedValues.set(capturedKey, value);
         while (speedValues.size > 16) speedValues.delete(speedValues.keys().next().value!);
-        if (next.status === "loading" && ++polls < 45) timer = setTimeout(() => void read(false), 500);
+        // One preceding task and this selection each have a 20s service deadline.
+        // 90 bounded polls cover both plus polling/transport slack; never queue work.
+        if (next.status === "loading") {
+          if (++polls < 90) timer = setTimeout(() => void read(false), 500);
+          else { value = { ...value, status: "unavailable" }; speedValues.set(capturedKey, value); }
+        }
       } catch {
         if (!cancelled && capturedKey === key) value = { model: model!, tier: speed, summary: speedValues.get(capturedKey)?.summary ?? null, status: "unavailable" };
       }

@@ -2,7 +2,10 @@ import { defineConfig } from "@playwright/test";
 import { resolve } from "node:path";
 export default defineConfig({
   testDir: ".",
-  testMatch: "tps.spec.ts",
+  testMatch:
+    process.env.GROVE_TPS_LIVENESS === "1"
+      ? "tps-liveness.spec.ts"
+      : "tps.spec.ts",
   workers: 1,
   use: {
     channel: "chrome",
