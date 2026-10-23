@@ -55,6 +55,29 @@ for (const width of [1440, 390])
         .first()
         .getAttribute("title"),
     ).toContain("2 samples");
+    await expect(
+      page.locator(".output-speed dl > div").first(),
+    ).toHaveAttribute("title", /may include partial or interrupted output/);
+    await expect(
+      page.locator(".output-speed dl > div").first(),
+    ).toHaveAttribute(
+      "aria-label",
+      /may include partial or interrupted output/,
+    );
+    console.log(
+      "ACTUAL_USAGE_COPY",
+      JSON.stringify({
+        width,
+        title: await page
+          .locator(".output-speed dl > div")
+          .first()
+          .getAttribute("title"),
+        ariaLabel: await page
+          .locator(".output-speed dl > div")
+          .first()
+          .getAttribute("aria-label"),
+      }),
+    );
     await page.screenshot({
       path: `${artifacts}/${width}-usage.png`,
       animations: "disabled",

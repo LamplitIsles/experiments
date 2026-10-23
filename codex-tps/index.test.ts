@@ -99,12 +99,12 @@ function cycle(
 test("boundaries are inclusive, concurrent responses weighted, positive short outputs retained", () => {
   const sample = (
     id: string,
-    completedAt: number,
+    generatedAt: number,
     output = 2,
     seconds = 1,
   ) => ({
     id,
-    completedAt,
+    generatedAt,
     model: "model",
     tier: "standard" as const,
     seconds,
@@ -147,7 +147,7 @@ test("native repeated response IDs and later settings updates cannot duplicate o
     ["gpt-6-luna", "fast", 32],
   ]);
 });
-test("cumulative and repeated usage, model/tier changes, missing tier, incomplete/invalid duration", () => {
+test("cumulative and repeated usage, model/tier changes, missing tier, missing usage/invalid duration", () => {
   const parser = new ResponseParser();
   const first = cycle("a", -2000);
   first.splice(7, 0, first[6]);
@@ -203,6 +203,57 @@ test("streaming read-only scanner reuses unmodified files, deduplicates archive,
     expect(changed.summary.hour).toEqual(cold.summary.hour);
     expect(changed.metrics.reused).toBe(1);
     expect(changed.metrics.bytes).toBeGreaterThan(Buffer.byteLength(data));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("owned native completed35 + incomplete36 are two log-estimate samples, with response/cumulative/archive deduplication", async () => {
+  const data = await Bun.file(
+    new URL("./fixtures/native-incomplete.jsonl", import.meta.url),
+  ).text();
+  const rows = data
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l));
+  const parser = new ResponseParser();
+  for (const r of rows) {
+    parser.push(r);
+    if (r.type === "token_usage_record" || r.payload.type === "token_count")
+      parser.push(r);
+  }
+  expect(
+    parser.samples.map((s) => [s.output, s.seconds, s.model, s.tier]),
+  ).toEqual([
+    [35, 0.843, "gpt-6-luna", "fast"],
+    [36, 0.853, "gpt-6-luna", "fast"],
+  ]);
+  const clock = Date.parse("2026-10-23T16:19:00Z");
+  const expected = { tps: 71 / 1.696, samples: 2 };
+  expect(summarize(parser.samples, selection, clock)).toEqual({
+    hour: expected,
+    fourHours: expected,
+    week: expected,
+  });
+  const root = await mkdtemp(join(tmpdir(), "codex-tps-partial-"));
+  try {
+    await mkdir(join(root, "sessions"));
+    await mkdir(join(root, "archived_sessions"));
+    const active = join(root, "sessions", "native.jsonl");
+    await writeFile(active, data);
+    await writeFile(join(root, "archived_sessions", "copy.jsonl"), data);
+    const analyzer = new LogAnalyzer();
+    const result = await analyzer.analyze(root, selection, clock);
+    expect(result.summary.hour).toEqual(expected);
+    expect(result.metrics.files).toBe(2);
+    expect((await analyzer.analyze(root, selection, clock)).metrics.bytes).toBe(
+      0,
+    );
+    expect(
+      (await analyzer.analyze(root, { ...selection, tier: "standard" }, clock))
+        .summary.hour,
+    ).toEqual({ tps: null, samples: 0 });
+    expect(await readFile(active, "utf8")).toBe(data);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

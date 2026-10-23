@@ -241,8 +241,11 @@ retained active and archived logs, across sessions and reasoning efforts. It
 does not use New session preferences or remote project directories. Missing
 model/tier/timing or no samples shows `—`; Pi omits the block. Tooltips explain
 the sample count and log-estimated effective speed, including reasoning and
-first-token waiting, excluding tool execution and user idle. Quota periods and
-speed windows are independent.
+first-token waiting, excluding tool execution and user idle. Generated samples
+with reliable usage and timing may include partial or interrupted output; sample
+counts do not measure task success. Windows use the last generated item time,
+without requiring unavailable historical wire-completion proof. Quota periods
+and speed windows are independent.
 
 The private [Bun workspace library](../codex-tps/README.md) performs read-only
 streaming analysis. Grove starts one lazy background child only when Usage

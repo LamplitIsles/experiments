@@ -132,6 +132,7 @@ export interface Question {
   recoveryRef?: boolean;
 }
 export type Answer = { questionId: string; answer: string };
+// Local log estimate may include partial/interrupted output; samples are not successes.
 export type OutputSpeed = {
   model: string;
   tier: "fast" | "standard" | null;

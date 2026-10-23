@@ -21,15 +21,17 @@ identity, size, mtime or ctime are streamed again in full; this is not an append
 index. Callers run the library in their own background process and own deadlines
 and process disposal. No cache or ledger is written to disk.
 
-Effective response speed is **sum(output tokens) / sum(response seconds)** over
-completed responses. Output includes reasoning already. The response window
+Log-estimated output speed is **sum(output tokens) / sum(response seconds)** over
+generated samples with reliable usage and timing. Samples may include partial
+or interrupted output; they do not measure task success. Output already includes
+reasoning. The response window
 starts at the latest recorded input or previous usage boundary and ends at the
 last generated response item. It includes first-token waiting, excludes gaps
 waiting for tool output and users, and is a log estimate, not decoder telemetry.
 Parallel responses contribute their individual durations, not machine wall time.
 All positive short outputs participate; there is no 100-token cutoff.
 
-The same `now` snapshot bounds inclusive completion windows of one hour, four
+The same `now` snapshot bounds inclusive last-generated-item windows of one hour, four
 hours and rolling seven days. Exact model ID and recorded tier must match:
 `priority`/legacy `fast` map to Fast, explicit `default` to Standard. Missing or
 unknown tier is unknown, even when a current configuration would supply a
@@ -40,8 +42,11 @@ Active `sessions/` and `archived_sessions/` are included, with stable response
 identities deduplicated. New native `token_usage_record` provides response-local
 tokens and an ID; deferred/repeated `token_count` is deduplicated by cumulative
 output. Older token-count-only records need a generated item, known selection
-and reliable task/input boundaries. Incomplete responses, malformed records and
-unknown formats cannot create samples. No usable sample returns `null`, not zero.
+and reliable task/input boundaries. A native `token_usage_record` records spending,
+including incomplete responses; it is not proof of wire completion. No completion
+confirmation or whole-turn success filter is applied. Output without usage or
+reliable timing, malformed records and unknown formats cannot create samples.
+No usable sample returns `null`, not zero. Sample counts are not success counts.
 Settings snapshots following a turn context describe that turn; later standalone
 settings updates cannot relabel an already running response.
 
@@ -60,7 +65,12 @@ The optional reproducible native probe is
 `GROVE_CODEX_PATH=/fixed/official/codex bun flickgrove/tests/native-tps.probe.ts`.
 It creates and prints a fresh owned root, uses no account or paid provider, and
 retains its native artifacts for inspection. It verifies Fast and Standard,
-legacy and paginated logs. Native catalogues can write inside this owned root;
+legacy and paginated logs. The additional sanitized `native-incomplete.jsonl`
+fixture comes from an already-run owned official probe: one completed 35-token
+response followed by a 36-token incomplete response in the same failed turn.
+Both generated samples participate: 71 / (0.843 + 0.853) = 41.8632 tok/s,
+with the 2.2-second tool wait excluded and usage deduplicated. This verifies the
+accepted log estimate, not a strict completion filter. Native catalogues can write inside this owned root;
 this is not a zero-write native operation. Library analysis itself is read-only.
 
 Protocol evidence is pinned to official

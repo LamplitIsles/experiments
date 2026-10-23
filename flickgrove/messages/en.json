@@ -189,7 +189,7 @@
   "later_messages": "Later messages",
   "conversation_region": "Conversation",
   "output_speed": "Output speed",
-  "output_speed_help": "Log estimate across local matching responses, all reasoning efforts; includes reasoning tokens and first-token wait, excludes tool execution. 1w is the rolling past seven days.",
+  "output_speed_help": "Log estimate across local matching responses, all reasoning efforts; includes reasoning tokens and first-token wait, excludes tool execution; may include partial or interrupted output. 1w is the rolling past seven days.",
   "output_speed_samples": "{count} samples.",
   "output_speed_unavailable": "Speed statistics unavailable."
 }

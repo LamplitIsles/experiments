@@ -11,11 +11,12 @@ export function tier(value: unknown): Tier | null {
       : null;
 }
 export type Selection = { model: string; tier: Tier };
+// Log-estimated usage/window samples, possibly partial or interrupted; not successes.
 export type Window = { tps: number | null; samples: number };
 export type Summary = { hour: Window; fourHours: Window; week: Window };
 type Sample = Selection & {
   id: string;
-  completedAt: number;
+  generatedAt: number;
   seconds: number;
   output: number;
 };
@@ -170,7 +171,7 @@ export class ResponseParser {
         id,
         model: this.model,
         tier: this.speed,
-        completedAt: this.end,
+        generatedAt: this.end,
         seconds: (this.end - this.start) / 1000,
         output: output as number,
       });
@@ -201,8 +202,8 @@ export function summarize(
       if (
         s.model !== selection.model ||
         s.tier !== selection.tier ||
-        s.completedAt < now - ms ||
-        s.completedAt > now ||
+        s.generatedAt < now - ms ||
+        s.generatedAt > now ||
         seen.has(s.id)
       )
         continue;
