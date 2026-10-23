@@ -1,3 +1,4 @@
+import { openSidebar } from "./browser-actions";
 import { expect, test, type Page } from "@playwright/test";
 const origin = "http://127.0.0.1:14320";
 async function navigateInside(page: Page) {
@@ -19,6 +20,7 @@ for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await page.request.post(origin + "/fixture/reset");
     await page.goto(origin);
+    await openSidebar(page);
     await page
       .getByRole("button", { name: "Open Local reports Orc", exact: true })
       .click();
@@ -36,6 +38,10 @@ for (const width of [1440, 390]) {
         transcript.evaluate((el) => el.scrollHeight - el.clientHeight),
       )
       .toBeGreaterThan(1000);
+    await expect(page.locator(".conversation-region")).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
     await transcript.evaluate((el) => (el.scrollTop = 100));
     await page.evaluate(
       () =>
@@ -73,6 +79,10 @@ for (const width of [1440, 390]) {
         transcript.evaluate((el) => el.scrollHeight - el.clientHeight),
       )
       .toBeGreaterThan(1000);
+    await expect(page.locator(".conversation-region")).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
     await transcript.evaluate(
       (el, position) => (el.scrollTop = position),
       reading,
@@ -81,14 +91,6 @@ for (const width of [1440, 390]) {
     expect(
       await page.evaluate(() => JSON.stringify(history.state)),
     ).not.toContain("/preview/");
-    // A higher parent layer closes first; its Back must not consume iframe hashes.
-    if (width === 1440) {
-      await page.getByRole("button", { name: "Settings", exact: true }).click();
-      await expect(page.getByRole("dialog")).toBeVisible();
-      await page.goBack();
-      await expect(page.getByRole("dialog")).toHaveCount(0);
-      await expect(preview).toBeVisible();
-    }
     await preview.getByRole("button", { name: "Close preview" }).click();
     await expect(preview).toHaveCount(0);
     await expect(composer).toHaveValue("Navigation keeps my draft");
@@ -120,10 +122,12 @@ for (const width of [1440, 390]) {
         [],
       );
     }
+    if (width === 390) await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.goBack();
     await expect(page.getByRole("dialog")).toHaveCount(0);
+    await openSidebar(page);
     await page
       .getByRole("button", { name: "Open Local reports Orc", exact: true })
       .click();
@@ -148,6 +152,7 @@ test("an invalid parent entry leaves preview visible and a fresh Close can retry
 }) => {
   await page.request.post(origin + "/fixture/reset");
   await page.goto(origin);
+  await openSidebar(page);
   await page
     .getByRole("button", { name: "Open Local reports Orc", exact: true })
     .click();

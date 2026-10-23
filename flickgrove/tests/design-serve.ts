@@ -883,7 +883,7 @@ const server = Bun.serve({
             : "../.scratch/flickgrove-browser/assets/index.html",
         ),
       ).text();
-      const script = `<script>if(!localStorage.getItem('flickgrove/'+location.origin+'/preferences'))localStorage.setItem('flickgrove/'+location.origin+'/preferences',${JSON.stringify(JSON.stringify(defaults))});</script>`;
+      const script = `<script>try{if(!localStorage.getItem('flickgrove/'+location.origin+'/preferences'))localStorage.setItem('flickgrove/'+location.origin+'/preferences',${JSON.stringify(JSON.stringify(defaults))});}catch{ /* Optional fixture preferences may be unavailable. */ }</script>`;
       return new Response(file.replace("<head>", "<head>" + script), {
         headers: { "Content-Type": "text/html" },
       });

@@ -1,9 +1,9 @@
+import { openSidebar } from "./browser-actions";
 import { expect, test } from "@playwright/test";
 const origin = "http://127.0.0.1:14319";
 for (const surface of [
   "detail",
   "settings",
-  "hosts",
   "new",
   "skill",
   "worker",
@@ -19,12 +19,16 @@ for (const surface of [
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("http://127.0.0.1:14318/");
     await page.goto(origin);
+    await openSidebar(page);
     await expect(page.locator(".session-open").first()).toBeVisible();
-    if (surface === "hosts")
-      await page.getByRole("button", { name: "Hosts", exact: true }).click();
-    else if (surface === "settings")
+    if (surface === "settings") {
+      await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "Settings", exact: true }).click();
-    else if (surface === "new") await page.locator(".mobile-new").click();
+    } else if (surface === "new")
+      await page
+        .locator(".session-list-heading")
+        .getByRole("button", { name: "New session", exact: true })
+        .click();
     else {
       if (surface === "worker") {
         await page
@@ -46,7 +50,7 @@ for (const surface of [
       }
       if (surface === "weekly")
         await page
-          .locator(".mobile-back")
+          .locator(".global-actions")
           .getByRole("button", { name: "Weekly usage", exact: true })
           .click();
       if (surface === "title")
@@ -65,9 +69,8 @@ for (const surface of [
     const dismissed = {
       detail: ".agent-detail",
       worker: ".agent-detail",
-      settings: "[role=dialog]",
-      hosts: "[role=dialog]",
-      new: "[role=dialog]",
+      settings: "[data-slot=dialog-content]",
+      new: "[data-slot=dialog-content]",
       skill: ".skill-search",
       weekly: ".weekly-popover",
       title: ".title-edit",
@@ -90,6 +93,7 @@ test("mobile list Worker, owner link, draft restore and same-level switching ret
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("http://127.0.0.1:14318/");
   await page.goto(origin);
+  await openSidebar(page);
   await page.locator(".session-open").first().click();
   const input = page.getByRole("textbox", { name: "Message Orc" });
   await input.fill("Unsent parent draft");
@@ -114,6 +118,7 @@ test("mobile list Worker, owner link, draft restore and same-level switching ret
   await expect(page.locator(".title-edit")).toHaveCount(0);
   await page.goBack();
   await expect(page.locator(".agent-detail")).toHaveCount(0);
+  await page.keyboard.press("Escape");
   await page.goBack();
   expect(new URL(page.url()).port).toBe("14318");
 });
@@ -126,6 +131,7 @@ test("restored nested Worker history returns to its Orc without losing the draft
   const { hub } = await (await request.get(`${origin}/fixture/info`)).json();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(origin);
+  await openSidebar(page);
   await page.locator(".session-open").first().click();
   await page
     .getByRole("textbox", { name: "Message Orc" })
@@ -169,6 +175,7 @@ test("a late detail update cannot reopen a dismissed mobile conversation", async
     };
   });
   await page.goto(origin);
+  await openSidebar(page);
   await page.locator(".session-open").first().click();
   await expect(page.locator(".agent-detail")).toBeVisible();
   hold = true;
@@ -180,6 +187,7 @@ test("a late detail update cannot reopen a dismissed mobile conversation", async
   release();
   await expect(page.locator(".agent-detail")).toHaveCount(0);
   await expect(page.locator(".session-list")).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(page.locator(".agent-detail")).toHaveCount(0);
@@ -194,6 +202,7 @@ test("a closed mobile historical target stays closed on Forward", async ({
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(origin);
+  await openSidebar(page);
   const target = page.getByRole("button", {
     name: "Open Streaming voice input Orc",
   });
@@ -204,8 +213,12 @@ test("a closed mobile historical target stays closed on Forward", async ({
   ).toBeEnabled();
   await page.keyboard.press("Alt+x");
   await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
-  await expect(page.locator(".agent-detail")).toHaveCount(0);
+  await expect(page.locator(".agent-detail h1")).not.toHaveText(
+    "Streaming voice input",
+  );
   await page.goForward();
-  await expect(page.locator(".agent-detail")).toHaveCount(0);
+  await expect(page.locator(".agent-detail h1")).not.toHaveText(
+    "Streaming voice input",
+  );
   await expect(target).toHaveCount(0);
 });

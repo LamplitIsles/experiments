@@ -7,7 +7,7 @@
   import { Kbd } from "$lib/components/ui/kbd/index.js";
   import { X, Plus, History, Settings as SettingsIcon } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { navigation, initializeNavigation, resumeFilePreview, openConversation, setSurface, back, validateNavigation } from "./navigation.svelte";
+  import { navigation, initializeNavigation, resumeFilePreview, openConversation, setSurface, back, validateNavigation, removeSidebarDrawer } from "./navigation.svelte";
   import { readingCache, reading } from "./api";
   import { retainReading } from "./reading-cache";
   import { retainTranscriptPositions } from "./transcript-state";
@@ -27,6 +27,8 @@
   import { observeQuestions, questionPanels, setQuestionPanel } from "./question-state.svelte";
   import ModelFields from "./ModelFields.svelte";
   import Weekly from "./Weekly.svelte";
+  import * as Sidebar from "$lib/components/ui/sidebar/index.js";
+  const sidebar = Sidebar.useSidebar();
   import SessionList from "./SessionList.svelte";
   import { historyCache } from "./history-cache";
   import AgentDetail from "./AgentDetail.svelte";
@@ -102,7 +104,6 @@
     projectError = [live,saved].flatMap(result=>result.status==="rejected" ? [result.reason instanceof Error ? result.reason.message : m.load_failure()] : []).join(" ");
     projectId = projects[0] ? projectReference(projects[0]) : ""; projectsLoading=false;
   }
-  const roots = $derived(snapshot.agents.filter(a => a.role === "orc"));
   const settingsValid = $derived(!!settings && [settings.orc, settings.worker].every(role => models.some(model => model.id === role.model && (model.backend ?? "codex") === (role.backend ?? "codex") && model.provider === role.provider && model.efforts.includes(role.effort))));
   const fastAvailable = $derived(!!settings && [settings.orc, settings.worker].some(role => models.find(model => model.id === role.model && (model.backend ?? "codex") === (role.backend ?? "codex") && model.provider === role.provider)?.fastTier));
   const owner = $derived(snapshot.agents.find(a => a.id === shownDetail?.ownerId));
@@ -111,6 +112,12 @@
   $effect(() => { if (modal === "new" && !filteredProjects.some(p => projectReference(p) === projectId)) projectId = filteredProjects[0] ? projectReference(filteredProjects[0]) : ""; });
   $effect(()=>{projectHighlight=projectId;});
   $effect(()=>{const input=projectSearch;if(input)untrack(()=>{if(modal==="new"&&!navigation.surfaces.includes("history"))input.focus({preventScroll:true});});});
+  let hadDetail = false;
+  $effect(() => {
+    const hasDetail = navigation.details.length > 0;
+    if (hadDetail && !hasDetail && !desktop && !navigation.surfaces.length) untrack(() => setSurface("sidebar", true, true));
+    hadDetail = hasDetail;
+  });
   function closeDetail() { if (navigation.surfaces.length || !desktop) void back(); else if (selectedId && questionPanels[selectedId]) setQuestionPanel(selectedId, false); }
   $effect(() => {
     if (!navigationReady) return;
@@ -490,6 +497,13 @@
   }
   function keydown(event: KeyboardEvent) {
     if (event.defaultPrevented || composing || event.isComposing || event.keyCode === 229) return;
+    if ((event.metaKey !== event.ctrlKey) && !event.altKey && !event.shiftKey && event.code === "KeyB") {
+      if (event.repeat || navigation.surfaces.some(surface => surface !== "sidebar")) return;
+      event.preventDefault();
+      if (!sidebar.isMobile && sidebar.open && document.activeElement?.closest('[data-sidebar="sidebar"]')) document.querySelector<HTMLButtonElement>('[data-sidebar="trigger"]')?.focus({preventScroll: true});
+      sidebar.toggle();
+      return;
+    }
     const optionMove = event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && ["KeyJ", "KeyK"].includes(event.code);
     const numberMove = event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && /^Digit[1-9]$/.test(event.code);
     if (optionMove || numberMove) {
@@ -510,7 +524,7 @@
       event.preventDefault(); closeDetail();
       return;
     }
-    if (editable(event.target) || navigation.surfaces.length) return;
+    if (editable(event.target) || navigation.surfaces.some(surface => surface !== "sidebar")) return;
     if (event.key.toLowerCase() === "i" && detail?.role === "orc") { event.preventDefault(); document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(); return; }
     if (event.target instanceof HTMLElement && event.target.closest(".question-panel, .pending-entry, .question-record-entry")) return;
     if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter"].includes(event.key)) { void sessionList?.keydown(event); return; }
@@ -526,7 +540,7 @@
     const initialId = navigation.details.at(-1);
     if (initialId) { instanceId = initialId.split(":")[0]; remembered = { ...remembered, [instanceId]: initialId }; }
     const media = matchMedia("(min-width: 701px)");
-    const resize = () => desktop = media.matches;
+    const resize = () => { desktop = media.matches; if (navigation.surfaces.includes("sidebar")) removeSidebarDrawer(); };
     media.addEventListener("change", resize);
     let disposed=false;
     client=new LocalConnection(value=>{
@@ -568,18 +582,19 @@
 </script>
 
 <Toaster theme="dark" position="bottom-center" />
-<header class="app-header" class:has-selection={!!selectedId}><strong>{m.product()}</strong><span class="session-count">{m.session_count({ count: roots.length })}</span>
-
-  <div class="header-actions">{#if !loading && detail?.backend !== "pi" && (!snapshot.agents.length || snapshot.agents.some(agent => agent.backend !== "pi"))}<Weekly hostId={snapshot.entryId} connected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} />{/if}<Button variant="ghost" size="icon-sm" aria-label={m.settings()} onclick={() => show("settings")}><SettingsIcon /></Button></div>
-</header>
-<div class:close-recovery-layout={closeRecovery.entries.some(i => modal !== "abandon-close" || abandon?.id !== i.agentId)}>
-<main class:with-detail={!!selectedId}>
+{#snippet globalActions()}
+  <div class="global-actions">{#if !loading && shownDetail?.backend !== "pi" && (!snapshot.agents.length || snapshot.agents.some(agent => agent.backend !== "pi"))}<Weekly hostId={snapshot.entryId} connected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} />{/if}<Button variant="ghost" size="icon-sm" aria-label={m.settings()} onclick={() => show("settings")}><SettingsIcon /></Button></div>
+{/snippet}
+<div class="workbench" class:close-recovery-layout={closeRecovery.entries.some(i => modal !== "abandon-close" || abandon?.id !== i.agentId)}>
+<main>
+  <Sidebar.Root>
   <SessionList bind:this={sessionList} agents={visibleAgents} {projects} {projectsLoading} {instanceId} rootOrder={treeOrder[instanceId] ?? []} onreorder={ids => treeOrder = { ...treeOrder, [instanceId]: ids }} {hosts} {selectedId} {loading} {connected} {closingId} closeError={selectedId === closeError?.id ? null : closeError} onclosetree={closeTree} onopen={open} onnew={() => show("new")}>
     {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
   </SessionList>
-  {#if !selectedId}<div class="detail-empty"><p>{m.select_conversation()}</p></div>{:else if !shownDetail}<div class="detail-empty" role="status"><p>{m.loading()}</p><Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button></div>{/if}
+  </Sidebar.Root>
+  {#if !shownDetail}<div class="detail-empty"><div class="empty-tools"><Sidebar.Trigger />{@render globalActions()}</div><div class="empty-message" role="status"><p>{selectedId ? m.loading() : m.select_conversation()}</p>{#if selectedId}<Button variant="ghost" size="sm" onclick={closeDetail}>{m.back_sessions()}</Button>{/if}</div></div>{/if}
   {#if error && !modal && !shownDetail}<div class="app-error" role="alert"><span>{error}</span><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => error = ""}><X /></Button></div>{/if}
-  {#if shownDetail && selectedId}{#key selectedId}<AgentDetail detail={shownDetail!} ready={!!detail} tree={shownDetail!.role === "orc" ? target : owner} {owner} {skills} {now} connected={hostConnected} mediaConnected={connected && hostConnected} entryId={snapshot.entryId} entryConnected={!!hosts.find(h=>h.id===snapshot.entryId)?.connected} onstop={stop} onupdate={result => { if (selectedId === result.id) detail = result; snapshot = { ...snapshot, agents: snapshot.agents.map(a => a.id === result.id ? { ...a, model: result.model, effort: result.effort, serviceTier: result.serviceTier } : a) }; }} onrename={rename} onrefresh={load} onretryuser={retryUser} {retryErrors} dispatching={dispatches.filter(d=>d.key.startsWith(selectedId + "/") && dispatchActive(d)).map(d=>d.key.slice(selectedId!.length+1))} optimisticWorking={optimistic(selectedId)} actionError={error} closeError={closeError?.id === shownDetail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} />{/key}{/if}
+  {#if shownDetail && selectedId}{#key selectedId}<AgentDetail {globalActions} detail={shownDetail!} ready={!!detail} tree={shownDetail!.role === "orc" ? target : owner} {owner} {skills} {now} connected={hostConnected} mediaConnected={connected && hostConnected} onstop={stop} onupdate={result => { if (selectedId === result.id) detail = result; snapshot = { ...snapshot, agents: snapshot.agents.map(a => a.id === result.id ? { ...a, model: result.model, effort: result.effort, serviceTier: result.serviceTier } : a) }; }} onrename={rename} onrefresh={load} onretryuser={retryUser} {retryErrors} dispatching={dispatches.filter(d=>d.key.startsWith(selectedId + "/") && dispatchActive(d)).map(d=>d.key.slice(selectedId!.length+1))} optimisticWorking={optimistic(selectedId)} actionError={error} closeError={closeError?.id === shownDetail.id ? closeError.reason : undefined} lastSeen={selectedHost?.lastSeen} workers={snapshot.agents.filter(w => w.ownerId === detail?.id)} onclose={closeDetail} onopen={id => open(id, true)} onsend={send} onanswer={answerBatch} onretry={retryDelivery} />{/key}{/if}
 </main>
 
 {#if closeRecovery.entries.some(i => modal !== "abandon-close" || abandon?.id !== i.agentId)}
@@ -635,7 +650,7 @@
       <Button variant="ghost" size="sm" disabled={modelRefreshBusy || !connected} onclick={refreshModels}>Refresh models</Button>
       <p class="settings-scope">{m.settings_scope()}</p><div class="modal-action">{#if install}<button class="install-link" onclick={() => install?.prompt()}>{m.install_app()}</button>{/if}<Button variant="default" size="sm" disabled={!settings || !settingsValid || saving} onclick={saveSettings}>{saving ? m.sending() : m.save_changes()}</Button></div>
     {:else if modal === "keys"}
-      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["↑ ↓ ← →", m.key_focus()], ["Option + J / K", m.key_session_loop()], ["⌘ 1–9", m.key_visible_session()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Option/Alt + S", m.search_skills()], ["Option/Alt + X", m.close_tree()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
+      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["⌘ / Ctrl + B", m.toggle_sidebar()], ["↑ ↓ ← →", m.key_focus()], ["Option + J / K", m.key_session_loop()], ["⌘ 1–9", m.key_visible_session()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Option/Alt + S", m.search_skills()], ["Option/Alt + X", m.close_tree()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
     {/if}
     {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
   </Dialog.Content>

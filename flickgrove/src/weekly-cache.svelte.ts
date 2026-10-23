@@ -1,4 +1,5 @@
-import { api, storagePrefix, readingCache } from "./api";
+import { api } from "./api";
+import { readPreference, writePreference } from "./connection";
 import type { WeeklyUsage } from "./contracts";
 export const weeklyCache = $state<Record<string, WeeklyUsage | null>>({});
 const requests = new Map<string, Promise<WeeklyUsage>>();
@@ -8,16 +9,8 @@ export function weeklyKey(hostId?: string) {
 export function loadWeekly(hostId?: string) {
   const key = weeklyKey(hostId);
   if (key in weeklyCache) return;
-  const stored = localStorage.getItem(`${storagePrefix}/weekly/${key}`);
-  let value: WeeklyUsage | null = null;
-  if (stored) {
-    try {
-      const parsed = JSON.parse(stored) as WeeklyUsage;
-      if (validWeekly(parsed, hostId)) value = parsed;
-    } catch {
-      /* An unreadable cache has no usable quota. */
-    }
-  }
+  const stored = readPreference<WeeklyUsage | null>(`weekly/${key}`, null);
+  const value = stored && validWeekly(stored, hostId) ? stored : null;
   weeklyCache[key] = value;
 }
 function validWeekly(value: WeeklyUsage, hostId?: string) {
@@ -43,10 +36,7 @@ export function acceptWeekly(hostId: string | undefined, value?: WeeklyUsage) {
     (value.remaining !== null || weeklyCache[key]?.remaining == null)
   ) {
     weeklyCache[key] = value;
-    readingCache.writeDevice(
-      `${storagePrefix}/weekly/${key}`,
-      JSON.stringify(value),
-    );
+    writePreference(`weekly/${key}`, value);
   } else {
     loadWeekly(hostId);
   }

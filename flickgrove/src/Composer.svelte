@@ -13,7 +13,12 @@
   import SkillSearch from './SkillSearch.svelte';
   import * as m from './paraglide/messages';
   let { agentId, project, centralSkills = false, skills, connected, suspended = false, working = false, stopping = false, onstop, onsend }: { agentId: string; project: string; centralSkills?: boolean; skills: Skill[]; connected: boolean; suspended?: boolean; working?: boolean; stopping?: boolean; onstop?: () => Promise<boolean>; onsend: (agentId: string, text: string, requestId: string, images?: ImageDraft[]) => Promise<boolean> } = $props();
-  let text = $state(untrack(() => localStorage.getItem(`${storagePrefix}/composer/${agentId}`) ?? ''));
+  let draftReadable = true;
+  function readDraft(fallback = '') {
+    try { return localStorage.getItem(`${storagePrefix}/composer/${agentId}`) ?? ''; }
+    catch { draftReadable = false; return fallback; }
+  }
+  let text = $state(untrack(() => readDraft()));
   let input = $state<HTMLTextAreaElement | null>(null);
   let composing = false;
   let images = $state<ImageDraft[]>([]); let previews = $state<string[]>([]); let imageError=$state(""); let preparing=$state(false); let ready=$state(false); let imageStorage=$state(true); let picker: HTMLInputElement; let active=true;
@@ -75,7 +80,7 @@
   });
   async function refreshDraft(applyRecovery=false) {
     if(applyRecovery)cancelVoice();
-    if(applyRecovery)text=localStorage.getItem(`${storagePrefix}/composer/${agentId}`) ?? '';
+    if(applyRecovery)text=readDraft(text);
     try { const stored=await loadImages(draftKey(agentId)); if(active) { images=stored?.images ?? []; imageStorage=true; } }
     catch(e) { if(active){imageStorage=false;imageError=`Image storage unavailable. Text messages still work. ${(e as Error).message}`;} }
     finally {if(active)ready=true;}
@@ -109,6 +114,7 @@
 
   const skillOpen = $derived(navigation.surfaces.includes("skill")); let insertion = {start:0,end:0};
   $effect(() => {
+    if(!draftReadable)return; // Never overwrite an unreadable stored draft with the display fallback.
     try { readingCache.writeDevice(`${storagePrefix}/composer/${agentId}`, text); }
     catch(e) { imageError=(e as Error).message; }
   });

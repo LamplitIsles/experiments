@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { newSession, createSession } from "./browser-actions";
+import { newSession, createSession, openSidebar } from "./browser-actions";
 const origin = "http://127.0.0.1:14319";
 test.use({ serviceWorkers: "block" });
 const group = (p: Page, key: string) =>
@@ -183,6 +183,7 @@ test("same-group drag persists; cross-group/header/member drop rejects without n
   await expect(page.locator(".drop-before, .drop-after")).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "‹ Sessions", exact: true }).click();
+  await openSidebar(page);
   await expect.poll(() => ids(page)).toEqual(expected);
   await expect(roots(page).first()).toHaveAttribute("draggable", "false");
   await group(page, "personal").locator(".org-disclosure").click();
@@ -267,24 +268,29 @@ test("catalogue delay stays accessible without false Ungrouped; failure recovers
   await expect(
     dialog.getByRole("listbox", { name: "Project", exact: true }),
   ).toHaveAttribute("aria-busy", "true");
-  await expect(dialog.getByRole("option")).toHaveCount(0);
+  await expect(
+    dialog.getByRole("option").filter({ hasNotText: "Saved history" }),
+  ).toHaveCount(0);
   await expect(group(page, "personal").locator(".session-open")).toHaveCount(1);
   await expect(dialog.getByText("Synthetic catalogue failure")).toBeVisible();
   await expect(
     dialog.getByRole("button", { name: "New session", exact: true }),
   ).toBeDisabled();
-  await expect(dialog.getByRole("option")).toHaveCount(0);
+  await expect(
+    dialog.getByRole("option").filter({ hasNotText: "Saved history" }),
+  ).toHaveCount(0);
   await request.post(origin + "/fixture/change", {
     data: { projectsDelay: 0, projectsFailure: false },
   });
   await dialog.getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(dialog.getByRole("option")).toHaveCount(5);
+  await expect(
+    dialog.getByRole("option").filter({ hasNotText: "Saved history" }),
+  ).toHaveCount(5);
   const search = dialog.getByRole("combobox", {
     name: "Search projects…",
     exact: true,
   });
   await search.fill("forge");
-  await search.press("ArrowDown");
   await search.press("Enter");
   await expect(
     dialog.getByRole("option", { name: "Forge", exact: true }),

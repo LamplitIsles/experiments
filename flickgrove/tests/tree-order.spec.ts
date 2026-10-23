@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { newSession, createSession } from "./browser-actions";
+import { newSession, createSession, openSidebar } from "./browser-actions";
 const origin = "http://127.0.0.1:14319";
 test.use({ serviceWorkers: "block" });
 const roots = (page: Page) =>
@@ -106,6 +106,7 @@ test("desktop drags whole trees, preserves selection/draft, restores order and a
   await expect.poll(() => ids(page)).toEqual([...expected, created]);
   await page.setViewportSize({ width: 390, height: 900 });
   await page.getByRole("button", { name: "‹ Sessions", exact: true }).click();
+  await openSidebar(page);
   await expect.poll(() => ids(page)).toEqual([...expected, created]);
   await expect(roots(page).first()).toHaveAttribute("draggable", "false");
   const row = page.locator(`.session-row[data-swipe-id="${created}"]`);

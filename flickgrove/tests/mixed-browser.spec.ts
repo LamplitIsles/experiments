@@ -1,3 +1,4 @@
+import { openSidebar, openSettings } from "./browser-actions";
 import { chooseOption } from "./choice-interactions";
 import { expect, test } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -35,6 +36,7 @@ for (const width of [1440, 390])
   }) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.goto(origin);
+    await openSidebar(page);
     await page
       .getByRole("button", { name: "New session", exact: true })
       .first()
@@ -127,7 +129,7 @@ for (const width of [1440, 390])
         .modelCalls,
     ).toBe(calls);
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await openSettings(page);
     const preferences = page.getByRole("dialog", {
       name: "Settings",
       exact: true,
@@ -170,6 +172,7 @@ for (const width of [1440, 390])
       data: { enabled: true },
     });
     await page.goto(origin);
+    await openSidebar(page);
     await page
       .getByRole("button", { name: "New session", exact: true })
       .first()
@@ -348,6 +351,7 @@ for (const width of [1440, 390])
       data: { enabled: true },
     });
     await page.goto(origin);
+    await openSidebar(page);
     await expect(
       page.getByRole("button", { name: "Settings", exact: true }),
     ).toBeEnabled();
@@ -365,7 +369,9 @@ for (const width of [1440, 390])
     await expect(
       page.locator(`[id="${await search.getAttribute("aria-controls")}"]`),
     ).toHaveAttribute("role", "listbox");
-    await expect(dialog.getByRole("option")).toHaveCount(36);
+    await expect(
+      dialog.getByRole("option").filter({ hasNotText: "Saved history" }),
+    ).toHaveCount(36);
     await search.fill("nothing matches this project");
     await expect(
       dialog.getByText("No matching registered projects"),
@@ -376,9 +382,10 @@ for (const width of [1440, 390])
     await search.press("Enter");
     await expect(dialog).toBeVisible();
     await search.fill("project-19");
-    const project = dialog.getByRole("option", { name: /Orbit project 19/ });
+    const project = dialog
+      .getByRole("option", { name: /Orbit project 19/ })
+      .filter({ hasNotText: "Saved history" });
     await expect(project).toContainText("project-19");
-    await search.press("ArrowDown");
     await search.press("Enter");
     await expect(project).toHaveAttribute("data-checked", "true");
     await expect(dialog).toBeVisible();
@@ -399,7 +406,7 @@ for (const width of [1440, 390])
     await expect(project).toHaveAttribute("data-checked", "true");
     await chooseOption(
       page,
-      dialog.getByRole("button", { name: "Orc backend", exact: true }),
+      dialog.getByRole("combobox", { name: "Orc backend", exact: true }),
       "Pi",
     );
     const modelChoice = dialog.getByRole("combobox", {
@@ -460,7 +467,7 @@ for (const width of [1440, 390])
     await expect(popup).toHaveCount(0);
     await expect(dialog).toBeVisible();
     await dialog
-      .getByRole("button", { name: "Orc reasoning effort", exact: true })
+      .getByRole("combobox", { name: "Orc reasoning effort", exact: true })
       .click();
     await expect(
       page.getByRole("option", { name: "off", exact: true }),

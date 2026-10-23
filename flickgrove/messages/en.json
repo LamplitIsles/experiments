@@ -1,4 +1,6 @@
 {
+  "toggle_sidebar": "Toggle Sidebar",
+  "sidebar_help": "Choose or create a session.",
   "product": "FlickGrove",
   "new_session": "New session",
   "settings": "Settings",

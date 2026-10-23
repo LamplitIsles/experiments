@@ -13,7 +13,7 @@ const identitySchema = z.object({
   name: z.string().min(1).max(120),
 });
 const prefix = `flickgrove/${location.origin}`;
-function read<T>(key: string, fallback: T): T {
+export function readPreference<T>(key: string, fallback: T): T {
   try {
     return (
       JSON.parse(localStorage.getItem(`${prefix}/${key}`) ?? "null") ?? fallback
@@ -22,6 +22,15 @@ function read<T>(key: string, fallback: T): T {
     return fallback;
   }
 }
+// Only optional UI preferences use this seam; required journals keep writeDevice.
+export function writePreference(key: string, value: unknown) {
+  try {
+    readingCache.writeDevice(`${prefix}/${key}`, JSON.stringify(value));
+  } catch {
+    /* The owning UI keeps its current in-memory state. */
+  }
+}
+let memorySettings: Settings | null | undefined;
 const modelsSchema = z.array(
   z.object({
     id: z.string(),
@@ -39,10 +48,21 @@ const selectionSchema = z.object({
   sessions: z.record(z.string(), z.string()),
 });
 export const preferences = {
+  get sidebarOpen(): boolean {
+    const value = readPreference<unknown>("sidebar-open", true);
+    return typeof value === "boolean" ? value : true;
+  },
+  set sidebarOpen(value: boolean) {
+    try {
+      localStorage.setItem(`${prefix}/sidebar-open`, JSON.stringify(value));
+    } catch {
+      /* Layout remains usable in memory. */
+    }
+  },
   get treeOrder(): Record<string, string[]> {
     const result = z
       .record(z.string(), z.array(z.string()))
-      .safeParse(read<unknown>("tree-order", {}));
+      .safeParse(readPreference<unknown>("tree-order", {}));
     if (!result.success) return {};
     return Object.fromEntries(
       Object.entries(result.data).map(([host, ids]) => [
@@ -52,41 +72,52 @@ export const preferences = {
     );
   },
   set treeOrder(value: Record<string, string[]>) {
-    readingCache.writeDevice(`${prefix}/tree-order`, JSON.stringify(value));
+    writePreference("tree-order", value);
   },
   get selection() {
-    const result = selectionSchema.safeParse(read<unknown>("selection", null));
+    const result = selectionSchema.safeParse(
+      readPreference<unknown>("selection", null),
+    );
     if (!result.success)
       return { host: "", sessions: {} as Record<string, string> };
     return {
       host:
-        identitySchema.safeParse(read<unknown>("entry", null)).data?.id ?? "",
+        identitySchema.safeParse(readPreference<unknown>("entry", null)).data
+          ?.id ?? "",
       sessions: Object.fromEntries(
         Object.entries(result.data.sessions).filter(
           ([host, id]) =>
             id.startsWith(host + ":") &&
             host ===
-              identitySchema.safeParse(read<unknown>("entry", null)).data?.id,
+              identitySchema.safeParse(readPreference<unknown>("entry", null))
+                .data?.id,
         ),
       ),
     };
   },
   set selection(value: { host: string; sessions: Record<string, string> }) {
-    readingCache.writeDevice(`${prefix}/selection`, JSON.stringify(value));
+    writePreference("selection", value);
   },
   get models() {
-    const result = modelsSchema.safeParse(read<unknown>("models", []));
+    const result = modelsSchema.safeParse(
+      readPreference<unknown>("models", []),
+    );
     return result.success ? result.data : [];
   },
   set models(value: import("./contracts").Model[]) {
-    readingCache.writeDevice(`${prefix}/models`, JSON.stringify(value));
+    writePreference("models", value);
   },
   get settings() {
-    const value = settingsSchema.safeParse(read<unknown>("preferences", null));
+    const value = settingsSchema.safeParse(
+      memorySettings === undefined
+        ? readPreference<unknown>("preferences", null)
+        : memorySettings,
+    );
     return value.success ? value.data : null;
   },
   set settings(value: Settings | null) {
-    readingCache.writeDevice(`${prefix}/preferences`, JSON.stringify(value));
+    memorySettings = value;
+    writePreference("preferences", value);
   },
 };
 type Link = {
@@ -126,7 +157,7 @@ export class LocalConnection {
   }
   async start() {
     const storedIdentity = identitySchema.safeParse(
-      read<unknown>("entry", null),
+      readPreference<unknown>("entry", null),
     );
     const local = storedIdentity.success ? storedIdentity.data : null;
     if (local) {
@@ -149,7 +180,7 @@ export class LocalConnection {
         this.entryId = actual.id;
         this.add(actual);
       }
-      readingCache.writeDevice(`${prefix}/entry`, JSON.stringify(actual));
+      writePreference("entry", actual);
     } catch (error) {
       if (!local) throw error;
     }

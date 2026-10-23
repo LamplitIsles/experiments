@@ -1,3 +1,4 @@
+import { openSidebar } from "./browser-actions";
 import { expect, test } from "@playwright/test";
 const origin = "http://127.0.0.1:14319";
 test("page Peer quota cache survives failure, missing data, reload", async ({
@@ -9,7 +10,7 @@ test("page Peer quota cache survives failure, missing data, reload", async ({
   });
   await request.post(origin + "/fixture/change", { data: { usage: 64 } });
   await page.goto(origin);
-  const ring = page.locator(".app-header .weekly-button strong");
+  const ring = page.locator(".global-actions .weekly-button strong");
   await expect(ring).toHaveText("36%");
   await page.getByRole("button", { name: "Weekly usage", exact: true }).click();
   await expect(page.locator(".weekly-source")).toContainText("Resets");
@@ -37,9 +38,9 @@ test("page Peer quota cache survives failure, missing data, reload", async ({
   await expect(page.locator(".weekly-source")).not.toContainText("Resets");
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator(".mobile-back .weekly-button strong")).toHaveText(
-    "53%",
-  );
+  await expect(
+    page.locator(".global-actions .weekly-button strong"),
+  ).toHaveText("53%");
 });
 
 test("model refresh failure retains available choices and recovery refreshes them", async ({
@@ -50,9 +51,9 @@ test("model refresh failure retains available choices and recovery refreshes the
     data: { mode: "no-workers" },
   });
   await page.goto(origin);
-  await expect(page.locator(".app-header .weekly-button strong")).toHaveText(
-    "28%",
-  );
+  await expect(
+    page.locator(".global-actions .weekly-button strong"),
+  ).toHaveText("28%");
   await request.post(origin + "/fixture/change", {
     data: { modelFailure: true },
   });
@@ -93,10 +94,10 @@ for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await page.clock.install({ time: instant });
     await page.goto(origin);
-    const button = page.locator(".app-header .weekly-button");
+    const button = page.locator(".global-actions .weekly-button");
     await expect(button.locator("strong")).toHaveText("70%");
     await expect(button).toHaveAccessibleName("Weekly usage");
-    await expect(button.locator("span")).toHaveText("Weekly usage");
+    await expect(button).not.toContainText("Weekly usage");
     await expect(button).toHaveAccessibleDescription(
       "Quota used: 70%; Period elapsed: 60%",
     );
@@ -143,10 +144,11 @@ for (const width of [1440, 390]) {
     });
     if (width === 390) {
       await page.keyboard.press("Escape");
+      await openSidebar(page);
       await page
         .getByRole("button", { name: "Open Streaming voice input Orc" })
         .click();
-      const mobile = page.locator(".mobile-back .weekly-button");
+      const mobile = page.locator(".global-actions .weekly-button");
       await expect(mobile).toHaveAccessibleName("Weekly usage");
       await expect(mobile.locator("strong")).toHaveText("70%");
       await expect(mobile).toHaveAccessibleDescription(
@@ -163,7 +165,6 @@ for (const width of [1440, 390]) {
       await page.screenshot({
         path: "../.scratch/weekly-used-primary/390-conversation-expanded.png",
       });
-      await page.keyboard.press("Escape");
       await page.keyboard.press("Escape");
       await button.click();
     }
@@ -258,7 +259,7 @@ test("unknown quota and tab return keep time semantics", async ({
   });
   await page.clock.install({ time: instant });
   await page.goto(origin);
-  const button = page.locator(".app-header .weekly-button");
+  const button = page.locator(".global-actions .weekly-button");
   await expect(button.locator("strong")).toHaveText("—");
   await expect(button.locator(".ring-value")).toHaveAttribute(
     "stroke-dasharray",
@@ -294,7 +295,7 @@ test("initially unknown quota retains supplied reset without replacing later num
   });
   await page.clock.install({ time: instant });
   await page.goto(origin);
-  const button = page.locator(".app-header .weekly-button");
+  const button = page.locator(".global-actions .weekly-button");
   await expect(button.locator("strong")).toHaveText("—");
   await expect(button.locator(".ring-value")).toHaveAttribute(
     "stroke-dasharray",
