@@ -20,6 +20,16 @@ export async function readingHttp(
     const project = p.get("project") ?? "";
     const cursor = p.get("cursor") ?? undefined;
     switch (url.pathname) {
+      case "/api/read/outline":
+        return respond(service.userMessageOutline(agent));
+      case "/api/read/window":
+        return respond(
+          await service.agentMessageWindow(agent, {
+            operation: p.get("operation") ?? undefined,
+            cursor,
+            direction: p.get("direction") ?? undefined,
+          }),
+        );
       case "/api/read/messages":
         return respond(
           agent

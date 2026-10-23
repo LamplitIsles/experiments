@@ -43,6 +43,31 @@ export class FakeRuntime implements Runtime {
       nextCursor: start ? String(start) : null,
     };
   }
+  async messageWindow(
+    threadId: string,
+    read: import("./runtime").WindowRead,
+  ): Promise<import("../src/contracts").MessageWindow> {
+    const items = this.historyItems.get(threadId) ?? [];
+    let start: number, end: number, target: string | undefined;
+    if ("operation" in read) {
+      const index = items.findIndex((m) => m.clientId === read.operation);
+      if (index < 0) throw new Error("This input has no native position");
+      start = Math.max(0, index - 12);
+      end = Math.min(items.length, index + 18);
+      target = items[index].id;
+    } else {
+      const index = Number(read.cursor);
+      start = read.direction === "older" ? Math.max(0, index - 30) : index;
+      end =
+        read.direction === "older" ? index : Math.min(items.length, index + 30);
+    }
+    return {
+      messages: items.slice(start, end),
+      target,
+      olderCursor: start ? String(start) : null,
+      newerCursor: end < items.length ? String(end) : null,
+    };
+  }
   readonly settingsReads: string[] = [];
   readonly settings = new Map<string, import("./runtime").ExecutionSettings>();
   settingsOverride?: (

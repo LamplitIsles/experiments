@@ -215,6 +215,17 @@ export class HostService {
   async detail(id: string) {
     return qualified(this.local(), this.workspace.detail(this.raw(id)));
   }
+  userMessageOutline(id: string) {
+    return this.workspace.userMessageOutline(this.raw(id));
+  }
+  agentMessageWindow(
+    id: string,
+    selection: { operation?: string; cursor?: string; direction?: string },
+  ) {
+    return this.workspace.agentMessageWindow(this.raw(id), selection, (m) =>
+      this.qualifyMessage(m),
+    );
+  }
   async agentHistory(id: string, cursor?: string) {
     return this.workspace.agentHistory(this.raw(id), cursor, (m) =>
       this.qualifyMessage(m),

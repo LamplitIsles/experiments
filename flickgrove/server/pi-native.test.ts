@@ -37,6 +37,10 @@ test("official codemode executes official MCP direct/deferred/codemode tools and
         new Response(child.stderr).text(),
         child.exited,
       ]);
+      const evidence = out
+        .split("\n")
+        .find((line) => line.startsWith("Pi navigation counters"));
+      if (evidence) console.log(evidence);
       expect({ code, output: code ? out + err : "" }).toEqual({
         code: 0,
         output: "",
@@ -442,6 +446,49 @@ test("official codemode executes official MCP direct/deferred/codemode tools and
   );
   expect(requests).toBe(calls);
   expect(await readFile(log, "utf8")).toBe(previousLog);
+  const nativePath = piSessionPath(
+    join(agentDir, "grove-durable"),
+    handle.threadId,
+  );
+  const beforeNavigation = await readFile(nativePath);
+  const beforeFiles = await (
+    await import("node:fs/promises")
+  ).readdir(join(agentDir, "grove-durable"));
+  const targetWindow = await readonly.messageWindow(handle.threadId, {
+    operation: "operation",
+  });
+  expect(
+    targetWindow.messages.find((m) => m.id === targetWindow.target)?.clientId,
+  ).toBe("operation");
+  let next = targetWindow.newerCursor;
+  const navigated = [...targetWindow.messages];
+  for (let i = 0; next && i < 10; i++) {
+    const page = await readonly.messageWindow(handle.threadId, {
+      cursor: next,
+      direction: "newer",
+    });
+    navigated.push(...page.messages);
+    next = page.newerCursor;
+  }
+  expect(navigated.at(-1)?.text).toBe("owned page 250");
+  expect(new Set(navigated.map((m) => m.id)).size).toBe(navigated.length);
+  expect(requests).toBe(calls);
+  expect(await readFile(log, "utf8")).toBe(previousLog);
+  expect(await readFile(nativePath)).toEqual(beforeNavigation);
+  expect(
+    await (
+      await import("node:fs/promises")
+    ).readdir(join(agentDir, "grove-durable")),
+  ).toEqual(beforeFiles);
+  console.log(
+    "Pi navigation counters",
+    JSON.stringify({
+      preparationProviderCalls: calls,
+      readingProviderCalls: requests - calls,
+      nativeFileBytesUnchanged: true,
+      nativeFileListUnchanged: true,
+    }),
+  );
   await readonly.close();
   // Exercise official file credential locking and refresh with fake tokens only.
   await writeFile(

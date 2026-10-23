@@ -270,17 +270,60 @@ export class PiRuntime implements Runtime {
     return (await this.historyThread(id)).title;
   }
   async historyMessages(id: string, cursor?: string): Promise<HistoryMessages> {
+    const page = await this.entryWindow(
+      id,
+      cursor ? { cursor, direction: "older" } : undefined,
+    );
+    return { messages: page.messages, nextCursor: page.olderCursor };
+  }
+  messageWindow(id: string, read: import("./runtime").WindowRead) {
+    return this.entryWindow(id, read);
+  }
+  private async entryWindow(
+    id: string,
+    read?: import("./runtime").WindowRead,
+  ): Promise<import("../src/contracts").MessageWindow> {
     return this.read(id, async (storage) => {
+      let anchor: number | undefined;
+      const direction = read && "direction" in read ? read.direction : "older";
+      if (read && "operation" in read) {
+        const receipt = await storage.submissionByRequest(
+          ROOT_CONVERSATION_ID,
+          read.operation,
+          BACKGROUND_CONTEXT,
+        );
+        if (!receipt?.entry)
+          throw new Error("This input has no readable native position");
+        anchor = receipt.entry;
+      } else if (read) {
+        anchor = Number(read.cursor);
+        if (!Number.isSafeInteger(anchor) || anchor! < 0)
+          throw new Error("Invalid native position");
+      }
       const page = await storage.scanEntries(
-        { conversationId: ROOT_CONVERSATION_ID, order: "descending" },
+        {
+          conversationId: ROOT_CONVERSATION_ID,
+          order: direction === "older" ? "descending" : "ascending",
+          ...(anchor !== undefined
+            ? direction === "older"
+              ? {
+                  maxEntryId:
+                    anchor as import("@earendil-works/pi-durable").EntryId,
+                }
+              : {
+                  minEntryId:
+                    anchor as import("@earendil-works/pi-durable").EntryId,
+                }
+            : {}),
+        },
         100,
-        cursor
-          ? JSON.parse(Buffer.from(cursor, "base64url").toString())
-          : undefined,
+        undefined,
         BACKGROUND_CONTEXT,
       );
       const messages: Message[] = [];
-      for (const entry of [...page.items].reverse()) {
+      for (const entry of direction === "older"
+        ? [...page.items].reverse()
+        : page.items) {
         if (
           ![
             "grove.input",
@@ -353,11 +396,31 @@ export class PiRuntime implements Runtime {
           ...(images.length ? { images } : {}),
         });
       }
+      const ordered = [...page.items].sort((a, b) => a.id - b.id);
+      const first = ordered[0]?.id,
+        last = ordered.at(-1)?.id;
+      const target =
+        read && "operation" in read
+          ? messages.find(
+              (m) => m.clientId === read.operation && m.role === "user",
+            )
+          : undefined;
+      if (read && "operation" in read && !target)
+        throw new Error("This input is not visible in native history");
       return {
         messages,
-        nextCursor: page.next
-          ? Buffer.from(JSON.stringify(page.next)).toString("base64url")
-          : null,
+        olderCursor:
+          first !== undefined &&
+          first > 1 &&
+          (direction !== "older" || !!page.next || anchor !== undefined)
+            ? String(first - 1)
+            : null,
+        newerCursor:
+          last !== undefined &&
+          (direction === "older" ? anchor !== undefined : !!page.next)
+            ? String(last + 1)
+            : null,
+        target: target?.id,
       };
     });
   }

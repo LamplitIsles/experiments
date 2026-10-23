@@ -57,6 +57,12 @@ async function unit(name: string, color: string, origin: () => string) {
     if (history.fail) throw new Error("Fixture history unavailable");
     return readHistory(threadId, cursor);
   };
+  const readWindow = runtime.messageWindow.bind(runtime);
+  runtime.messageWindow = async (thread, read) => {
+    if (history.delay) await Bun.sleep(history.delay);
+    if (history.fail) throw new Error("Fixture navigation unavailable");
+    return readWindow(thread, read);
+  };
   const app = new Workspace({
     directory: join(cwd, "state"),
     runtime,
@@ -357,6 +363,59 @@ const server = Bun.serve({
       local = await unit("Local", "#355d98", () => origin);
       return Response.json({ ok: true });
     }
+    if (url.pathname === "/fixture/outline" && request.method === "POST") {
+      const a = await local.app.createOrc("fixture", defaults);
+      await local.app.rename(a.id, "Outline fixture");
+      for (let i = 0; i < 90; i++) {
+        const text =
+          i === 45
+            ? ""
+            : i === 30 || i === 60
+              ? "Same instruction"
+              : i === 20
+                ? "Long input " + "word ".repeat(900)
+                : `Instruction ${String(i).padStart(3, "0")}`;
+        const images =
+          i === 45
+            ? await local.app.images.upload(a.id, `outline-${i}`, text, [
+                new File(
+                  [
+                    await Bun.file(
+                      join(
+                        local.app.detail(local.agent.id).project.path,
+                        "reports/plot.png",
+                      ),
+                    ).arrayBuffer(),
+                  ],
+                  "owned.png",
+                  { type: "image/png" },
+                ),
+              ])
+            : undefined;
+        await local.app.send(a.id, text, `outline-${i}`, images);
+        local.runtime.emit(a.id, {
+          type: "item",
+          turnId: `turn-${i}`,
+          item: {
+            type: "agentMessage",
+            id: `reply-${i}`,
+            text:
+              `Context ${i}\n\n` + "Read the surrounding context. ".repeat(15),
+          },
+        });
+        local.runtime.emit(a.id, {
+          type: "completed",
+          turnId: local.app.detail(a.id).turnId!,
+          status: "completed",
+        });
+      }
+      return Response.json({
+        id: local.service.identity.id + ":" + a.id,
+        inputs: local.runtime.inputs.length,
+      });
+    }
+    if (url.pathname === "/fixture/input-count")
+      return Response.json({ inputs: local.runtime.inputs.length });
     if (url.pathname === "/fixture/history" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
       const target = local;

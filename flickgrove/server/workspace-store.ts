@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { readMigrationFiles } from "drizzle-orm/migrator";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { fileURLToPath } from "node:url";
 import type { Delivery, Question } from "../src/contracts";
 import type { RuntimeAgent } from "./runtime";
@@ -183,6 +183,23 @@ export class WorkspaceStore {
   private deleted = new Map<string, { sessionId: string; id: string }>();
   private tracked = new WeakSet<RuntimeAgent>();
   private positions = new WeakMap<object, number>();
+  userMessageOutline(
+    id: string,
+  ): import("../src/contracts").UserMessageAnchor[] {
+    return this.db
+      .select({
+        operation: s.deliveries.operationId,
+        summary: sql<string>`substr(${s.deliveries.text}, 1, 240)`,
+        images: sql<number>`coalesce(json_array_length(${s.deliveries.images}), 0)`,
+        status: s.deliveries.status,
+      })
+      .from(s.deliveries)
+      .where(
+        and(eq(s.deliveries.sessionId, id), eq(s.deliveries.source, "user")),
+      )
+      .orderBy(s.deliveries.position)
+      .all();
+  }
   constructor(path: string) {
     this.sqlite = new Database(path);
     this.db = drizzle(this.sqlite);

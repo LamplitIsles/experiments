@@ -1,4 +1,4 @@
-import type { HistoryMessages, Message } from "./contracts";
+import type { HistoryMessages, Message, MessageWindow } from "./contracts";
 
 export type LoadedHistory = {
   boundary: string;
@@ -10,6 +10,16 @@ export type LoadedHistory = {
   pending?: Promise<void>;
   synchronized?: number;
   generation?: number;
+  window?: {
+    olderCursor: string | null;
+    newerCursor: string | null;
+    joined?: boolean;
+    pages: {
+      ids: string[];
+      olderCursor: string | null;
+      newerCursor: string | null;
+    }[];
+  };
   gap?: { until: string; olderCursor: string | null; before: string };
 };
 
@@ -68,6 +78,70 @@ export class HistoryCache {
       ...messages,
     ];
     this.trim();
+  }
+  replaceWindow(
+    id: string,
+    entry: LoadedHistory,
+    page: MessageWindow,
+    revision: number,
+  ) {
+    entry.generation = (entry.generation ?? 0) + 1;
+    entry.loaded = true;
+    entry.error = "";
+    entry.synchronized = revision;
+    entry.gap = undefined;
+    entry.messages = page.messages;
+    entry.window = {
+      olderCursor: page.olderCursor,
+      newerCursor: page.newerCursor,
+      pages: [
+        {
+          ids: page.messages.map((m) => m.id),
+          olderCursor: page.olderCursor,
+          newerCursor: page.newerCursor,
+        },
+      ],
+    };
+    if (this.has(id, entry)) this.trim();
+  }
+  extendWindow(
+    id: string,
+    entry: LoadedHistory,
+    page: MessageWindow,
+    direction: "older" | "newer",
+  ) {
+    if (!entry.window) return;
+    const segment = {
+      ids: page.messages.map((m) => m.id),
+      olderCursor: page.olderCursor,
+      newerCursor: page.newerCursor,
+    };
+    const pages =
+      direction === "older"
+        ? [segment, ...entry.window.pages]
+        : [...entry.window.pages, segment];
+    const rows =
+      direction === "older"
+        ? [...page.messages, ...entry.messages]
+        : [...entry.messages, ...page.messages];
+    entry.messages = [...new Map(rows.map((m) => [m.id, m])).values()];
+    // Drop whole pages at the opposite boundary. Their exact native continuation
+    // is retained on the remaining boundary; no fabricated offset or gap join.
+    while (
+      pages.length > 1 &&
+      JSON.stringify(entry.messages).length * 2 > this.byteLimit
+    ) {
+      if (direction === "older") pages.pop();
+      else pages.shift();
+      const keep = new Set(pages.flatMap((p) => p.ids));
+      entry.messages = entry.messages.filter((m) => keep.has(m.id));
+    }
+    entry.window = {
+      pages,
+      olderCursor: pages[0].olderCursor,
+      newerCursor: pages[pages.length - 1].newerCursor,
+    };
+    if (this.has(id, entry)) this.trim();
   }
   load(
     id: string,

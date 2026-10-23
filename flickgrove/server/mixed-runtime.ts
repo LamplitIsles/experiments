@@ -104,6 +104,13 @@ export class MixedRuntime implements Runtime {
     const value = await this.runtime(native.backend).historyThread(native.id);
     return { ...value, backend: native.backend, threadId };
   }
+  messageWindow(threadId: string, read: import("./runtime").WindowRead) {
+    const native = threadIdentity(threadId);
+    const runtime = this.runtime(native.backend);
+    if (!runtime.messageWindow)
+      throw new Error("Message navigation unavailable");
+    return runtime.messageWindow(native.id, read);
+  }
   historyMessages(threadId: string, cursor?: string) {
     const native = threadIdentity(threadId);
     return this.runtime(native.backend).historyMessages(native.id, cursor);

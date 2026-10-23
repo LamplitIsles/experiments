@@ -94,6 +94,9 @@ export interface RuntimeHandle {
   title(input: string): Promise<string | undefined>;
   close(): Promise<void>;
 }
+export type WindowRead =
+  | { operation: string; turnId?: string }
+  | { cursor: string; direction: "older" | "newer" };
 export interface Runtime {
   history(
     cwd: string,
@@ -102,6 +105,10 @@ export interface Runtime {
   ): Promise<HistoryPage>;
   historyThread(threadId: string): Promise<HistorySession>;
   historyImage?(threadId: string, imageId: string): Promise<File | null>;
+  messageWindow?(
+    threadId: string,
+    read: WindowRead,
+  ): Promise<import("../src/contracts").MessageWindow>;
   historyMessages(threadId: string, cursor?: string): Promise<HistoryMessages>;
   readTitle(threadId: string): Promise<string | null>;
   weekly(): Promise<WeeklyUsage>;

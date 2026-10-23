@@ -231,6 +231,15 @@ test("Durable accepted/queued work resumes without resubmission; scoped Stop wit
     expect(
       page.messages.filter((m) => m.role === "user").map((m) => m.clientId),
     ).toEqual(["first"]);
+    const located = await reader.messageWindow(threadId, {
+      operation: "first",
+    });
+    expect(
+      located.messages.find((m) => m.id === located.target)?.clientId,
+    ).toBe("first");
+    await expect(
+      reader.messageWindow(threadId, { operation: "second" }),
+    ).rejects.toThrow("no readable native position");
     expect(requests).toBe(1);
     expect((await stat(piSessionPath(sessionDir, threadId))).mtimeMs).toBe(
       before,
@@ -305,6 +314,23 @@ test("Durable accepted/queued work resumes without resubmission; scoped Stop wit
     );
     expect(queued?.status).toBe("unanswered");
     expect(queued?.status === "unanswered" && queued.reason).toBe("aborted");
+    const unanswered = (await records(threadId)).find(
+      (s) => s.requestId === "stop-first",
+    )!;
+    expect(unanswered.status).toBe("unanswered");
+    if (unanswered.entry) {
+      const stoppedWindow = await reader.messageWindow(threadId, {
+        operation: "stop-first",
+      });
+      expect(
+        stoppedWindow.messages.find((m) => m.id === stoppedWindow.target)
+          ?.clientId,
+      ).toBe("stop-first");
+    }
+    if (!queued?.entry)
+      await expect(
+        reader.messageWindow(threadId, { operation: "stop-queued" }),
+      ).rejects.toThrow("no readable native position");
     const withdrawnHistory = await new PiRuntime({
       agentDir,
       tool: options.tool,

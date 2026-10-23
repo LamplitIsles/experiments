@@ -1,4 +1,5 @@
 export type Surface =
+  | "outline"
   | "sidebar"
   | "abandon-close"
   | "choice"
@@ -58,7 +59,9 @@ export function initializeNavigation(selected: string | null) {
     write(
       {
         ...saved,
-        surfaces: saved.surfaces.filter((surface) => surface !== "sidebar"),
+        surfaces: saved.surfaces.filter(
+          (surface) => surface !== "sidebar" && surface !== "outline",
+        ),
         sidebarReturn: undefined,
       },
       true,
@@ -172,7 +175,10 @@ export function removeQuestionDrawer() {
 export function removeSidebarDrawer() {
   removeDrawer("sidebar");
 }
-function removeDrawer(surface: "questions" | "sidebar") {
+export function removeOutlineDrawer() {
+  removeDrawer("outline");
+}
+function removeDrawer(surface: "questions" | "sidebar" | "outline") {
   const next = route();
   const index = next.surfaces.indexOf(surface);
   if (index < 0 || retiringDrawer || pending) return;
