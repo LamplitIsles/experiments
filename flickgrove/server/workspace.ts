@@ -64,6 +64,56 @@ export class Workspace {
   private readonly closingTrees = new Set<string>();
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly opening = new Map<string, Promise<RuntimeHandle>>();
+  // Keep cancellation until the turn ends so another tool call cannot rearm it.
+  private readonly handoffs = new Map<
+    string,
+    { turnId: string; summary: string; cancelled: boolean }
+  >();
+  private readonly publishedHandoffs = new Map<
+    string,
+    { id: string; summary: string }
+  >();
+  private readonly finalFailures = new Map<string, { id: string }>();
+  private cancelHandoff(id: string) {
+    this.publishedHandoffs.delete(id);
+    const candidate = this.handoffs.get(id);
+    if (candidate) candidate.cancelled = true;
+  }
+  private handoffBlocked(a: RuntimeAgent) {
+    if (
+      this.disposed ||
+      this.writeFailure ||
+      a.closed ||
+      a.closeRequest ||
+      this.closingTrees.has(a.id) ||
+      this.treeActions.has(a.id) ||
+      a.stop?.status === "pending" ||
+      a.stop?.status === "unknown" ||
+      a.execution?.retrying ||
+      this.queues.has(a.id) ||
+      this.opening.has(a.id)
+    )
+      return true;
+    return [
+      a,
+      ...this.state.agents.filter((w) => w.ownerId === a.id && !w.closed),
+    ].some(
+      (w) =>
+        w.questions.some((q) => q.state !== "answered") ||
+        w.deliveries.some((d) =>
+          ["queued", "sending", "uncertain"].includes(d.status),
+        ) ||
+        (w !== a &&
+          (w.state === "working" ||
+            w.state === "stopping" ||
+            !!w.turnId ||
+            (w.state === "error" && !w.turnEnded) ||
+            !!w.closeRequest ||
+            this.closingChildren.has(w.id) ||
+            this.queues.has(w.id) ||
+            this.opening.has(w.id))),
+    );
+  }
   private readonly completedTurns = new Set<string>();
   // IDs only: retain live publication identity until this active turn ends, even
   // after the bounded reading window has evicted the corresponding bodies.
@@ -284,6 +334,10 @@ export class Workspace {
       return;
     } else if (event.type === "working") {
       if (a.turnId === event.turnId) return;
+      if (a.ownerId) this.cancelHandoff(a.ownerId);
+      this.handoffs.delete(a.id);
+      this.publishedHandoffs.delete(a.id);
+      this.finalFailures.delete(a.id);
       this.completedItems.delete(a.id);
       if (a.turnId) {
         this.completedTurns.add(`${a.id}/${a.turnId}`);
@@ -334,7 +388,10 @@ export class Workspace {
           ...(d?.images?.length ? { images: d.images } : {}),
         };
         if (matched >= 0) a.messages.splice(matched, 1, message);
-        else a.messages.push(message);
+        else {
+          this.cancelHandoff(a.ownerId ?? a.id);
+          a.messages.push(message);
+        }
         // Only native item positions can correct an out-of-order notification.
         if (
           matched < 0 &&
@@ -366,6 +423,7 @@ export class Workspace {
             newQuestions.push(id);
           }
         });
+        if (newQuestions.length) this.cancelHandoff(a.ownerId ?? a.id);
         // Persisted question identities already prove an evicted repeat.
         if (!newQuestions.length && !a.messages.some((m) => m.id === item.id))
           return;
@@ -415,6 +473,21 @@ export class Workspace {
     } else if (event.type === "completed") {
       this.completedTurns.add(`${a.id}/${event.turnId}`);
       if (a.turnId === event.turnId) {
+        const candidate = this.handoffs.get(a.id);
+        if (
+          candidate?.turnId === event.turnId &&
+          !candidate.cancelled &&
+          event.status === "completed" &&
+          a.state === "working" &&
+          !this.handoffBlocked(a)
+        )
+          this.publishedHandoffs.set(a.id, {
+            id: event.turnId,
+            summary: candidate.summary,
+          });
+        this.handoffs.delete(a.id);
+        if (a.role === "orc" && event.status === "failed")
+          this.finalFailures.set(a.id, { id: event.turnId });
         a.turnEnded = true;
         const stopped =
           a.stop?.turnId === event.turnId && event.status === "interrupted";
@@ -436,6 +509,7 @@ export class Workspace {
         a.workingSince = undefined;
       }
     } else if (event.type === "error") {
+      this.cancelHandoff(a.ownerId ?? a.id);
       if (
         event.willRetry &&
         a.state === "error" &&
@@ -453,6 +527,7 @@ export class Workspace {
         a.workingSince = undefined;
       }
     } else {
+      this.cancelHandoff(a.ownerId ?? a.id);
       a.execution = undefined;
       a.turnEnded = false;
       if (event.type === "disconnected") this.handles.delete(a.id);
@@ -557,6 +632,8 @@ export class Workspace {
       );
     return structuredClone({
       ...agent,
+      userHandoff: this.publishedHandoffs.get(a.id),
+      finalFailure: this.finalFailures.get(a.id),
       unansweredCount: a.questions.filter((q) => q.state === "unanswered")
         .length,
       recoveryCount: a.deliveries.filter((d) => d.status !== "sent").length,
@@ -564,6 +641,8 @@ export class Workspace {
       questions: agent.questions.slice(-100).map((q) => ({
         ...q,
         text: "",
+        notificationText:
+          q.state === "unanswered" ? q.text.slice(0, 300) : undefined,
         title: q.title.slice(0, 200),
         options: [],
         answer: undefined,
@@ -942,6 +1021,7 @@ export class Workspace {
       );
     const handle = this.handles.get(id);
     if (!handle) throw new Error("Turn connection unavailable");
+    this.cancelHandoff(a.id);
     a.stop = { turnId, status: "pending" };
     a.state = "stopping";
     this.save();
@@ -1463,6 +1543,7 @@ export class Workspace {
     let d = a.deliveries.find((d) => d.id === requestId);
     if (d && d.status !== "failed" && d.status !== "queued")
       return this.detail(a.id);
+    this.cancelHandoff(a.ownerId ?? a.id);
     if (!d) {
       d = {
         id: requestId,
@@ -2014,7 +2095,38 @@ export class Workspace {
       !name.endsWith("_list")
     )
       throw new Error("Tree is closing");
+    if (name.endsWith("_start") || name.endsWith("_send"))
+      this.cancelHandoff(a.id);
     switch (name) {
+      case "orc_handoff": {
+        const input = z
+          .object(toolDefinitions.orc_handoff.shape)
+          .strict()
+          .parse(args);
+        this.readableAgent(a);
+        if (
+          a.state !== "working" ||
+          !a.turnId ||
+          a.turnEnded ||
+          this.handoffBlocked(a)
+        )
+          throw new Error(
+            "User handoff requires the current working Orc turn with no pending work, questions or unknown outcomes",
+          );
+        const previous = this.handoffs.get(a.id);
+        if (previous?.turnId === a.turnId) {
+          if (previous.cancelled)
+            throw new Error(
+              "This turn's handoff was cancelled by continued work; finish normally",
+            );
+        } else
+          this.handoffs.set(a.id, {
+            turnId: a.turnId,
+            summary: input.summary,
+            cancelled: false,
+          });
+        return { pending: true, turnId: a.turnId };
+      }
       case "researcher_start":
       case "reviewer_start":
       case "worker_start": {
@@ -2362,6 +2474,7 @@ export class Workspace {
     if (text.length > 100_000)
       throw new Error("Message is too long, including the report header");
     const owner = this.agent(worker.ownerId!);
+    this.cancelHandoff(owner.id);
     owner.deliveries.push({
       id: requestId,
       text,

@@ -133,6 +133,7 @@ export const receiptSchema = z.object({
 export const lookupSchema = receiptSchema.nullable();
 // Domain fields are validated on both receiving boundaries; unknown engine fields never enter state.
 const question = z.object({
+  notificationText: z.string().max(300).optional(),
   recoveryRef: z.boolean().optional(),
   id,
   itemId: id,
@@ -147,6 +148,8 @@ const question = z.object({
   at: z.number(),
 });
 const agent = z.object({
+  userHandoff: z.object({ id, summary: z.string().min(1).max(300) }).optional(),
+  finalFailure: z.object({ id }).optional(),
   backend: z.enum(["codex", "pi"]).optional(),
   provider: z.string().optional(),
   treeFast: z.boolean().optional(),

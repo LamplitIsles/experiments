@@ -199,13 +199,20 @@
     for (const a of after.agents) {
       if(!before.hosts?.find(h=>h.id===a.hostId)?.connected || !after.hosts?.find(h=>h.id===a.hostId)?.connected)continue;
       const previous = before.agents.find(p => p.id === a.id); if (!previous) continue;
-      const newQuestion = a.role === "orc" && a.questions.some(q => q.state === "unanswered" && !previous.questions.some(p => p.id === q.id));
-      const idle = previous.state === "working" && a.state === "idle";
-      const failed = a.state === "error" && (previous.state !== "error" || previous.error !== a.error);
-      if (!newQuestion && !idle && !failed) continue;
+      if (a.role !== "orc") continue;
+      const newQuestions = a.questions.filter(q => q.state === "unanswered" &&
+        !previous.questions.some(p => p.id === q.id || p.itemId === q.itemId));
+      const batches = [...new Set(newQuestions.map(q => q.itemId))];
+      const failed = a.finalFailure && a.finalFailure.id !== previous.finalFailure?.id;
+      const handoff = a.userHandoff && a.userHandoff.id !== previous.userHandoff?.id;
+      if (!batches.length && !failed && !handoff) continue;
       if (document.hasFocus() && document.visibilityState === "visible" && selectedId === a.id) continue;
-      const title = newQuestion ? m.notification_input({ title: a.title }) : failed ? m.notification_error({ title: a.title }) : m.notification_idle({ title: a.title });
-      const notification = new Notification(title, { body: newQuestion ? a.questions.find(q => q.state === "unanswered")?.text : failed ? a.error : m.notification_idle_body(), tag: `${a.id}:${newQuestion ? "input" : a.state}` });
+      const title = batches.length ? m.notification_input({ title: a.title }) : failed ? m.notification_error({ title: a.title }) : m.notification_handoff({ title: a.title });
+      const body = batches.length ? newQuestions.map(q => q.notificationText ?? q.text).join("\n") : failed ? a.error : a.userHandoff?.summary;
+      let notification: Notification;
+      try {
+        notification = new Notification(title, { body, tag: `${a.id}:${batches.length ? `input:${batches.join(",")}` : failed ? `failure:${a.finalFailure!.id}` : `handoff:${a.userHandoff!.id}`}` });
+      } catch { continue; }
       notification.onclick = () => { window.focus(); void open(a.ownerId ?? a.id); notification.close(); };
     }
   }
