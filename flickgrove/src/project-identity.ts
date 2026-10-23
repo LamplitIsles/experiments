@@ -19,6 +19,14 @@ export function parseProjectReference(reference: string) {
 export const projectDirectoryKey = (project: Project) =>
   JSON.stringify([
     environmentId(project),
-    project.environment?.target ?? "",
+    project.environment?.target ??
+      (environmentId(project) === "local" ? "local" : ""),
     project.path,
   ]);
+
+export function mergeProjectCatalogue(live: Project[], saved: Project[]) {
+  const key = (project: Project) =>
+    JSON.stringify([project.alias, projectDirectoryKey(project)]);
+  const registered = new Set(live.map(key));
+  return [...live, ...saved.filter((project) => !registered.has(key(project)))];
+}

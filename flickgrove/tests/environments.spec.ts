@@ -11,7 +11,7 @@ for (const viewport of [
     await page.goto("/");
     await newSession(page);
     const dialog = page.getByRole("dialog");
-    const environment = page.getByRole("button", {
+    const environment = page.getByRole("combobox", {
       name: "Execution environment",
       exact: true,
     });
@@ -56,7 +56,7 @@ for (const viewport of [
     });
     await page.keyboard.press("Escape");
     await expect(environment).toBeVisible();
-    const backend = dialog.getByRole("button", {
+    const backend = dialog.getByRole("combobox", {
       name: "Orc backend",
       exact: true,
     });
@@ -129,11 +129,16 @@ for (const width of [1440, 390]) {
       await newSession(page);
       const dialog = page.getByRole("dialog");
       await dialog
-        .getByRole("button", { name: "Execution environment", exact: true })
+        .getByRole("combobox", { name: "Execution environment", exact: true })
         .click();
       await page
         .getByRole("option", { name: `Saved ${fault} Mac`, exact: true })
         .click();
+      await expect(
+        dialog
+          .getByRole("listbox", { name: "Project", exact: true })
+          .getByRole("option"),
+      ).toHaveCount(fault === "moved" ? 2 : 1);
       await dialog
         .getByRole("option", {
           name: "Same project · Saved history",
@@ -179,6 +184,78 @@ for (const width of [1440, 390]) {
           exact: true,
         }),
       ).toBeVisible();
+    }
+  });
+}
+
+for (const width of [1440, 390]) {
+  test(`live project dedup keeps saved bodies and creation at ${width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
+    await page.goto("/");
+    for (const id of ["local", "mac"]) {
+      await newSession(page);
+      const dialog = page.getByRole("dialog");
+      await dialog
+        .getByRole("combobox", { name: "Execution environment", exact: true })
+        .click();
+      await page
+        .getByRole("option", {
+          name: id === "local" ? "This machine" : "Mac studio",
+          exact: id === "local",
+        })
+        .click();
+      const options = dialog
+        .getByRole("listbox", { name: "Project", exact: true })
+        .getByRole("option");
+      await expect(options).toHaveCount(1);
+      await expect(options).toHaveAccessibleName("Same project");
+      await options.click();
+      const create = dialog.getByRole("button", {
+        name: "New session",
+        exact: true,
+      });
+      await expect(create).toBeEnabled();
+      const before = await (await page.request.get("/fixture/metrics")).json();
+      if (id === "mac")
+        await page.screenshot({
+          animations: "disabled",
+          path: `../.scratch/project-picker-saved-history-dedup/picker-${width}.png`,
+        });
+      await dialog
+        .getByRole("button", { name: "Find history", exact: true })
+        .click();
+      await dialog
+        .getByRole("button")
+        .filter({ has: page.getByText(`Saved ${id} task`, { exact: true }) })
+        .click();
+      await dialog
+        .getByRole("button", { name: "Read full message", exact: true })
+        .click();
+      await expect(
+        dialog.getByText(`Original ${id} native transcript`, { exact: true }),
+      ).toBeVisible();
+      expect(await (await page.request.get("/fixture/metrics")).json()).toEqual(
+        before,
+      );
+      if (id === "mac")
+        await page.screenshot({
+          animations: "disabled",
+          path: `../.scratch/project-picker-saved-history-dedup/history-${width}.png`,
+        });
+      await page.keyboard.press("Escape");
+      await page.keyboard.press("Escape");
+      await expect(create).toBeEnabled();
+      await createSession(page);
+      const after = await (await page.request.get("/fixture/metrics")).json();
+      expect(after.opens).toBe(before.opens + 1);
+      expect(after.inputs).toBe(before.inputs);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
     }
   });
 }

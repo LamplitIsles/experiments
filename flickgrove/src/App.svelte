@@ -14,7 +14,7 @@
   import { LocalConnection, preferences } from "./connection";
   import { onMount, tick, untrack } from "svelte";
   import * as Select from "$lib/components/ui/select/index.js";
-  import { projectReference } from "./project-identity";
+  import { projectReference, mergeProjectCatalogue } from "./project-identity";
   import type { ProjectEnvironment } from "./contracts";
   import type { Answer, Agent, Detail, HistorySession, Model, Project, Settings, Skill, Snapshot } from "./contracts";
   import { api, editable, setClient } from "./api";
@@ -100,7 +100,7 @@
     projectId = ""; projectError=""; projectsLoading=true; const seq = ++catalogSequence;
     const [live,saved] = await Promise.allSettled([api<Project[]>(`/projects?environment=${encodeURIComponent(selectedEnvironment)}`),api<Project[]>("/history/projects")]);
     if(seq !== catalogSequence) return;
-    projects = [...(live.status==="fulfilled" ? live.value : []),...(saved.status==="fulfilled" ? saved.value.filter(p=>(p.environment?.id ?? "local")===selectedEnvironment) : [])];
+    projects = mergeProjectCatalogue(live.status==="fulfilled" ? live.value : [],saved.status==="fulfilled" ? saved.value.filter(p=>(p.environment?.id ?? "local")===selectedEnvironment) : []);
     projectError = [live,saved].flatMap(result=>result.status==="rejected" ? [result.reason instanceof Error ? result.reason.message : m.load_failure()] : []).join(" ");
     projectId = projects[0] ? projectReference(projects[0]) : ""; projectsLoading=false;
   }

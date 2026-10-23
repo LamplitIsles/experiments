@@ -127,7 +127,11 @@ const workspaceOptions = {
         name: "Same project",
         path: cwd,
         owner: "owned",
-        environment: await environments.binding(id),
+        // Existing local snapshots may have no explicit binding.
+        environment:
+          !faulted && id === "local"
+            ? undefined
+            : await environments.binding(id),
       },
     ];
   },
@@ -139,7 +143,7 @@ const settings = {
   orc: { backend: "codex" as const, model: "sol", effort: "medium" },
   worker: { backend: "codex" as const, model: "sol", effort: "medium" },
 };
-for (const device of savedDevices) {
+for (const device of [local, mac, ...savedDevices]) {
   const agent = await app.createOrc(`${device.id}:same`, settings);
   const thread = runtime.historySessions.get(agent.threadId!)!;
   thread.title = `Saved ${device.id} task`;
@@ -175,6 +179,11 @@ const server = Bun.serve({
   hostname: "127.0.0.1",
   port: 14325,
   fetch(request, server) {
+    if (new URL(request.url).pathname === "/fixture/metrics")
+      return Response.json({
+        inputs: runtime.inputs.length,
+        opens: runtime.agents.size,
+      });
     const result = upgrade(request, server);
     if (result === true) return;
     return result ?? handler(request);
