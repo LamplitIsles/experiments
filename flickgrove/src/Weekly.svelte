@@ -5,7 +5,10 @@
   import { weeklyCache, weeklyKey, loadWeekly, acceptWeekly, requestWeekly } from "./weekly-cache.svelte";
   import { onMount, untrack } from "svelte";
   import * as m from "./paraglide/messages";
-  let { hostId, connected }: { hostId?: string; connected: boolean } = $props();
+  import OutputSpeed from "./OutputSpeed.svelte";
+  import type { Agent } from "./contracts";
+  let { hostId, connected, agent }: { hostId?: string; connected: boolean; agent?: Agent | null } = $props();
+  let speed = $state<OutputSpeed>();
   const value = $derived(weeklyCache[weeklyKey(hostId)] ?? null); const open = $derived(navigation.surfaces.includes("weekly")); let sequence = 0; let root: HTMLDivElement;
   const remaining = $derived(value?.remaining ?? null);
   const used = $derived(remaining === null ? null : 100 - remaining);
@@ -51,6 +54,7 @@
     <div role="group" aria-label={measures} class="weekly-number" class:host-warning={remaining !== null && remaining <= 20}>{@render rings()}<div><strong>{used === null ? "—" : `${Math.round(used)}%`}</strong><span>{remaining === null ? m.weekly_unknown() : m.quota_used()}</span></div></div>
     {#if remaining === null}<p>{m.weekly_unknown_help()}</p>{/if}
     <dl class="weekly-source">{#if elapsed !== null}<div><dt>{m.period_elapsed()}</dt><dd>{Math.round(elapsed)}%</dd></div>{/if}{#if typeof reset === "number" && Number.isFinite(reset) && reset > 0}<div><dt>{m.reset_label()}</dt><dd>{new Date(reset * 1000).toLocaleString()}</dd></div>{/if}{#if value?.accountId}<div><dt>{m.account_label()}</dt><dd>{value.accountId}</dd></div>{/if}<div><dt>{m.source_label()}</dt><dd>{value?.source ?? "—"}</dd></div></dl>
-    <Button class="weekly-refresh" variant="ghost" size="sm" onclick={refresh} disabled={!connected}>{m.refresh_usage()}</Button>
+    {#if agent && agent.backend !== "pi"}<OutputSpeed {agent} {hostId} {connected} bind:this={speed} />{/if}
+    <Button class="weekly-refresh" variant="ghost" size="sm" onclick={() => { void refresh(); speed?.refresh(); }} disabled={!connected}>{m.refresh_usage()}</Button>
   </section>{/if}
 </div>

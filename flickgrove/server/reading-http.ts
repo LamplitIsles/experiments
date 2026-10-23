@@ -20,6 +20,10 @@ export async function readingHttp(
     const project = p.get("project") ?? "";
     const cursor = p.get("cursor") ?? undefined;
     switch (url.pathname) {
+      case "/api/read/tps":
+        if ([...p.keys()].some((key) => !["agent", "refresh"].includes(key)))
+          return respond({ error: "Invalid speed request" }, 400);
+        return respond(service.tps(agent, p.get("refresh") === "true"));
       case "/api/read/outline":
         return respond(service.userMessageOutline(agent));
       case "/api/read/window":
