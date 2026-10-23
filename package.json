@@ -3,7 +3,8 @@
   "private": true,
   "workspaces": [
     "flickgrove",
-    "utterlog"
+    "utterlog",
+    "codex-tps"
   ],
   "scripts": {
     "prepare": "lefthook install",

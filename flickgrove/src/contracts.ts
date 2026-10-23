@@ -132,6 +132,13 @@ export interface Question {
   recoveryRef?: boolean;
 }
 export type Answer = { questionId: string; answer: string };
+// Local log estimate may include partial/interrupted output; samples are not successes.
+export type OutputSpeed = {
+  model: string;
+  tier: "fast" | "standard" | null;
+  summary: import("@experiments/codex-tps").Summary | null;
+  status: "loading" | "ready" | "unavailable";
+};
 export interface Delivery {
   attemptId?: string;
   recoveryRef?: boolean;

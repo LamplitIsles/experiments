@@ -234,6 +234,46 @@ The native tests execute official codemode, MCP exposure/resource/HTTP/static-au
 
 ## Conversation controls and usage
 
+Spec **#4518** adds **Output speed · tok/s** below the existing Usage quota
+details: `1h`, `4h`, `1w` (rolling seven days). It matches the opened Codex
+session's confirmed model and Fast/Standard tier against this instance host's
+retained active and archived logs, across sessions and reasoning efforts. It
+does not use New session preferences or remote project directories. Missing
+model/tier/timing or no samples shows `—`; Pi omits the block. Tooltips explain
+the sample count and log-estimated effective speed, including reasoning and
+first-token waiting, excluding tool execution and user idle. Generated samples
+with reliable usage and timing may include partial or interrupted output; sample
+counts do not measure task success. Windows use the last generated item time,
+without requiring unavailable historical wire-completion proof. Quota periods
+and speed windows are independent.
+
+The private [Bun workspace library](../codex-tps/README.md) performs read-only
+streaming analysis. Grove starts one lazy background child only when Usage
+requests statistics, sharing duplicate work and a 60-second result cache. It
+does not scan at service startup or in the send path. The child retains bounded
+file summaries, reparses changed files, exits after 90 seconds idle, and has a
+20-second task deadline plus a 256 MiB RSS guard. Shutdown and timeouts terminate
+only Grove's owned analysis PID. It has no provider/auth/config read or runtime
+send/resume operation. The trusted root follows `CODEX_HOME` or host
+`HOME/.codex`; browsers provide only an existing instance-qualified agent ID,
+never paths. HTTP and Chord project only selection, status, numeric speed and
+sample counts. Raw records, text and filenames never enter snapshots/API.
+
+Usage reads cached values immediately while analysis continues. Refresh updates
+quota and speed independently; either failure preserves its latest successful
+same-key value. Switching conversation/model/tier/instance invalidates late
+results. The popover adds no freshness badges, timestamps or top-bar controls.
+Scanner budgets and unsupported records can leave statistics unavailable; this
+does not block normal agent operations. Original logs remain unchanged.
+
+Two owned Darwin arm64/Bun 1.3.14 measurements over 201 files / about 68.8 MB found
+background cold scans of 3.25–6.93 s, hot scans of 33.5–87.2 ms and long-file-change scans of 3.56–4.90 s. Hot reads
+were 0 bytes; changing the 66.3 MB long file reread that file, reusing 200 others.
+These are measurements on a contended local development host, not n5pro results
+or latency promises. Main HTTP continued responding throughout; exact bytes,
+CPU/RSS and service latencies are in `.scratch/codex-tps-workspace/implementation-report.md`.
+No production deployment, real account history or paid model is involved.
+
 Press **N**, choose a local registered project, then select **Find history** to search that directory's Codex and Pi sessions by title or first message. Codex results include CLI and archived sessions; Pi results are Grove-owned Durable sessions, including closed members. Search uses native history and app-server `thread/list` and directory identity, including canonical aliases; Grove does not build a second search index or transcript.
 
 Conversation bodies come from native items. Complete non-empty assistant messages, including commentary, appear as soon as their native item completes, while the turn may still be working. Generated text deltas are never displayed as message content; there is no word-by-word output. History reads use the same completed-item boundary and native IDs, retaining completed messages after failure or Stop without duplicate rows. Completion identities are retained only for the active turn, including native history messages admitted by detail synchronization, so replaying an evicted item cannot move it to the reading end. This transient set stores IDs, not message bodies, and is released when the turn ends or is replaced, or the agent closes. Completed messages publish immediately without a history query, even when history reads fail. Ordinary messages remain conversation content; collaboration reports still require the explicit report tools. Selection and reconnection establish a recent window from the current native state, merged with arrivals during the read by item ID. The server continuously slides that window within 100 messages and a 256 KiB encoded message budget. Chord retains its existing 2 MiB frame limit; it carries bounded detail, submission receipts and work state. Earlier messages and read-only previews use direct HTTP fetch to the local instance. A page contains at most 100 messages within a 1 MiB encoded response budget, including source metadata. If the native page exceeds the budget, an opaque reading cursor records the oldest returned item and native position so the next read does not skip omitted items. One oversized item carries its identity and a full-body reference, with **Read full message** and independent Retry; expanding a report reads that same native body.

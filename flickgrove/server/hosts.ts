@@ -1,4 +1,5 @@
 import { recentWindow } from "./conversation-reading";
+import { OutputSpeedService } from "./tps";
 import {
   chmodSync,
   mkdirSync,
@@ -100,6 +101,7 @@ function qualified<T extends Agent>(host: Host, a: T): T {
 // The instance exposes only its local workspace. Qualified IDs retain durable
 // browser operation/cache identity; they never select a remote execution route.
 export class HostService {
+  readonly outputSpeed: OutputSpeedService;
   readonly identity: { id: string; name: string };
   constructor(
     readonly workspace: Workspace,
@@ -107,8 +109,10 @@ export class HostService {
       directory: string;
       name?: string;
       origin: () => string;
+      outputSpeed?: ConstructorParameters<typeof OutputSpeedService>[0];
     },
   ) {
+    this.outputSpeed = new OutputSpeedService(options.outputSpeed);
     mkdirSync(options.directory, { recursive: true, mode: 0o700 });
     const file = join(options.directory, "hosts.json");
     const state = existsSync(file)
@@ -176,6 +180,27 @@ export class HostService {
       hostId: this.identity.id,
       source: this.identity.name,
     };
+  }
+  tps(id: string, refresh = false): import("../src/contracts").OutputSpeed {
+    const agent = this.workspace
+      .snapshot()
+      .agents.find((a) => a.id === this.raw(id));
+    if (!agent || agent.closed || agent.backend === "pi")
+      throw new Error("Codex conversation unavailable");
+    const tier =
+      agent.serviceTier === "priority" || agent.serviceTier === "fast"
+        ? "fast"
+        : agent.serviceTier === "default"
+          ? "standard"
+          : null;
+    if (!agent.model || !tier)
+      return {
+        model: agent.model ?? "",
+        tier,
+        summary: null,
+        status: "unavailable",
+      };
+    return this.outputSpeed.read({ model: agent.model, tier }, refresh);
   }
   async history(alias: string, query: string, cursor?: string) {
     const page = await this.workspace.history(alias, query, cursor);
@@ -381,5 +406,7 @@ export class HostService {
       await this.workspace.stop(this.raw(id), turnId),
     );
   }
-  dispose() {}
+  dispose() {
+    this.outputSpeed.dispose();
+  }
 }

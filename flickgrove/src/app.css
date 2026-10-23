@@ -826,6 +826,20 @@ pre {
 .weekly-refresh {
   margin-top: 12px;
 }
+.output-speed {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.output-speed h3 {
+  font-size: 12px;
+  font-weight: 550;
+}
+.output-speed .weekly-source {
+  border: 0;
+  padding: 12px 0 0;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
 .sent {
   color: #a3ceb0;
 }
@@ -896,7 +910,11 @@ pre {
     gap: 14px;
   }
   .weekly-popover {
-    right: 0;
+    position: fixed;
+    right: 16px;
+    top: 86px;
+    max-height: calc(100dvh - 102px);
+    overflow-y: auto;
   }
 }
 @media (prefers-reduced-motion: reduce) {

@@ -51,6 +51,7 @@ export const inputs = {
   historyProjects: z.object({}),
   models: z.object({}).strict(),
   weekly: z.object({}).strict(),
+  tps: z.object({ id, refresh: z.boolean().optional() }).strict(),
   history: z.object({
     project: id,
     query: z.string(),
@@ -286,6 +287,10 @@ export function routeCall(
     "/history/projects": ["historyProjects", {}],
     "/models": ["models", {}],
     "/weekly": ["weekly", {}],
+    "/tps": [
+      "tps",
+      { id: url.searchParams.get("id") ?? "", ...(body as object) },
+    ],
     "/agents": ["createOrc", { ...(body as object) }],
     "/history": [
       "history",
