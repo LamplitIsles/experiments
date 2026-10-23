@@ -104,6 +104,8 @@ export interface QuestionOption {
   description?: string;
 }
 export interface Question {
+  /** Bounded snapshot preview; full question text still loads through reading. */
+  notificationText?: string;
   // HTTP-only projection of the existing unresolved answer operation.
   answerOperation?: Pick<Delivery, "id" | "status">;
   id: string;
@@ -138,6 +140,9 @@ export interface Delivery {
   at: number;
 }
 export interface Agent {
+  /** Instance-local publication identities; absent after server restart. */
+  userHandoff?: { id: string; summary: string };
+  finalFailure?: { id: string };
   backend?: Backend;
   provider?: string;
   researchQuestion?: string;

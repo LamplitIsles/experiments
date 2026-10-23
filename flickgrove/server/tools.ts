@@ -12,6 +12,11 @@ const target = {
 const researcherId = z.string().min(1);
 const question = z.string().trim().min(1).max(10_000);
 export const toolDefinitions = {
+  orc_handoff: {
+    description:
+      "Mark this turn's user handoff only after delivering the result and waiting for the user's next instruction. No notification until successful completion with no pending work. Do not use for progress, waiting for members or product questions (use request_user_input_async). Does not send, stop or close anything. Unknown outcomes must be inspected, never automatically replayed.",
+    shape: { summary: z.string().trim().min(1).max(300) },
+  },
   researcher_start: {
     description:
       "Start an owned Researcher for one bounded question in a registered project. Captures application configuration. Includes dispatch; inspect list/read after unknown admission before retrying.",
@@ -145,6 +150,7 @@ export const toolDefinitions = {
 };
 export const roleTools = {
   orc: [
+    "orc_handoff",
     "researcher_start",
     "researcher_list",
     "researcher_read",
