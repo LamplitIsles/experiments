@@ -34,6 +34,94 @@ async function centered(page: Page, operation: string) {
     })
     .toBeLessThan(45);
 }
+test("ordinary read finishing after outline replacement preserves detached adjacency", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const original = window.fetch;
+    let intercepted = false;
+    Object.assign(window, {
+      fetch: async (...args: Parameters<typeof window.fetch>) => {
+        const response = await original(...args);
+        if (
+          !intercepted &&
+          response.url.includes("/api/read/messages?") &&
+          (await response.clone().text()).includes('"native-outline-89"')
+        ) {
+          intercepted = true;
+          await new Promise<void>((resolve) => {
+            Object.assign(window, { releaseOrdinaryRead: resolve });
+          });
+        }
+        return response;
+      },
+    });
+  });
+  const fixture = await setup(page, 1440);
+  await page.waitForFunction(() => "releaseOrdinaryRead" in window);
+  await page
+    .getByRole("button", { name: "Message outline", exact: true })
+    .click();
+  await page
+    .getByRole("navigation", { name: "Message outline", exact: true })
+    .getByRole("button", { name: "Instruction 015", exact: true })
+    .click();
+  await centered(page, "outline-15");
+  await page.evaluate(() =>
+    (
+      window as unknown as { releaseOrdinaryRead: () => void }
+    ).releaseOrdinaryRead(),
+  );
+  const later = page.getByRole("button", {
+    name: "Later messages",
+    exact: true,
+  });
+  await expect(later).toBeEnabled();
+  await centered(page, "outline-15");
+  const conversation = page.locator(".conversation");
+  await conversation.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+  await later.click();
+  await expect(later).toBeEnabled();
+  // Inspect the bounded window, including rows recycled between its endpoints.
+  await conversation.hover();
+  await page.mouse.wheel(0, -100000);
+  await expect(
+    conversation.locator('[data-message-id="native-outline-9"]'),
+  ).toBeVisible();
+  for (let step = 0; step < 100; step++) {
+    await conversation.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    await expect(
+      conversation.locator('[data-message-id="native-outline-89"]'),
+    ).toHaveCount(0);
+    const end = await conversation.evaluate((el) => {
+      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 1) return true;
+      el.scrollTop += el.clientHeight / 2;
+      return false;
+    });
+    if (end) break;
+    expect(step).toBeLessThan(99);
+  }
+  // The next native page ends at input 38; the live tail at 89 is not adjacent.
+  await conversation.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+  await expect(conversation).toContainText("Context 38");
+  await expect(conversation).not.toContainText("Instruction 089");
+  await page.screenshot({
+    animations: "disabled",
+    path: `${artifacts}/1440-outline-race-continuation.png`,
+  });
+  expect(
+    (await (await page.request.get("/fixture/input-count")).json()).inputs,
+  ).toBe(fixture.inputs);
+});
 for (const width of [1440, 390])
   test(`${width} outline locates old input, reads both directions and returns live without sending`, async ({
     page,

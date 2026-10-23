@@ -226,7 +226,7 @@
     if(windowState) { await loadWindow("older"); return; }
     if (!entry || !connected || loading) return;
     const initial = !entry.loaded;
-    const revision = syncRevision, generation=locationGeneration;
+    const revision = syncRevision, generation=locationGeneration, cacheGeneration=entry.generation ?? 0;
     loading = true; error = "";
     const fetchPage = async (cursor?: string) => {
       const params = new URLSearchParams(); if (cursor) params.set("cursor", cursor);
@@ -236,7 +236,11 @@
     if (entry.loaded && entry.synchronized !== revision) await historyCache.refresh(id, entry, revision, () => fetchPage());
     else await historyCache.load(id, entry, fetchPage, revision);
     if (!active || entry !== history) return;
-    historical = entry.messages; cursor = entry.cursor; error = entry.error; loading = false; historyLoaded = entry.loaded;
+    loading = false;
+    // A target window replaces this read even when the cache rejects its page.
+    // Do not publish or remember the retained live tail into that window.
+    if ((entry.generation ?? 0) !== cacheGeneration) return;
+    historical = entry.messages; cursor = entry.cursor; error = entry.error; historyLoaded = entry.loaded;
     // The page may arrive after the last live publication. Cache the retained
     // native prefix now as well, so its reading anchor survives a revisit.
     historyCache.remember(id, entry, retained);
@@ -244,7 +248,7 @@
       const copy = readingCache.readDetail(id);
       if (copy) readingCache.saveDetail({ ...copy, messages: entry.messages.slice(-100) });
     }
-    if (generation===locationGeneration && initial && (!saved || saved.follow)) { await tick(); if (active) $virtualizer.scrollToEnd(); }
+    if (generation===locationGeneration && initial && (!saved || saved.follow)) { await tick(); if (active && generation===locationGeneration && (entry.generation ?? 0)===cacheGeneration) $virtualizer.scrollToEnd(); }
   }
   $effect(() => {
     const entry = history;
