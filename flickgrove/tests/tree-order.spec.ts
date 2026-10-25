@@ -66,18 +66,19 @@ test("desktop drags whole trees, preserves selection/draft, restores order and a
   await page.reload();
   await expect.poll(() => ids(page)).toEqual(expected);
   await expect(composer(page)).toHaveValue("Selected tree draft");
-  await composer(page).press("Meta+1");
+  await roots(page).first().click();
   await expect(page.locator(".agent-detail h1")).toHaveText(
     "Reader performance",
   );
-  await composer(page).press("Alt+j");
+  await page.locator(".role-project").click();
+  await page.keyboard.press("ArrowDown");
   await expect(page.locator(".agent-detail h1")).toHaveText(
     "Streaming voice input",
   );
   await expect(composer(page)).toHaveValue("Selected tree draft");
-  await composer(page).press("Meta+3");
+  await page.keyboard.press("ArrowDown");
   await expect(page.locator(".agent-detail h1")).toHaveText("Voice input");
-  await page.keyboard.press("Alt+k");
+  await page.keyboard.press("ArrowUp");
   await expect(page.locator(".agent-detail h1")).toHaveText(
     "Streaming voice input",
   );

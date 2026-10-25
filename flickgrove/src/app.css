@@ -1920,3 +1920,54 @@ button.question-option {
 .detail-meta > [data-sidebar="trigger"] {
   flex-shrink: 0;
 }
+
+.pinned-sessions {
+  margin-bottom: 12px;
+}
+.pinned-sessions h2 {
+  margin: 8px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.session-menu-row {
+  position: relative;
+}
+.session-menu-trigger {
+  position: absolute;
+  right: 8px;
+  top: 6px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  color: var(--muted-foreground);
+}
+.session-menu-trigger:hover,
+.session-menu-trigger:focus-visible {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.session-menu-row .session-indicators {
+  margin-right: 24px;
+}
+.session-pin-menu {
+  z-index: 100;
+  min-width: 144px;
+}
+.pinned-members {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.session-open:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -3px;
+  border-radius: 6px;
+}
+.session-menu-row:has(.session-row.revealed) .session-menu-trigger {
+  visibility: hidden;
+}

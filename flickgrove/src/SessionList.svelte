@@ -1,9 +1,11 @@
 <script lang="ts" module>
   // Responsive Sidebar branches remount the same business tree. Re-observe a
   // selection only when its identity changes, not when its container changes.
+  let currentEntry = $state<{ id: string; source: "pinned" | "tree" } | null>(null);
   let revealedSelection: string | null = null;
 </script>
 <script lang="ts">
+  import SessionPinMenu from "./SessionPinMenu.svelte";
   import * as Sidebar from "$lib/components/ui/sidebar/index.js";
   import {environmentId} from "./project-identity";
   import { ChevronDown, ChevronRight, Plus, Zap, MessageCircle, GitBranch } from "@lucide/svelte";
@@ -12,7 +14,7 @@
   import { readPreference, writePreference } from "./connection";
   import type { Agent, Host, Project } from "./contracts";
   import * as m from "./paraglide/messages";
-  let { agents, projects, projectsLoading, instanceId, rootOrder, onreorder, hosts, selectedId, loading, connected, onopen, onnew, onclosetree, closingId, closeError, children }: { agents: Agent[]; projects: Project[]; projectsLoading: boolean; instanceId: string; rootOrder: string[]; onreorder: (ids: string[]) => void; hosts: Host[]; selectedId: string | null; loading: boolean; connected: boolean; onopen: (id: string) => void; onnew: () => void; onclosetree: (id: string) => Promise<void>; closingId: string | null; closeError: { id: string; reason: string } | null; children?: Snippet } = $props();
+  let { pinnedIds, onpin, agents, projects, projectsLoading, instanceId, rootOrder, onreorder, hosts, selectedId, loading, connected, onopen, onnew, onclosetree, closingId, closeError, children }: { pinnedIds: string[]; onpin: (ids: string[]) => void; agents: Agent[]; projects: Project[]; projectsLoading: boolean; instanceId: string; rootOrder: string[]; onreorder: (ids: string[]) => void; hosts: Host[]; selectedId: string | null; loading: boolean; connected: boolean; onopen: (id: string) => void; onnew: () => void; onclosetree: (id: string) => Promise<void>; closingId: string | null; closeError: { id: string; reason: string } | null; children?: Snippet } = $props();
   const savedExpanded = readPreference<unknown>("expanded", []);
   let expanded = $state<string[]>(Array.isArray(savedExpanded) ? savedExpanded.filter((v): v is string => typeof v === "string") : []);
   const savedCollapsed = readPreference<unknown>("collapsed-orgs", {});
@@ -98,7 +100,7 @@
     }
   }
   export function visibleIds() { return visible.map(a => a.id); }
-  export function closeTarget() { return agents.find(a => a.id === focusedId && a.role === "orc")?.id ?? null; }
+  export function closeTarget() { const entry = document.activeElement?.closest<HTMLElement>("[data-agent-id][data-location]"); return agents.find(a => a.id === (entry?.dataset.agentId ?? focusedId) && a.role === "orc")?.id ?? null; }
   let list = $state<HTMLElement>(null!);
   const roots = $derived.by(() => {
     const backend = agents.filter(a => a.role === "orc");
@@ -118,6 +120,7 @@
   });
   const visible = $derived(groups.flatMap(group => group.visible));
   $effect(() => { writePreference("expanded", expanded); });
+  const selectedSource = $derived(currentEntry?.id === selectedId ? currentEntry.source : "tree");
   const selection = $derived.by(() => {
     const selected = agents.find(a => a.id === selectedId);
     const root = agents.find(a => a.id === (selected?.ownerId ?? selected?.id));
@@ -128,6 +131,7 @@
     revealedSelection = selection;
     if (!selection) return;
     const [id, ownerId, key] = JSON.parse(selection) as [string, string | null, string];
+    if (id === currentEntry?.id && currentEntry.source === "pinned") return;
     untrack(() => {
       expandGroup(key);
       if (ownerId && !expanded.includes(ownerId)) expanded = [...expanded, ownerId];
@@ -136,14 +140,8 @@
   });
   $effect(() => { if (focusedId && !visible.some(a => a.id === focusedId)) focusedId = null; });
   function toggle(id: string) { if (expanded.includes(id) && agents.find(a => a.id === selectedId)?.ownerId === id) onopen(id); expanded = expanded.includes(id) ? expanded.filter(v => v !== id) : [...expanded, id]; }
-  export async function reveal(id: string) { await tick(); list?.querySelector<HTMLButtonElement>(`[data-agent-id="${id}"]`)?.scrollIntoView({ block: "nearest" }); }
-  export function expandFocused() { const agent = agents.find(a => a.id === (selectedId ?? focusedId)); if (agent?.role === "orc") toggle(agent.id); }
-  export async function navigate(offset: number, index?: number) {
-    const position = visible.findIndex(a => a.id === (selectedId ?? focusedId));
-    const target = index === undefined ? visible[position < 0 ? (offset < 0 ? visible.length - 1 : 0) : (position + offset + visible.length) % visible.length] : visible[index];
-    if (!target) return null;
-    focusedId = target.id; onopen(target.id); await reveal(target.id); return target.id;
-  }
+  export async function reveal(id: string) { await tick(); list?.querySelector<HTMLButtonElement>(`[data-location="tree"][data-agent-id="${id}"]`)?.scrollIntoView({ block: "nearest" }); }
+  export function expandFocused() { if (document.activeElement?.closest('[data-location="pinned"]')) return; const agent = agents.find(a => a.id === (selectedId ?? focusedId)); if (agent?.role === "orc") toggle(agent.id); }
   function focusGroup(key: string) {
     const button = list.querySelector<HTMLButtonElement>(`[data-org="${key}"] > .org-disclosure`);
     button?.scrollIntoView({ block: "nearest" }); button?.focus({ preventScroll: true });
@@ -162,22 +160,48 @@
       expandGroup(key);
       const root = groups[index].roots[0];
       focusedId = root.id;
-      if (selectedId) onopen(root.id);
+      if (selectedId) openEntry(root.id, false);
       await reveal(root.id);
-      list.querySelector<HTMLButtonElement>(`[data-agent-id="${root.id}"]`)?.focus({ preventScroll: true });
+      list.querySelector<HTMLButtonElement>(`[data-location="tree"][data-agent-id="${root.id}"]`)?.focus({ preventScroll: true });
     }
   }
   export async function keydown(event: KeyboardEvent) {
     event.preventDefault();
-    if (selectedId) focusedId = selectedId;
-    if (event.key === "Enter") { if (focusedId) onopen(focusedId); return; }
+    const entry = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-location][data-agent-id]") : null;
+    if (entry?.dataset.location === "pinned") {
+      const index = pinnedAgents.findIndex(a => a.id === entry.dataset.agentId);
+      const target = pinnedAgents[(index + (event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0) + pinnedAgents.length) % pinnedAgents.length];
+      if (!target) return;
+      if (event.key === "Enter" || ((event.key === "ArrowUp" || event.key === "ArrowDown") && selectedId)) openEntry(target.id, true);
+      await tick();
+      list.querySelector<HTMLButtonElement>(`[data-location="pinned"][data-agent-id="${target.id}"]`)?.focus({preventScroll: true});
+      return;
+    }
+    if (entry?.dataset.agentId) focusedId = entry.dataset.agentId;
+    else if (selectedId) focusedId = selectedId;
+    if (event.key === "Enter") { if (focusedId) { openEntry(focusedId, false); await reveal(focusedId); list.querySelector<HTMLButtonElement>(`[data-location="tree"][data-agent-id="${focusedId}"]`)?.focus({preventScroll: true}); } return; }
     const current = visible.find(a => a.id === focusedId);
     if (!current) focusedId = visible[0]?.id ?? null;
     else if (event.key === "ArrowDown" || event.key === "ArrowUp") { const i = visible.indexOf(current); focusedId = visible[(i + (event.key === "ArrowDown" ? 1 : -1) + visible.length) % visible.length]?.id ?? null; }
     else if (event.key === "ArrowRight" && current.role === "orc") { if (!expanded.includes(current.id)) toggle(current.id); else focusedId = agents.find(a => a.ownerId === current.id)?.id ?? current.id; }
     else if (event.key === "ArrowLeft") { if (current.ownerId) focusedId = current.ownerId; else if (expanded.includes(current.id)) toggle(current.id); else { focusGroup(groupKey(current)); return; } }
-    if (selectedId && focusedId && focusedId !== selectedId) onopen(focusedId);
-    if (focusedId) { await reveal(focusedId); list.querySelector<HTMLButtonElement>(`[data-agent-id="${focusedId}"]`)?.focus({ preventScroll: true }); }
+    if (selectedId && focusedId) { currentEntry = { id: focusedId, source: "tree" }; if (focusedId !== selectedId) onopen(focusedId); }
+    if (focusedId) { await reveal(focusedId); list.querySelector<HTMLButtonElement>(`[data-location="tree"][data-agent-id="${focusedId}"]`)?.focus({ preventScroll: true }); }
+  }
+  const pinnedAgents = $derived(pinnedIds.flatMap(id => agents.find(a => a.id === id) ?? []));
+  function openEntry(id: string, pinned: boolean) { currentEntry = { id, source: pinned ? "pinned" : "tree" }; onopen(id); }
+  async function togglePin(agent: Agent, shortcut: boolean) {
+    const removing = pinnedIds.includes(agent.id);
+    onpin(removing ? pinnedIds.filter(id => id !== agent.id) : [...pinnedIds, agent.id]);
+    if (!removing) return;
+    if (currentEntry?.id === agent.id && currentEntry.source === "pinned") currentEntry = { id: agent.id, source: "tree" };
+    if (!shortcut) return;
+    const root = agents.find(a => a.id === (agent.ownerId ?? agent.id));
+    if (root) expandGroup(groupKey(root));
+    if (agent.ownerId && !expanded.includes(agent.ownerId)) expanded = [...expanded, agent.ownerId];
+    await tick();
+    const row = list.querySelector<HTMLButtonElement>(`[data-location="tree"][data-agent-id="${agent.id}"]`);
+    row?.scrollIntoView({block: "nearest"}); row?.focus({preventScroll: true});
   }
   onMount(() => {
     const media = matchMedia("(min-width: 701px)");
@@ -187,6 +211,24 @@
     return () => media.removeEventListener("change", resize);
   });
 </script>
+{#snippet sessionRow(agent: Agent, shortcut: boolean)}
+    {@const children = agents.filter(w => w.ownerId === agent.id)}{@const host = hosts.find(h => h.id === agent.hostId)}{@const working = children.filter(w => w.state === "working").length}
+    {@const status = agent.closeRequest ? m.closing_worker() : agent.stop?.status === "unknown" ? m.stop_unconfirmed() : agent.state === "stopping" ? m.stopping() : agent.state === "working" ? m.working() : agent.state === "error" ? m.failed() : m.idle()}
+    <SessionPinMenu title={agent.title} pinned={pinnedIds.includes(agent.id)} ontoggle={() => void togglePin(agent, shortcut)} onclose={agent.role === "orc" ? () => onclosetree(agent.id) : undefined} closeDisabled={!connected || host?.connected === false || closingId === agent.id}>
+    <div role="group" class="session-row" data-swipe-id={shortcut ? undefined : agent.id} class:drop-before={!shortcut && dropAt?.id === agent.id && !dropAt.after} class:drop-after={!shortcut && dropAt?.id === agent.id && dropAt.after} ondragover={e => { if (!shortcut) dragOver(e, agent); else dropAt = null; }} ondragleave={e => { if (!(e.relatedTarget instanceof Node) || !(e.currentTarget as HTMLElement).contains(e.relatedTarget)) dropAt = null; }} ondrop={e => { if (!shortcut) drop(e); }} class:revealed={!shortcut && revealedId === agent.id} ontouchstart={e => { if (!shortcut) touchStart(e, agent); }} ontouchmove={touchMove} ontouchend={() => gesture = null} ontouchcancel={() => { gesture = null; revealedId = null; }}>
+    {#if !shortcut && agent.role === "orc" && revealedId === agent.id}<Button class="tree-close-action" variant="destructive" size="sm" disabled={!connected || host?.connected === false || closingId === agent.id} onclick={() => onclosetree(agent.id)}>{m.close_tree()}</Button>{/if}
+    <div class="session-item" class:worker-item={!shortcut && agent.role !== "orc"} class:active={selectedId === agent.id && selectedSource === (shortcut ? "pinned" : "tree")} class:navigation-focus={!shortcut && !selectedId && focusedId === agent.id}>
+      <button class="session-open" draggable={!shortcut && desktop && agent.role === "orc" && groupKey(agent) !== "@loading"} ondragstart={e => dragStart(e, agent)} ondragend={endDrag} tabindex={shortcut ? 0 : -1} onfocus={() => { if (shortcut) focusedId = null; }} data-location={shortcut ? "pinned" : "tree"} data-agent-id={agent.id} aria-current={selectedId === agent.id && selectedSource === (shortcut ? "pinned" : "tree") ? "true" : undefined} aria-label={m.open_agent({ title: agent.title, role: agent.role === "orc" ? m.orc() : agent.role === "reviewer" ? "Reviewer" : agent.role === "researcher" ? "Researcher" : m.worker() })} onclick={e => { if(Date.now() < suppressClickUntil) { e.preventDefault(); return; } if(revealedId) { revealedId = null; return; } openEntry(agent.id, shortcut); }}>
+        <span class="session-title-row"><strong>{agent.title}</strong><span class="session-indicators">{#if agent.role === "orc" && agent.treeFast}<Zap size={12} role="img" aria-label={m.tree_fast()}><title>{m.tree_fast()} — {m.session_next_turn()}</title></Zap>{/if}<span class="session-state-dot" class:working={agent.state === "working"} class:attention={agent.state === "error" || !!agent.closeRequest || agent.stop?.status === "unknown" || agent.state === "stopping"} title={status} role="img" aria-label={status}></span>{#if agent.questions.some(q => q.state !== "answered")}<MessageCircle class="needs-input-icon" aria-label={m.needs_input()} role="img" />{/if}</span></span>
+        <span class="session-meta">{#if agent.role === "orc"}{:else}<span>{agent.role === "reviewer" ? "Reviewer" : agent.role === "researcher" ? "Researcher" : m.worker()}</span>{/if}<span>{agent.backend === "pi" ? "Pi" : "Codex"} · {agent.project.alias}{#if environmentId(agent.project)!=="local"} · {agent.project.environment?.name}{/if}</span>{#if agent.directoryBranch}<span class="session-branch" title={agent.directoryBranch}><GitBranch aria-hidden="true" /><span>{agent.directoryBranch}</span></span>{/if}</span>
+      </button>
+      {#if shortcut && children.length}<span class="pinned-members" aria-label={m.working_count({count: working})}>{children.length}{#if working > 0}<span class="working"> · {working}<i></i></span>{/if}</span>{/if}
+      {#if agent.role === "orc" && children.length && !shortcut}<button class="worker-disclosure" tabindex="-1" aria-label={children.some(w => w.role !== "worker") ? (expanded.includes(agent.id) ? "Collapse Workers, Reviewers and Researchers" : "Expand Workers, Reviewers and Researchers") : expanded.includes(agent.id) ? m.collapse_workers() : m.expand_workers()} title={(children.some(w => w.role !== "worker") ? `${children.filter(w => w.role === "worker").length} Workers · ${children.filter(w => w.role === "reviewer").length} Reviewers · ${children.filter(w => w.role === "researcher").length} Researchers` : m.current_workers({ count: children.length })) + " · " + m.working_count({ count: working })} aria-expanded={expanded.includes(agent.id)} onclick={() => { if(Date.now() >= suppressClickUntil) toggle(agent.id); }}><span>{#if expanded.includes(agent.id)}<ChevronDown />{:else}<ChevronRight />{/if}{children.length}</span>{#if working > 0}<span class="working worker-working-count">{working}<i></i></span>{/if}</button>{/if}
+    </div>
+    {#if closeError?.id === agent.id}<p class="tree-close-error" role="alert">{closeError.reason}</p>{/if}
+    </div>
+    </SessionPinMenu>
+{/snippet}
 <svelte:window onpointerdown={e => { if (revealedId && e.target instanceof Element && !e.target.closest(`[data-swipe-id="${revealedId}"]`)) revealedId = null; }} />
 <Sidebar.Header class="session-list-heading">
     <h1>{m.product()}</h1>
@@ -195,6 +237,7 @@
 <Sidebar.Content class="session-list" aria-label={m.sessions()} bind:ref={list} onscroll={() => writePreference("list-scroll", list.scrollTop)}>
   {@render children?.()}
   {#if loading && !agents.length}<p class="list-empty" role="status">{m.loading()}</p>{:else if !roots.length}<div class="list-empty"><h2>{m.empty_heading()}</h2><p>{m.empty_help()}</p><Button size="sm" disabled={!connected} onclick={onnew}><Plus />{m.new_session()}</Button></div>{/if}
+  {#if pinnedAgents.length}<section class="pinned-sessions" aria-label={m.pinned()}><h2>{m.pinned()}</h2>{#each pinnedAgents as agent (agent.id)}{@render sessionRow(agent, true)}{/each}</section>{/if}
   {#each groups as group (group.key)}
     <div class="org-group" data-org={group.key} ondragover={e => { if (e.target === e.currentTarget) dropAt = null; }} role="group" aria-label={group.label}>
       <button class="org-disclosure" aria-label={`${folded.includes(group.key) ? "Expand" : "Collapse"} ${group.label}`} aria-expanded={!folded.includes(group.key)} onclick={() => toggleGroup(group.key)} ondragover={() => { dropAt = null; }} onkeydown={e => groupKeydown(e, group.key)}>
@@ -204,19 +247,7 @@
         {#if group.questions}<span class="org-status needs-input-icon" aria-label={`${m.needs_input()}: ${group.questions}`}><MessageCircle size={12} />{group.questions}</span>{/if}
       </button>
   {#each group.visible as agent (agent.id)}
-    {@const children = agents.filter(w => w.ownerId === agent.id)}{@const host = hosts.find(h => h.id === agent.hostId)}
-    {@const status = agent.closeRequest ? m.closing_worker() : agent.stop?.status === "unknown" ? m.stop_unconfirmed() : agent.state === "stopping" ? m.stopping() : agent.state === "working" ? m.working() : agent.state === "error" ? m.failed() : m.idle()}
-    <div role="group" class="session-row" data-swipe-id={agent.id} class:drop-before={dropAt?.id === agent.id && !dropAt.after} class:drop-after={dropAt?.id === agent.id && dropAt.after} ondragover={e => dragOver(e, agent)} ondragleave={e => { if (!(e.relatedTarget instanceof Node) || !(e.currentTarget as HTMLElement).contains(e.relatedTarget)) dropAt = null; }} ondrop={drop} class:revealed={revealedId === agent.id} ontouchstart={e => touchStart(e, agent)} ontouchmove={touchMove} ontouchend={() => gesture = null} ontouchcancel={() => { gesture = null; revealedId = null; }}>
-    {#if agent.role === "orc" && revealedId === agent.id}<Button class="tree-close-action" variant="destructive" size="sm" disabled={!connected || host?.connected === false || closingId === agent.id} onclick={() => onclosetree(agent.id)}>{m.close_tree()}</Button>{/if}
-    <div class="session-item" class:worker-item={agent.role !== "orc"} class:active={selectedId === agent.id} class:navigation-focus={!selectedId && focusedId === agent.id}>
-      <button class="session-open" draggable={desktop && agent.role === "orc" && groupKey(agent) !== "@loading"} ondragstart={e => dragStart(e, agent)} ondragend={endDrag} tabindex="-1" data-agent-id={agent.id} aria-current={selectedId === agent.id ? "true" : undefined} aria-label={m.open_agent({ title: agent.title, role: agent.role === "orc" ? m.orc() : agent.role === "reviewer" ? "Reviewer" : agent.role === "researcher" ? "Researcher" : m.worker() })} onclick={e => { if(Date.now() < suppressClickUntil) { e.preventDefault(); return; } if(revealedId) { revealedId = null; return; } onopen(agent.id); }}>
-        <span class="session-title-row"><strong>{agent.title}</strong><span class="session-indicators">{#if agent.role === "orc" && agent.treeFast}<Zap size={12} role="img" aria-label={m.tree_fast()}><title>{m.tree_fast()} — {m.session_next_turn()}</title></Zap>{/if}<span class="session-state-dot" class:working={agent.state === "working"} class:attention={agent.state === "error" || !!agent.closeRequest || agent.stop?.status === "unknown" || agent.state === "stopping"} title={status} role="img" aria-label={status}></span>{#if agent.questions.some(q => q.state !== "answered")}<MessageCircle class="needs-input-icon" aria-label={m.needs_input()} role="img" />{/if}</span></span>
-        <span class="session-meta">{#if agent.role === "orc"}{:else}<span>{agent.role === "reviewer" ? "Reviewer" : agent.role === "researcher" ? "Researcher" : m.worker()}</span>{/if}<span>{agent.backend === "pi" ? "Pi" : "Codex"} · {agent.project.alias}{#if environmentId(agent.project)!=="local"} · {agent.project.environment?.name}{/if}</span>{#if agent.directoryBranch}<span class="session-branch" title={agent.directoryBranch}><GitBranch aria-hidden="true" /><span>{agent.directoryBranch}</span></span>{/if}</span>
-      </button>
-      {#if agent.role === "orc" && children.length}<button class="worker-disclosure" tabindex="-1" aria-label={children.some(w => w.role !== "worker") ? (expanded.includes(agent.id) ? "Collapse Workers, Reviewers and Researchers" : "Expand Workers, Reviewers and Researchers") : expanded.includes(agent.id) ? m.collapse_workers() : m.expand_workers()} title={(children.some(w => w.role !== "worker") ? `${children.filter(w => w.role === "worker").length} Workers · ${children.filter(w => w.role === "reviewer").length} Reviewers · ${children.filter(w => w.role === "researcher").length} Researchers` : m.current_workers({ count: children.length })) + " · " + m.working_count({ count: children.filter(w => w.state === "working").length })} aria-expanded={expanded.includes(agent.id)} onclick={() => { if(Date.now() >= suppressClickUntil) toggle(agent.id); }}><span>{#if expanded.includes(agent.id)}<ChevronDown />{:else}<ChevronRight />{/if}{children.length}</span>{#if children.some(w => w.state === "working")}<span class="working worker-working-count">{children.filter(w => w.state === "working").length}<i></i></span>{/if}</button>{/if}
-    </div>
-    {#if closeError?.id === agent.id}<p class="tree-close-error" role="alert">{closeError.reason}</p>{/if}
-    </div>
+    {@render sessionRow(agent, false)}
   {/each}
     </div>
   {/each}

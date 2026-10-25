@@ -1,4 +1,5 @@
 export type Surface =
+  | "session-menu"
   | "outline"
   | "sidebar"
   | "abandon-close"
@@ -60,7 +61,10 @@ export function initializeNavigation(selected: string | null) {
       {
         ...saved,
         surfaces: saved.surfaces.filter(
-          (surface) => surface !== "sidebar" && surface !== "outline",
+          (surface) =>
+            surface !== "sidebar" &&
+            surface !== "outline" &&
+            surface !== "session-menu",
         ),
         sidebarReturn: undefined,
       },

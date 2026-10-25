@@ -46,12 +46,14 @@
   let treeOrder = $state(preferences.treeOrder);
   $effect(() => { preferences.treeOrder = $state.snapshot(treeOrder); });
   let remembered = $state<Record<string, string>>(savedSelection.sessions);
+  let pinned = $state(preferences.pinned);
+  $effect(() => { preferences.pinned = pinned; });
   let selectedId = $state<string | null>(savedSelection.sessions[savedSelection.host] ?? null);
   let navigationReady = $state(false); let connectionReady = $state(false);
   let detail = $state<Detail | null>(null); let skills = $state<Skill[]>([]);
   let projects = $state<Project[]>([]); let projectsLoading = $state(true); let models = $state<Model[]>(preferences.models);
   let connected = $state(false); let loading = $state(true); let error = $state("");
-  let now = $state(Date.now()); let sessionList: { visibleIds(): string[]; keydown(event: KeyboardEvent): Promise<void>; expandFocused(): void; reveal(id: string): Promise<void>; closeTarget(): string | null; navigate(offset: number, index?: number): Promise<string | null> };
+  let now = $state(Date.now()); let sessionList: { visibleIds(): string[]; keydown(event: KeyboardEvent): Promise<void>; expandFocused(): void; reveal(id: string): Promise<void>; closeTarget(): string | null };
   let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | "abandon-close" | null>(null);
   let search = $state(""); let projectId = $state(""); let projectHighlight=$state(""); let projectError=$state(""); let saving = $state(false);
   const projectListId=$props.id();
@@ -159,6 +161,11 @@
     observeQuestions(value.agents, selectedId);
     if (selectedId && !value.agents.some(a => a.id === selectedId)) lostSelection = selectedId;
     if (authoritative) {
+      const pins = { ...pinned };
+      for (const host of value.hosts ?? []) {
+        if (host.connected) pins[host.id] = (pins[host.id] ?? []).filter(id => value.agents.some(a => a.id === id));
+      }
+      pinned = pins;
       const order = { ...treeOrder };
       for (const host of value.hosts ?? []) {
         if (!host.connected) continue;
@@ -459,7 +466,9 @@
       closeError = { id, reason: e instanceof Error ? e.message : m.load_failure() };
       try {
         const state = await readAbandon(id);
-        if (!state.closed && selectedId === visit && instanceId === device && sequence === generation && !navigation.surfaces.length) {
+        if (!state.closed && selectedId === visit && instanceId === device && sequence === generation && navigation.surfaces.every(surface => surface === "sidebar")) {
+          if (navigation.surfaces.at(-1) === "sidebar") await back();
+          if (selectedId !== visit || instanceId !== device || sequence !== generation || navigation.surfaces.length) return;
           abandon = { id, title: snapshot.agents.find(a => a.id === id)?.title ?? "Orc", unknownOperationIds: state.unknownOperationIds };
           closeUnknown = false; abandonError = ""; setSurface("abandon-close", true);
         }
@@ -497,11 +506,6 @@
     }
     void lookup(id, operationId);
   }
-  async function navigate(offset: number, index?: number) {
-    const id = await sessionList?.navigate(offset, index);
-    if (!id) return;
-    if (snapshot.agents.find(a => a.id === id)?.role === "orc") focusCreatedId = id;
-  }
   function keydown(event: KeyboardEvent) {
     if (event.defaultPrevented || composing || event.isComposing || event.keyCode === 229) return;
     if ((event.metaKey !== event.ctrlKey) && !event.altKey && !event.shiftKey && event.code === "KeyB") {
@@ -511,14 +515,6 @@
       sidebar.toggle();
       return;
     }
-    const optionMove = event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && ["KeyJ", "KeyK"].includes(event.code);
-    const numberMove = event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && /^Digit[1-9]$/.test(event.code);
-    if (optionMove || numberMove) {
-      if (navigation.surfaces.length) return;
-      event.preventDefault();
-      void navigate(optionMove ? (event.code === "KeyJ" ? 1 : -1) : 0, numberMove ? Number(event.code.slice(-1)) - 1 : undefined);
-      return;
-    }
     if (event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && event.code === "KeyX") {
       event.preventDefault();
       if (navigation.surfaces.length) return;
@@ -526,6 +522,7 @@
       if (id && !event.repeat) void closeTree(id);
       return;
     }
+    if (event.key !== "Escape" && event.target instanceof Element && event.target.closest(".session-menu-trigger, [role=menu]")) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === "Escape") {
       event.preventDefault(); closeDetail();
@@ -547,7 +544,7 @@
     const initialId = navigation.details.at(-1);
     if (initialId) { instanceId = initialId.split(":")[0]; remembered = { ...remembered, [instanceId]: initialId }; }
     const media = matchMedia("(min-width: 701px)");
-    const resize = () => { desktop = media.matches; if (navigation.surfaces.includes("sidebar")) removeSidebarDrawer(); };
+    const resize = () => { desktop = media.matches; const dismissSidebar = () => { if (navigation.surfaces.includes("sidebar")) removeSidebarDrawer(); }; if (navigation.surfaces.includes("session-menu")) void back().then(dismissSidebar); else dismissSidebar(); };
     media.addEventListener("change", resize);
     let disposed=false;
     client=new LocalConnection(value=>{
@@ -580,7 +577,7 @@
     window.addEventListener("compositionend", compositionEnd);
     const timer = setInterval(() => now = Date.now(), 1000);
     const permission = () => { if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission().catch(() => {}); };
-    const completionTab = (e: KeyboardEvent) => { if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof HTMLElement && e.target.closest(".question-panel, .history-controls, [data-choice-layer], [data-slot=select-content], [data-slot=select-trigger], [data-choice-trigger]"))) e.preventDefault(); };
+    const completionTab = (e: KeyboardEvent) => { if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey && e.target !== document.body && !(e.target instanceof HTMLElement && e.target.closest('[data-sidebar="sidebar"], [data-sidebar="trigger"], .session-menu-row, [role=menu], .question-panel, .history-controls, [data-choice-layer], [data-slot=select-content], [data-slot=select-trigger], [data-choice-trigger]'))) e.preventDefault(); };
     window.addEventListener("keydown", completionTab, true);
     const installer = (e: Event) => { e.preventDefault(); install = e as Event & { prompt: () => Promise<void> }; };
     window.addEventListener("pointerdown", permission, { once: true }); window.addEventListener("keydown", permission, { once: true }); window.addEventListener("keydown", keydown); window.addEventListener("beforeinstallprompt", installer);
@@ -595,7 +592,7 @@
 <div class="workbench" class:close-recovery-layout={closeRecovery.entries.some(i => modal !== "abandon-close" || abandon?.id !== i.agentId)}>
 <main>
   <Sidebar.Root>
-  <SessionList bind:this={sessionList} agents={visibleAgents} {projects} {projectsLoading} {instanceId} rootOrder={treeOrder[instanceId] ?? []} onreorder={ids => treeOrder = { ...treeOrder, [instanceId]: ids }} {hosts} {selectedId} {loading} {connected} {closingId} closeError={selectedId === closeError?.id ? null : closeError} onclosetree={closeTree} onopen={open} onnew={() => show("new")}>
+  <SessionList bind:this={sessionList} agents={visibleAgents} {projects} {projectsLoading} {instanceId} pinnedIds={pinned[instanceId] ?? []} onpin={ids => pinned = { ...pinned, [instanceId]: ids }} rootOrder={treeOrder[instanceId] ?? []} onreorder={ids => treeOrder = { ...treeOrder, [instanceId]: ids }} {hosts} {selectedId} {loading} {connected} {closingId} closeError={selectedId === closeError?.id && navigation.surfaces.at(-1) !== "sidebar" ? null : closeError} onclosetree={closeTree} onopen={open} onnew={() => show("new")}>
     {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
   </SessionList>
   </Sidebar.Root>
@@ -657,7 +654,7 @@
       <Button variant="ghost" size="sm" disabled={modelRefreshBusy || !connected} onclick={refreshModels}>Refresh models</Button>
       <p class="settings-scope">{m.settings_scope()}</p><div class="modal-action">{#if install}<button class="install-link" onclick={() => install?.prompt()}>{m.install_app()}</button>{/if}<Button variant="default" size="sm" disabled={!settings || !settingsValid || saving} onclick={saveSettings}>{saving ? m.sending() : m.save_changes()}</Button></div>
     {:else if modal === "keys"}
-      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["⌘ / Ctrl + B", m.toggle_sidebar()], ["↑ ↓ ← →", m.key_focus()], ["Option + J / K", m.key_session_loop()], ["⌘ 1–9", m.key_visible_session()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Option/Alt + S", m.search_skills()], ["Option/Alt + X", m.close_tree()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
+      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["⌘ / Ctrl + B", m.toggle_sidebar()], ["↑ ↓ ← →", m.key_focus()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Option/Alt + S", m.search_skills()], ["Option/Alt + X", m.close_tree()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
     {/if}
     {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
   </Dialog.Content>

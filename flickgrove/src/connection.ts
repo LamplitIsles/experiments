@@ -59,6 +59,21 @@ export const preferences = {
       /* Layout remains usable in memory. */
     }
   },
+  get pinned(): Record<string, string[]> {
+    const result = z
+      .record(z.string(), z.array(z.string()))
+      .safeParse(readPreference<unknown>("pinned", {}));
+    if (!result.success) return {};
+    return Object.fromEntries(
+      Object.entries(result.data).map(([host, ids]) => [
+        host,
+        [...new Set(ids.filter((id) => id.startsWith(host + ":")))],
+      ]),
+    );
+  },
+  set pinned(value: Record<string, string[]>) {
+    writePreference("pinned", value);
+  },
   get treeOrder(): Record<string, string[]> {
     const result = z
       .record(z.string(), z.array(z.string()))

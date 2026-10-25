@@ -68,7 +68,7 @@
   "key_expand": "Expand or collapse Workers",
   "key_new": "New session",
   "key_input": "Focus the Orc message input",
-  "key_escape": "Close the top menu or panel",
+  "key_escape": "Close the top menu or panel; otherwise unfocus the message input",
   "key_completion": "Choose a skill",
   "key_send": "Send, or insert a selected suggestion",
   "key_newline": "Add a new line",
@@ -153,8 +153,6 @@
   "session_resumed": "Session opened.",
   "restore_message": "Restore to draft",
   "answer_batch": "Answer batch",
-  "key_session_loop": "Next / previous session (loop)",
-  "key_visible_session": "Open visible session 1–9",
   "execution_retrying": "Retrying",
   "execution_capacity": "Model at capacity",
   "execution_failed": "Execution error",
@@ -191,5 +189,9 @@
   "output_speed": "Output speed",
   "output_speed_help": "Log estimate across local matching responses, all reasoning efforts; includes reasoning tokens and first-token wait, excludes tool execution; may include partial or interrupted output. 1w is the rolling past seven days.",
   "output_speed_samples": "{count} samples.",
-  "output_speed_unavailable": "Speed statistics unavailable."
+  "output_speed_unavailable": "Speed statistics unavailable.",
+  "pinned": "Pinned",
+  "pin": "Pin",
+  "unpin": "Unpin",
+  "session_menu": "Menu for {title}"
 }

@@ -168,6 +168,8 @@
   async function keydown(e:KeyboardEvent) {
     // WebKit may end composition before the confirming Enter keydown.
     if(composing || e.isComposing || e.keyCode === 229 || e.ctrlKey || e.metaKey || e.altKey) return;
+    if(e.defaultPrevented) return;
+    if(e.key === "Escape" && !e.shiftKey && !navigation.surfaces.length) { e.preventDefault(); e.stopPropagation(); input?.blur(); return; }
     if(e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); return; }
     if(e.key==='Enter' && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); await send(); }
   }

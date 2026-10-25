@@ -47,13 +47,11 @@ test("derived groups, member summaries, folding, visible keyboard order and sele
   // A background publication cannot undo explicit folding of the selected group.
   await request.post(origin + "/fixture/change", { data: { usage: 55 } });
   await expect(group(page, "guionai").locator(".session-open")).toHaveCount(0);
-  await composer(page).press("Alt+k");
-  await expect(heading(page)).toHaveText("Project removed from catalogue");
-  await composer(page).press("Meta+1");
+  await page.locator(".role-project").click();
+  await page.keyboard.press("ArrowDown");
   await expect(heading(page)).toHaveText("Reader performance");
-  await composer(page).press("Alt+j");
+  await page.keyboard.press("ArrowDown");
   await expect(heading(page)).toHaveText("Personal repository");
-  await expect(composer(page)).toBeFocused();
   await composer(page).evaluate((el) => el.blur());
   await page.keyboard.press("ArrowDown");
   await expect(heading(page)).toHaveText("Local repository without remote");

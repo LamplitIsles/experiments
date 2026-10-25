@@ -1,3 +1,4 @@
+import { openSidebar } from "./browser-actions";
 import { expect, test } from "@playwright/test";
 import { writeFile, mkdir } from "node:fs/promises";
 const origin = "http://127.0.0.1:14320";
@@ -47,7 +48,11 @@ test("message timeline mounts a bounded window at representative nested Markdown
       (target) => {
         (window as any).__virtualSample = new Promise((resolve) => {
           const key = (e: KeyboardEvent) => {
-            if (!e.isTrusted || !e.altKey || !["KeyJ", "KeyK"].includes(e.code))
+            if (
+              !e.isTrusted ||
+              e.altKey ||
+              !["ArrowDown", "ArrowUp"].includes(e.code)
+            )
               return;
             const start = performance.now();
             document.removeEventListener("keydown", key, true);
@@ -67,8 +72,7 @@ test("message timeline mounts a bounded window at representative nested Markdown
                     .querySelector(".conversation")
                     ?.textContent?.includes(`${target} item 119`) ?? false,
                 focus:
-                  document.activeElement?.matches(".composer textarea") ??
-                  false,
+                  document.activeElement?.matches(".session-open") ?? false,
               }),
             );
           };
@@ -77,7 +81,8 @@ test("message timeline mounts a bounded window at representative nested Markdown
       },
       i % 2 ? "Virtual A" : "Virtual B",
     );
-    await page.keyboard.press(i % 2 ? "Alt+k" : "Alt+j");
+    await page.locator(".role-project").click();
+    await page.keyboard.press(i % 2 ? "ArrowUp" : "ArrowDown");
     const frame = await page.evaluate(() => (window as any).__virtualSample);
     samples.push(frame.duration);
     frames.push(frame);
@@ -185,6 +190,7 @@ for (const width of [1440, 390])
       };
     });
     await page.goto(origin);
+    await openSidebar(page);
     await page
       .getByRole("button", { name: "Open Virtual reading Orc", exact: true })
       .click();
@@ -391,6 +397,7 @@ for (const width of [1440, 390]) {
       data: { title: "Header reading", peer: "remote", count: 90, rich: true },
     });
     await page.goto(origin);
+    await openSidebar(page);
     await page
       .getByRole("button", { name: "Open Header reading Orc", exact: true })
       .click();
@@ -494,6 +501,15 @@ for (const width of [1440, 390]) {
     await toggle(false);
     await expect.poll(gap).toBeLessThanOrEqual(1);
     await toggle(true);
+    console.log(
+      "remote-header-reconnect",
+      JSON.stringify({ width, gap: await gap() }),
+    );
+    await page.screenshot({
+      path:
+        process.env.PINNED_COMPARE_SCREENSHOT ??
+        `../.scratch/flickgrove-navigation-perf/remote-header-${width}.png`,
+    });
     await expect.poll(gap).toBeLessThanOrEqual(1);
   });
 }
