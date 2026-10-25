@@ -1,77 +1,16 @@
 import { expect, test } from "@playwright/test";
+import { longPress } from "./context-menu-touch";
 import { openSidebar } from "./browser-actions";
 const origin = "http://127.0.0.1:14319";
-test("reload pins have a native keyboard entry without activating on Tab", async ({
-  page,
-  request,
-}) => {
-  await request.post(origin + "/fixture/reset", { data: { mode: "working" } });
-  const { agents, entryId } = await (
-    await request.get(origin + "/fixture/snapshot")
-  ).json();
-  const ids = agents
-    .filter((a: { role: string }) => a.role === "orc")
-    .slice(0, 2)
-    .map((a: { id: string }) => a.id);
-  await page.addInitScript(
-    ({ ids, entryId }) =>
-      localStorage.setItem(
-        `flickgrove/${location.origin}/pinned`,
-        JSON.stringify({ [entryId]: ids }),
-      ),
-    { ids, entryId },
-  );
-  await page.goto(origin);
-  await page.reload();
-  const pins = page.locator('.session-open[data-location="pinned"]');
-  await expect(pins).toHaveCount(2);
-  const initialCurrent = await page
-    .locator('.session-open[aria-current="true"]')
-    .getAttribute("data-agent-id");
-  const initialSource = await page
-    .locator('.session-open[aria-current="true"]')
-    .getAttribute("data-location");
-  const initialTitle = await page.locator(".agent-detail h1").textContent();
-  // Enter the section through native browser focus order; no click or synthetic focus.
-  for (
-    let i = 0;
-    i < 30 &&
-    !(await pins.first().evaluate((el) => el === document.activeElement));
-    i++
-  ) {
-    await page.keyboard.press("Shift+Tab");
-    await expect(
-      page.locator('.session-open[aria-current="true"]'),
-    ).toHaveAttribute("data-agent-id", initialCurrent!);
-    await expect(
-      page.locator('.session-open[aria-current="true"]'),
-    ).toHaveAttribute("data-location", initialSource!);
-    await expect(page.locator(".agent-detail h1")).toHaveText(initialTitle!);
-  }
-  await expect(pins.first()).toBeFocused();
-  await page.keyboard.press("Shift+Tab");
-  await expect(pins.first()).not.toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(pins.first()).toBeFocused();
-  await page.keyboard.press("Enter");
-  await expect(pins.first()).toHaveAttribute("aria-current", "true");
-  await page.keyboard.press("ArrowDown");
-  await expect(pins.nth(1)).toBeFocused();
-  await expect(pins.nth(1)).toHaveAttribute("aria-current", "true");
-  await expect(page.locator('.session-open[aria-current="true"]')).toHaveCount(
-    1,
-  );
-});
-
 for (const width of [1440, 390])
-  test(`cursor and button menus share guarded Orc close and member-only pin at ${width}`, async ({
+  test(`cursor menus retain guarded Orc close and leave members menu-free at ${width}`, async ({
     page,
     request,
   }) => {
     await request.post(origin + "/fixture/reset", {
       data: { mode: "working" },
     });
-    await page.setViewportSize({ width, height: 900 });
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.goto(origin);
     await openSidebar(page);
     const inputCount = (
@@ -91,7 +30,7 @@ for (const width of [1440, 390])
     expect(Math.abs(popup.y - point.y)).toBeLessThan(12);
     await expect(page.locator(".agent-detail h1")).toHaveText(initial);
     await page.screenshot({
-      path: `../.scratch/pinned-sessions/screenshots/${width}-cursor-menu.png`,
+      path: `../.scratch/context-menu-only/screenshots/${width}-cursor-menu.png`,
       animations: "disabled",
     });
     await page.keyboard.press("Escape");
@@ -100,18 +39,17 @@ for (const width of [1440, 390])
     await page.goBack();
     await expect(page.getByRole("menu")).toHaveCount(0);
     await expect(page.locator(".session-list")).toBeVisible();
-    await page
-      .getByRole("button", {
-        name: "Menu for Streaming voice input",
-        exact: true,
-      })
-      .click();
+    await row.click({ button: "right" });
     await expect(page.getByRole("menuitem")).toHaveText([
       "Pin",
       "Close this tree",
     ]);
     await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
-    await expect(page.locator(".pinned-sessions .session-open")).toHaveCount(1);
+    await expect(
+      page.locator(
+        ".pinned-sessions .session-item:not(.worker-item) .session-open",
+      ),
+    ).toHaveCount(1);
     await page
       .getByRole("button", { name: "Expand Workers", exact: true })
       .first()
@@ -121,8 +59,7 @@ for (const width of [1440, 390])
       .filter({ hasText: "Voice input" })
       .nth(1);
     await member.click({ button: "right" });
-    await expect(page.getByRole("menuitem")).toHaveText(["Pin"]);
-    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
     await row.click({ button: "right" });
     await page
       .getByRole("menuitem", { name: "Close this tree", exact: true })
@@ -134,7 +71,11 @@ for (const width of [1440, 390])
         .filter({ hasText: "still working or has an unconfirmed delivery" })
         .first(),
     ).toBeVisible();
-    await expect(page.locator(".pinned-sessions .session-open")).toHaveCount(1);
+    await expect(
+      page.locator(
+        ".pinned-sessions .session-item:not(.worker-item) .session-open",
+      ),
+    ).toHaveCount(1);
     await openSidebar(page);
     // Existing closeTree accepts an idle tree; no new lifecycle or close endpoint.
     for (const agentId of ["reader-orc", "reader"])
@@ -147,8 +88,9 @@ for (const width of [1440, 390])
         },
       });
     await page
-      .getByRole("button", { name: "Menu for Reader performance", exact: true })
-      .click();
+      .locator('.session-open[data-location="tree"]')
+      .filter({ hasText: "Reader performance" })
+      .click({ button: "right" });
     await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
     await expect(page.getByRole("menu")).toHaveCount(0);
     await page
@@ -158,7 +100,11 @@ for (const width of [1440, 390])
     await page
       .getByRole("menuitem", { name: "Close this tree", exact: true })
       .click();
-    await expect(page.locator(".pinned-sessions .session-open")).toHaveCount(1);
+    await expect(
+      page.locator(
+        ".pinned-sessions .session-item:not(.worker-item) .session-open",
+      ),
+    ).toHaveCount(1);
     await expect(
       page.locator(".session-open").filter({ hasText: "Reader performance" }),
     ).toHaveCount(0);
@@ -186,11 +132,9 @@ test("selected working Orc refusal stays visible in the foreground mobile Sideba
     .inputs;
   await openSidebar(page);
   await page
-    .getByRole("button", {
-      name: "Menu for Streaming voice input",
-      exact: true,
-    })
-    .click();
+    .locator('.session-open[data-location="tree"]')
+    .first()
+    .click({ button: "right" });
   await page
     .getByRole("menuitem", { name: "Close this tree", exact: true })
     .click();
@@ -199,7 +143,7 @@ test("selected working Orc refusal stays visible in the foreground mobile Sideba
     "still working or has an unconfirmed delivery",
   );
   await page.screenshot({
-    path: "../.scratch/pinned-sessions/screenshots/390-selected-close-refusal.png",
+    path: "../.scratch/context-menu-only/screenshots/390-selected-close-refusal.png",
     animations: "disabled",
   });
   await expect(page.locator('.session-list [role="alert"]')).toBeVisible();
@@ -218,4 +162,106 @@ test("selected working Orc refusal stays visible in the foreground mobile Sideba
   expect(
     (await (await request.get(origin + "/fixture/info")).json()).inputs,
   ).toEqual(before);
+});
+
+test.describe("touch context menu", () => {
+  test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
+  test("long press, release, tap actions and scrolling keep their own intent", async ({
+    page,
+    request,
+  }) => {
+    await request.post(origin + "/fixture/reset", { data: { mode: "dense" } });
+    await page.goto(origin);
+    await openSidebar(page);
+    expect(
+      await page.evaluate(() => matchMedia("(pointer: coarse)").matches),
+    ).toBe(true);
+    const tree = page.locator('.session-open[data-location="tree"]');
+    await tree.first().tap();
+    await expect(page.locator(".agent-detail h1")).toHaveText(
+      "Streaming voice input",
+    );
+    await openSidebar(page);
+    const initial = (await (await request.get(origin + "/fixture/info")).json())
+      .inputs;
+    await expect(page.locator(".agent-detail h1")).toHaveText(
+      "Streaming voice input",
+    );
+    const before = await page.locator(".agent-detail h1").allTextContents();
+    await longPress(page, tree.first());
+    await expect(page.getByRole("menuitem")).toHaveText([
+      "Pin",
+      "Close this tree",
+    ]);
+    await expect(page.locator(".agent-detail h1")).toHaveText(before);
+    await page.screenshot({
+      path: "../.scratch/context-menu-only/screenshots/390-touch-menu.png",
+      animations: "disabled",
+    });
+    await page.getByRole("menuitem", { name: "Pin", exact: true }).tap();
+    const pinned = page.locator('.session-open[data-location="pinned"]');
+    await expect(pinned).toHaveCount(1);
+    await page.locator(".pinned-sessions .worker-disclosure").tap();
+    const member = pinned.filter({
+      has: page.getByText("Voice input", { exact: true }),
+    });
+    await longPress(page, member, false);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await openSidebar(page);
+    await longPress(page, pinned.first());
+    await page.getByRole("menuitem", { name: "Unpin", exact: true }).tap();
+    await expect(pinned).toHaveCount(0);
+    await longPress(page, tree.first());
+    await page
+      .getByRole("menuitem", { name: "Close this tree", exact: true })
+      .tap();
+    await expect(page.locator('.session-list [role="alert"]')).toBeVisible();
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    // A real vertical touch drag scrolls the list and cancels the long-press timer.
+    const list = page.locator(".session-list");
+    const box = (await tree.nth(2).boundingBox())!;
+    const scroll = await list.evaluate((el) => el.scrollTop);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x: box.x + 80, y: box.y + 20 }],
+    });
+    for (const dy of [20, 50, 90, 130])
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [{ x: box.x + 80, y: box.y + 20 - dy }],
+      });
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    await cdp.detach();
+    await expect
+      .poll(() => list.evaluate((el) => el.scrollTop))
+      .toBeGreaterThan(scroll);
+    await page.waitForTimeout(800);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await page.screenshot({
+      path: "../.scratch/context-menu-only/screenshots/390-touch-scrolled.png",
+      animations: "disabled",
+    });
+    for (const agentId of ["reader-orc", "reader"])
+      await request.post(origin + "/fixture/change", {
+        data: {
+          execution: {
+            agentId,
+            event: { type: "completed", status: "completed" },
+          },
+        },
+      });
+    const reader = tree.filter({ hasText: "Reader performance" });
+    await longPress(page, reader);
+    await page
+      .getByRole("menuitem", { name: "Close this tree", exact: true })
+      .tap();
+    await expect(reader).toHaveCount(0);
+    expect(
+      (await (await request.get(origin + "/fixture/info")).json()).inputs,
+    ).toEqual(initial);
+  });
 });

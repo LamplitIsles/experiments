@@ -1,15 +1,16 @@
 import { expect, test, type Page } from "@playwright/test";
 import { openSidebar } from "./browser-actions";
 const origin = "http://127.0.0.1:14319";
-const shots = "../.scratch/pinned-sessions/screenshots";
+const shots = "../.scratch/context-menu-only/screenshots";
 const rows = (page: Page, location = "tree") =>
   page.locator(`.session-open[data-location="${location}"]`);
 const heading = (page: Page) => page.locator(".agent-detail h1");
 async function menu(page: Page, title: string, location = "tree") {
   await page
     .locator(location === "tree" ? ".org-group" : ".pinned-sessions")
-    .getByRole("button", { name: `Menu for ${title}`, exact: true })
-    .click();
+    .locator(".session-open")
+    .filter({ has: page.getByText(title, { exact: true }) })
+    .click({ button: "right" });
   await expect(
     page.getByRole("menuitem", { name: /^(Pin|Unpin)$/ }),
   ).toBeVisible();
@@ -20,7 +21,7 @@ async function toggle(page: Page, title: string, location = "tree") {
   await expect(page.getByRole("menu")).toHaveCount(0);
 }
 for (const width of [1440, 390])
-  test(`Pin identity, menus, local keys and unpin focus at ${width}`, async ({
+  test(`Orc-only Pin trees share members and source identity at ${width}`, async ({
     page,
     request,
   }) => {
@@ -29,25 +30,80 @@ for (const width of [1440, 390])
     });
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.goto(origin);
+    await openSidebar(page);
     const initial = (await (await request.get(origin + "/fixture/info")).json())
       .inputs;
-    await openSidebar(page);
-    await rows(page).first().click({ button: "right" });
-    await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
+    await toggle(page, "Streaming voice input");
     await expect(rows(page, "pinned")).toHaveCount(1);
-    await page
-      .getByRole("button", { name: "Expand Workers", exact: true })
-      .first()
-      .click();
-    // Keyboard reaches the row menu through native Tab; Shift+F10 also opens it.
-    await rows(page).filter({ hasText: "Voice input" }).nth(1).focus();
-    await page.keyboard.press("Shift+F10");
-    await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
-    await expect(rows(page, "pinned")).toHaveCount(2);
-    await expect(rows(page).filter({ hasText: "Voice input" })).toHaveCount(2);
-    await expect(page.locator(".pinned-members")).toContainText("2");
-    await rows(page, "pinned").first().click();
+    const pinToggle = page
+      .locator(".pinned-sessions .worker-disclosure")
+      .first();
+    const treeToggle = page.locator(".org-group .worker-disclosure").first();
+    await pinToggle.click();
+    await expect(treeToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(rows(page, "pinned")).toHaveCount(3);
+    for (const area of [".pinned-sessions", ".org-group"])
+      await expect(
+        page.locator(`${area} .session-members`).first().locator("span"),
+      ).toHaveText(["2", "1"]);
+    const appearances = await page
+      .locator(".session-item")
+      .filter({ has: page.getByText("Streaming voice input", { exact: true }) })
+      .evaluateAll((items) =>
+        items.map((item) =>
+          [
+            "strong",
+            ".session-meta",
+            ".session-indicators",
+            ".session-members",
+          ].map((selector) => {
+            const el = item.querySelector(selector)!;
+            const css = getComputedStyle(el);
+            return [el.textContent, css.fontSize, css.lineHeight, css.color];
+          }),
+        ),
+      );
+    expect(appearances[0]).toEqual(appearances[1]);
+    await page.screenshot({
+      path: `${shots}/${width}-matching-orc-rows.png`,
+      animations: "disabled",
+    });
+    const pinDocs = rows(page, "pinned").filter({ hasText: "Documentation" });
+    const treeDocs = rows(page).filter({ hasText: "Documentation" });
+    expect(await pinDocs.innerText()).toBe(await treeDocs.innerText());
+    await expect(
+      pinDocs.getByRole("img", { name: "Idle", exact: true }),
+    ).toBeVisible();
+    for (const member of [pinDocs, treeDocs]) {
+      await member.click({ button: "right" });
+      await expect(page.getByRole("menu")).toHaveCount(0);
+    }
+    await treeToggle.click();
+    await expect(pinToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(pinDocs).toHaveCount(0);
+    await pinToggle.click();
+    await expect(treeToggle).toHaveAttribute("aria-expanded", "true");
+    await pinDocs.click();
+    await expect(heading(page)).toHaveText("Documentation");
+    await openSidebar(page);
+    const current = page.locator('.session-open[aria-current="true"]');
+    await expect(current).toHaveCount(1);
+    await expect(current).toHaveAttribute("data-location", "pinned");
+    await expect(treeDocs).not.toHaveAttribute("aria-current", "true");
+    expect(await pinDocs.getAttribute("data-agent-id")).toBe(
+      await treeDocs.getAttribute("data-agent-id"),
+    );
+    await page.screenshot({
+      path: `${shots}/${width}-expanded-pinned-tree.png`,
+      animations: "disabled",
+    });
+    await pinToggle.click();
+    await expect(treeToggle).toHaveAttribute("aria-expanded", "false");
     await expect(heading(page)).toHaveText("Streaming voice input");
+    await expect(current).toHaveAttribute("data-location", "pinned");
+    await openSidebar(page);
+    await treeToggle.click();
+    await rows(page, "pinned").first().click();
     const input = page.getByRole("textbox", {
       name: "Message Orc",
       exact: true,
@@ -57,25 +113,10 @@ for (const width of [1440, 390])
       el.setSelectionRange(3, 7),
     );
     await openSidebar(page);
-    await expect(
-      page.locator('.session-open[aria-current="true"]'),
-    ).toHaveCount(1);
-    await rows(page, "pinned").first().click();
-    await expect(
-      page.locator('.session-open[aria-current="true"]'),
-    ).toHaveAttribute("data-location", "pinned");
-    if (width === 1440)
-      await expect(rows(page, "pinned").first()).toBeFocused();
-    await openSidebar(page);
     await rows(page).first().click();
-    if (width === 1440) await expect(rows(page).first()).toBeFocused();
     await openSidebar(page);
-    await expect(
-      page.locator('.session-open[aria-current="true"]'),
-    ).toHaveCount(1);
-    await expect(
-      page.locator('.session-open[aria-current="true"]'),
-    ).toHaveAttribute("data-location", "tree");
+    await expect(current).toHaveCount(1);
+    await expect(current).toHaveAttribute("data-location", "tree");
     await rows(page, "pinned").first().click();
     await expect(input).toHaveValue("unsent pin draft");
     expect(
@@ -85,45 +126,7 @@ for (const width of [1440, 390])
       ]),
     ).toEqual([3, 7]);
     await openSidebar(page);
-    await page
-      .getByRole("button", { name: "Collapse Workers", exact: true })
-      .first()
-      .click();
-    await rows(page, "pinned").nth(1).click();
-    await expect(heading(page)).toHaveText("Voice input");
-    await openSidebar(page);
-    await expect(
-      page.getByRole("button", { name: "Expand Workers", exact: true }).first(),
-    ).toHaveAttribute("aria-expanded", "false");
-    await expect(rows(page).filter({ hasText: "Voice input" })).toHaveCount(1);
-    // Left/Right in the shortcut never expands its owner; local Up wraps only pins.
-    await rows(page, "pinned").nth(1).focus();
-    await page.keyboard.press("ArrowRight");
-    await expect(
-      page.getByRole("button", { name: "Expand Workers", exact: true }).first(),
-    ).toHaveAttribute("aria-expanded", "false");
-    await page.keyboard.press("ArrowUp");
-    if (width === 390) await openSidebar(page);
-    await expect(heading(page)).toHaveText("Streaming voice input");
-    await rows(page, "pinned").first().focus();
-    await expect(rows(page).first()).not.toBeFocused();
-    await page.keyboard.press("ArrowRight");
-    await expect(rows(page, "pinned").first()).toBeFocused();
-    await expect(
-      page.locator('.session-open[aria-current="true"]'),
-    ).toHaveAttribute("data-location", "pinned");
-
-    await page.screenshot({ path: `${shots}/${width}-source-focus.png` });
-    await page.keyboard.press("Tab");
-    await expect(
-      page.locator(".pinned-sessions .session-menu-trigger").first(),
-    ).toBeFocused();
-    await page.keyboard.press("Enter");
-    await expect(
-      page.getByRole("menuitem", { name: "Unpin", exact: true }),
-    ).toBeFocused();
-    await page.keyboard.press("ArrowDown");
-    await expect(heading(page)).toHaveText("Streaming voice input");
+    await menu(page, "Streaming voice input", "pinned");
     await page.screenshot({
       path: `${shots}/${width}-menu.png`,
       animations: "disabled",
@@ -131,46 +134,33 @@ for (const width of [1440, 390])
     await page.keyboard.press("Escape");
     await expect(page.getByRole("menu")).toHaveCount(0);
     await expect(page.locator(".session-list")).toBeVisible();
-    if (width === 390) {
-      await page.keyboard.press("Escape");
-      await expect(page.locator(".session-list")).toBeHidden();
-      await openSidebar(page);
-    }
     await menu(page, "Streaming voice input", "pinned");
     await page.goBack();
     await expect(page.getByRole("menu")).toHaveCount(0);
-    await expect(page.locator(".session-list")).toBeVisible();
-    await menu(page, "Streaming voice input", "pinned");
-    await page.locator(".session-list-heading h1").click();
-    await expect(page.getByRole("menu")).toHaveCount(0);
-    await page.screenshot({ path: `${shots}/${width}-pinned.png` });
     await page.locator(".org-disclosure").click();
-    const scroll = await page
-      .locator(".session-list")
-      .evaluate((el) => el.scrollTop);
-    await rows(page, "pinned").nth(1).click();
-    await expect(heading(page)).toHaveText("Voice input");
+    await pinDocs.click();
+    await expect(heading(page)).toHaveText("Documentation");
     await openSidebar(page);
     await expect(page.locator(".org-disclosure")).toHaveAttribute(
       "aria-expanded",
       "false",
     );
-    expect(
-      await page.locator(".session-list").evaluate((el) => el.scrollTop),
-    ).toBe(scroll);
     await page.screenshot({ path: `${shots}/${width}-folded-member.png` });
-    await toggle(page, "Voice input", "pinned");
-    await expect(
-      rows(page).filter({ hasText: "Voice input" }).nth(1),
-    ).toBeFocused();
-    await expect(heading(page)).toHaveText("Voice input");
-    await rows(page, "pinned").first().click();
-    await page.reload();
-    await openSidebar(page);
-    await expect(rows(page, "pinned")).toHaveCount(1);
+    // Removing the Orc removes its Pin subtree, retaining the selected member/detail.
     await toggle(page, "Streaming voice input", "pinned");
     await expect(rows(page, "pinned")).toHaveCount(0);
-    await expect(rows(page).first()).toBeFocused();
+    await expect(heading(page)).toHaveText("Documentation");
+    await expect(current).toHaveCount(1);
+    await expect(current).toHaveAttribute("data-location", "tree");
+    await expect(treeDocs).toHaveAttribute("aria-current", "true");
+    await rows(page).first().click();
+    if (width === 390) await openSidebar(page);
+    await toggle(page, "Streaming voice input");
+    await page.reload();
+    await openSidebar(page);
+    await expect(rows(page, "pinned")).toHaveCount(3);
+    await toggle(page, "Streaming voice input", "pinned");
+    await expect(rows(page, "pinned")).toHaveCount(0);
     if (width === 390) await page.keyboard.press("Escape");
     await expect(input).toHaveValue("unsent pin draft");
     expect(
@@ -228,10 +218,9 @@ test("idle, offline and authoritative close retain or prune only appropriate pin
       .first()
       .getByRole("img", { name: "Idle", exact: true }),
   ).toBeVisible();
-  await expect(page.locator(".pinned-members")).toHaveAttribute(
-    "aria-label",
-    "1 working",
-  );
+  await expect(
+    page.locator(".pinned-sessions .session-members"),
+  ).toHaveAttribute("aria-label", "1 working");
   await expect(rows(page, "pinned")).toHaveCount(1);
   await request.post(origin + "/fixture/change", { data: { outage: true } });
   await expect(page.locator(".connection-banner")).toBeVisible();
@@ -310,20 +299,21 @@ test("qualified preference order isolates instances, restores after empty loadin
     await request.get(origin + "/fixture/snapshot")
   ).json();
   const root = agents.find((a: { role: string }) => a.role === "orc").id;
+  const member = agents.find((a: { role: string }) => a.role === "worker").id;
   await page.addInitScript(
-    ({ root, entryId }) => {
+    ({ root, member, entryId }) => {
       if (!sessionStorage.getItem("seed-pins")) {
         localStorage.setItem(
           `flickgrove/${location.origin}/pinned`,
           JSON.stringify({
-            [entryId]: [root, root, "foreign:orc"],
+            [entryId]: [root, root, member, "foreign:orc"],
             foreign: ["foreign:orc"],
           }),
         );
         sessionStorage.setItem("seed-pins", "yes");
       }
     },
-    { root, entryId },
+    { root, member, entryId },
   );
   let held = true;
   const queued: (string | Buffer)[] = [];
@@ -355,8 +345,26 @@ test("qualified preference order isolates instances, restores after empty loadin
       ).flat(),
     ),
   ).toContain(root);
+  expect(
+    await page.evaluate(() =>
+      Object.values(
+        JSON.parse(
+          localStorage.getItem(`flickgrove/${location.origin}/pinned`)!,
+        ),
+      ).flat(),
+    ),
+  ).toContain(member);
   release();
   await expect(rows(page, "pinned")).toHaveCount(1);
+  expect(
+    await page.evaluate(() =>
+      Object.values(
+        JSON.parse(
+          localStorage.getItem(`flickgrove/${location.origin}/pinned`)!,
+        ),
+      ).flat(),
+    ),
+  ).not.toContain(member);
   await toggle(page, "Reader performance");
   await toggle(page, "Streaming voice input", "pinned");
   await toggle(page, "Streaming voice input");

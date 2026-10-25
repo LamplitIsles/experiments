@@ -80,7 +80,10 @@ const server = Bun.serve({
     const options = {
       service: owner,
       origin: () => origin,
-      assets: resolve("../.scratch/abandon-unconfirmed-session/assets"),
+      assets: resolve(
+        process.env.GROVE_TEST_ASSETS ??
+          "../.scratch/abandon-unconfirmed-session/assets",
+      ),
     };
     const upgraded = createUpgrade(f.app, options)(request, server);
     if (upgraded) return upgraded === true ? undefined : upgraded;

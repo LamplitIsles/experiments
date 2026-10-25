@@ -160,12 +160,12 @@
     value = { ...value, agents: [...value.agents, ...retained], hosts: value.hosts?.map(h => !h.connected && !h.lastSeen ? { ...h, lastSeen: snapshot.hosts?.find(old => old.id === h.id)?.lastSeen } : h) };
     observeQuestions(value.agents, selectedId);
     if (selectedId && !value.agents.some(a => a.id === selectedId)) lostSelection = selectedId;
+    const pins = { ...pinned };
+    for (const key of Object.keys(pins)) pins[key] = pins[key].filter(id => !value.agents.some(a => a.id === id && a.role !== "orc"));
     if (authoritative) {
-      const pins = { ...pinned };
       for (const host of value.hosts ?? []) {
         if (host.connected) pins[host.id] = (pins[host.id] ?? []).filter(id => value.agents.some(a => a.id === id));
       }
-      pinned = pins;
       const order = { ...treeOrder };
       for (const host of value.hosts ?? []) {
         if (!host.connected) continue;
@@ -175,6 +175,7 @@
       }
       treeOrder = order;
     }
+    pinned = pins;
     snapshot = value;
     if (authoritative) for (const host of value.hosts ?? []) {
       if (!host.connected) continue;
@@ -522,7 +523,7 @@
       if (id && !event.repeat) void closeTree(id);
       return;
     }
-    if (event.key !== "Escape" && event.target instanceof Element && event.target.closest(".session-menu-trigger, [role=menu]")) return;
+    if (event.key !== "Escape" && event.target instanceof Element && event.target.closest("[role=menu]")) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === "Escape") {
       event.preventDefault(); closeDetail();

@@ -192,6 +192,5 @@
   "output_speed_unavailable": "Speed statistics unavailable.",
   "pinned": "Pinned",
   "pin": "Pin",
-  "unpin": "Unpin",
-  "session_menu": "Menu for {title}"
+  "unpin": "Unpin"
 }

@@ -1,3 +1,4 @@
+import { longPress } from "./context-menu-touch";
 import { openSidebar } from "./browser-actions";
 import { expect, test, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -637,33 +638,41 @@ test("late manual A Check cannot open its confirmation over a new B visit", asyn
   );
 });
 
-test("row close exits menu and mobile sheet before unknown recovery", async ({
-  page,
-  request,
-}) => {
-  const unknown = "http://127.0.0.1:14327";
-  const { target } = await (
-    await request.post(unknown + "/fixture/reset")
-  ).json();
-  const before = await (await request.get(unknown + "/fixture/info")).json();
-  await page.setViewportSize({ width: 390, height: 900 });
-  await page.goto(unknown);
-  await openSidebar(page);
-  await page
-    .locator(`.session-open[data-agent-id="${target}"]`)
-    .click({ button: "right" });
-  await page
-    .getByRole("menuitem", { name: "Close this tree", exact: true })
-    .click();
-  await expect(page.getByRole("menu")).toHaveCount(0);
-  await expect(
-    page.getByRole("heading", {
-      name: "Abandon unconfirmed submissions and close",
-      exact: true,
-    }),
-  ).toBeVisible();
-  const after = await (await request.get(unknown + "/fixture/info")).json();
-  expect(after.closed).toBe(false);
-  expect(after.inputs).toBe(before.inputs);
-  expect(after.lookup).toEqual(before.lookup);
+test.describe("touch unknown close", () => {
+  test.use({ hasTouch: true });
+  test("row close exits menu and mobile sheet before unknown recovery", async ({
+    page,
+    request,
+  }) => {
+    const unknown = "http://127.0.0.1:14327";
+    const { target } = await (
+      await request.post(unknown + "/fixture/reset")
+    ).json();
+    const before = await (await request.get(unknown + "/fixture/info")).json();
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.goto(unknown);
+    await openSidebar(page);
+    await longPress(
+      page,
+      page.locator(`.session-open[data-agent-id="${target}"]`),
+    );
+    await page
+      .getByRole("menuitem", { name: "Close this tree", exact: true })
+      .tap();
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", {
+        name: "Abandon unconfirmed submissions and close",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: "../.scratch/context-menu-only/screenshots/390-touch-unknown.png",
+      animations: "disabled",
+    });
+    const after = await (await request.get(unknown + "/fixture/info")).json();
+    expect(after.closed).toBe(false);
+    expect(after.inputs).toBe(before.inputs);
+    expect(after.lookup).toEqual(before.lookup);
+  });
 });
