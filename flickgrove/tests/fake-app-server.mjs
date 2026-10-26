@@ -1130,11 +1130,13 @@ async function handle(request) {
     case "thread/unsubscribe": {
       if (control().failUnsubscribeThreads?.includes(p.threadId))
         rpcError(-32603, "fixture unsubscribe failed");
-      const status = !state.loaded
-        ? "notLoaded"
-        : !state.subscribed
-          ? "notSubscribed"
-          : "unsubscribed";
+      const status =
+        control().unsubscribeStatus ??
+        (!state.loaded
+          ? "notLoaded"
+          : !state.subscribed
+            ? "notSubscribed"
+            : "unsubscribed");
       state.unsubscribeStatuses = [
         ...(state.unsubscribeStatuses ?? []),
         status,

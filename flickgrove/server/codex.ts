@@ -1129,6 +1129,31 @@ export class CodexRuntime implements Runtime {
       },
     };
   }
+  async releaseThread(threadId: string) {
+    const client = await this.getCatalog();
+    let cursor: string | undefined;
+    do {
+      const page = await client.call(
+        "thread/loaded/list",
+        { cursor },
+        { timeoutMs: 5000 },
+      );
+      if (page.data.includes(threadId))
+        throw new Error(
+          "Native thread is still loaded without a Grove handle. Inspect its outcome before closing.",
+        );
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    const result = await client.call(
+      "thread/unsubscribe",
+      { threadId },
+      { timeoutMs: 5000 },
+    );
+    if (result.status !== "notLoaded")
+      throw new Error(
+        "Native thread release unconfirmed. Inspect its outcome before closing.",
+      );
+  }
   async close() {
     const managed = this.managed;
     this.managed = undefined;

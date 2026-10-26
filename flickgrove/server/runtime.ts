@@ -98,6 +98,8 @@ export type WindowRead =
   | { operation: string; turnId?: string }
   | { cursor: string; direction: "older" | "newer" };
 export interface Runtime {
+  // Codex can confirm an unloaded thread without acquiring a writer handle.
+  releaseThread?(threadId: string): Promise<void>;
   history(
     cwd: string,
     cursor?: string,

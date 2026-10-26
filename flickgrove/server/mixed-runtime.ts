@@ -126,6 +126,13 @@ export class MixedRuntime implements Runtime {
     const native = threadIdentity(threadId);
     return this.runtime(native.backend).readTitle(native.id);
   }
+  async releaseThread(threadId: string) {
+    const native = threadIdentity(threadId);
+    const runtime = this.runtime(native.backend);
+    if (!runtime.releaseThread)
+      throw new Error("This backend requires a handle to release a session");
+    await runtime.releaseThread(native.id);
+  }
   async open(
     agent: RuntimeAgent,
     notify: (event: RuntimeEvent) => void,

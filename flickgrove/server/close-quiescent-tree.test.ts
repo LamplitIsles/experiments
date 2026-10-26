@@ -111,6 +111,42 @@ test("ordinary Close releases all three roles before root, preserves history and
   expect(restoredRuntime.agents.size).toBe(0);
 });
 
+test("restored root with unconfirmed startup refuses Close before releasing children", async () => {
+  const { WorkspaceStore } = await import("./workspace-store");
+  const { app, directory, owner, children } = await fixture();
+  app.dispose();
+  const store = new WorkspaceStore(join(directory, "workspace.sqlite"));
+  const root = store.track(store.byId(owner.id)!);
+  root.threadId = undefined;
+  store.flush();
+  store.close();
+  const runtime = new FakeRuntime(),
+    releases: string[] = [];
+  runtime.closeOverride = async (id) => {
+    releases.push(id);
+  };
+  const restored = new Workspace({
+    directory,
+    runtime,
+    projects: async () => fixtureProjects,
+  });
+  cleanups.push(() => restored.dispose());
+  await Promise.all(
+    children.map((child) => restored.reconcileSettings(child.id)),
+  );
+  expect(runtime.agents.has(owner.id)).toBe(false);
+  await expect(restored.closeTree(owner.id)).rejects.toThrow(
+    "Native thread startup is unconfirmed",
+  );
+  expect(releases).toEqual([]);
+  expect(restored.snapshot().agents.map((a) => a.id)).toEqual([
+    owner.id,
+    ...children.map((child) => child.id),
+  ]);
+  for (const child of children)
+    expect(restored.detail(child.id).ownerId).toBe(owner.id);
+});
+
 const guards: [
   string,
   (child: RuntimeAgent, root: RuntimeAgent) => void,

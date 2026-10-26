@@ -1945,6 +1945,8 @@ export class Workspace {
       if (this.treeActions.has(id))
         throw new Error("Tree settings are being saved");
       this.assertIdle(a);
+      if (!a.threadId)
+        throw new Error(`${a.title}: Native thread startup is unconfirmed`);
       for (const member of [a, ...members.filter((w) => !w.closed)]) {
         if (
           this.queues.has(member.id) ||
@@ -1969,9 +1971,7 @@ export class Workspace {
       for (const member of [...members, a]) {
         validate();
         try {
-          const handle = await this.handle(member, false);
-          validate(); // Native resume may have revealed new work or a disconnect.
-          await handle.close();
+          await this.release(member, validate);
         } catch (error) {
           throw new Error(
             `${member.title}: Native thread release failed: ${String(error)}. Retry Close tree after inspecting the outcome.`,
@@ -2572,6 +2572,24 @@ export class Workspace {
           : "Current turn outcome is unconfirmed; inspect the owned agent before resolving closure";
     return reason;
   }
+  private async release(a: RuntimeAgent, validate: () => void) {
+    if (
+      !this.handles.has(a.id) &&
+      a.threadId &&
+      a.backend !== "pi" &&
+      this.options.runtime.releaseThread
+    ) {
+      await this.assertProject(a.project, a.backend);
+      validate();
+      await this.options.runtime.releaseThread(a.threadId);
+    } else {
+      const handle = a.threadId
+        ? await this.handle(a, false)
+        : this.handles.get(a.id);
+      validate(); // Acquisition may reveal work or a disconnect.
+      await handle?.close();
+    }
+  }
   private async advanceChildCloses() {
     if (this.disposed) return;
     let changed = false;
@@ -2600,10 +2618,10 @@ export class Workspace {
       releases.push(
         (async () => {
           try {
-            const handle = w.threadId
-              ? await this.handle(w, false)
-              : this.handles.get(w.id);
-            await handle?.close();
+            await this.release(w, () => {
+              const reason = this.childCloseReason(w);
+              if (reason) throw new Error(reason);
+            });
             if (this.disposed) return;
             this.handles.delete(w.id);
             w.closed = true;
