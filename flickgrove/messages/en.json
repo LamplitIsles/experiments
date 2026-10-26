@@ -73,7 +73,7 @@
   "key_send": "Send, or insert a selected suggestion",
   "key_newline": "Add a new line",
   "key_questions": "Switch questions in question navigation",
-  "keyboard_scope": "Navigation shortcuts pause while typing. Option/Alt + X also works in Composer; temporary panels and IME block Close.",
+  "keyboard_scope": "Session switching uses Pinned (including expanded members), then the expanded original list, once per session. Navigation pauses while typing, during IME and foreground panels. Option/Alt + X also works in Composer.",
   "notification_input": "{title} needs your input",
   "notification_handoff": "{title} is waiting for your next instruction",
   "notification_error": "{title} needs attention",
@@ -192,5 +192,7 @@
   "output_speed_unavailable": "Speed statistics unavailable.",
   "pinned": "Pinned",
   "pin": "Pin",
-  "unpin": "Unpin"
+  "unpin": "Unpin",
+  "key_visible_number": "Open visible session 1–9 (Pinned first)",
+  "key_visible_cycle": "Next / previous visible session, wrapping"
 }

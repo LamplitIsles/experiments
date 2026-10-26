@@ -53,7 +53,7 @@
   let detail = $state<Detail | null>(null); let skills = $state<Skill[]>([]);
   let projects = $state<Project[]>([]); let projectsLoading = $state(true); let models = $state<Model[]>(preferences.models);
   let connected = $state(false); let loading = $state(true); let error = $state("");
-  let now = $state(Date.now()); let sessionList: { visibleIds(): string[]; keydown(event: KeyboardEvent): Promise<void>; expandFocused(): void; reveal(id: string): Promise<void>; closeTarget(): string | null };
+  let now = $state(Date.now()); let sessionList: { visibleIds(): string[]; openVisible(id: string): void; switchVisible(event: KeyboardEvent): void; keydown(event: KeyboardEvent): Promise<void>; expandFocused(): void; reveal(id: string): Promise<void>; closeTarget(): string | null };
   let projectSearch = $state<HTMLInputElement | null>(null); let modalOpen = $state(false); let modal = $state<"new" | "settings" | "keys" | "abandon-close" | null>(null);
   let search = $state(""); let projectId = $state(""); let projectHighlight=$state(""); let projectError=$state(""); let saving = $state(false);
   const projectListId=$props.id();
@@ -78,9 +78,14 @@
     }
     if (host?.connected && !loading && (desktop || lostSelection) && (!current || !ids.includes(current))) {
       const position = previousVisible.indexOf(current ?? lostSelection ?? "");
-      const adjacent = previousVisible.slice(position + 1).find(id => ids.includes(id)) ?? previousVisible.slice(0, Math.max(0, position)).reverse().find(id => ids.includes(id));
-      const next = remembered[instanceId] ?? adjacent ?? visibleAgents.find(a => a.role === "orc")?.id ?? null;
-      void openConversation(next);
+      const visibleIds = sessionList?.visibleIds() ?? [];
+      const survivingVisible = (id: string) => ids.includes(id) && visibleIds.includes(id);
+      const adjacent = previousVisible.slice(position + 1).find(survivingVisible) ?? previousVisible.slice(0, Math.max(0, position)).reverse().find(survivingVisible);
+      const next = lostSelection
+        ? adjacent ?? visibleIds[0] ?? null
+        : remembered[instanceId] ?? adjacent ?? visibleIds[0] ?? null;
+      if (next && lostSelection) sessionList?.openVisible(next);
+      else void openConversation(next);
     }
     previousVisible = sessionList?.visibleIds() ?? visibleAgents.filter(a => a.role === "orc").map(a => a.id);
     lostSelection = null;
@@ -524,6 +529,11 @@
       return;
     }
     if (event.key !== "Escape" && event.target instanceof Element && event.target.closest("[role=menu]")) return;
+    if (!event.shiftKey && !event.repeat && !editable(event.target) && !navigation.surfaces.some(surface => surface !== "sidebar") && !(event.target instanceof Element && event.target.closest(".question-panel, .pending-entry, .question-record-entry"))) {
+      const numbered = (event.metaKey !== event.ctrlKey) && !event.altKey && /^(?:Digit|Numpad)[1-9]$/.test(event.code);
+      const adjacent = event.altKey && !event.metaKey && !event.ctrlKey && ["KeyJ", "KeyK"].includes(event.code);
+      if (numbered || adjacent) { sessionList?.switchVisible(event); return; }
+    }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === "Escape") {
       event.preventDefault(); closeDetail();
@@ -655,7 +665,7 @@
       <Button variant="ghost" size="sm" disabled={modelRefreshBusy || !connected} onclick={refreshModels}>Refresh models</Button>
       <p class="settings-scope">{m.settings_scope()}</p><div class="modal-action">{#if install}<button class="install-link" onclick={() => install?.prompt()}>{m.install_app()}</button>{/if}<Button variant="default" size="sm" disabled={!settings || !settingsValid || saving} onclick={saveSettings}>{saving ? m.sending() : m.save_changes()}</Button></div>
     {:else if modal === "keys"}
-      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["⌘ / Ctrl + B", m.toggle_sidebar()], ["↑ ↓ ← →", m.key_focus()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Option/Alt + S", m.search_skills()], ["Option/Alt + X", m.close_tree()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
+      <Dialog.Title>{m.shortcuts()}</Dialog.Title><p class="modal-help">{m.keyboard_help()}</p><dl class="shortcut-list">{#each [["⌘ / Ctrl + B", m.toggle_sidebar()], ["⌘ / Ctrl + 1–9", m.key_visible_number()], ["Option/Alt + J / K", m.key_visible_cycle()], ["↑ ↓ ← →", m.key_focus()], ["Enter", m.key_open()], ["E", m.key_expand()], ["N", m.key_new()], ["I", m.key_input()], ["Option/Alt + S", m.search_skills()], ["Option/Alt + X", m.close_tree()], ["Esc", m.key_escape()], ["Tab", m.key_completion()], ["Enter", m.key_send()], ["Shift + Enter", m.key_newline()]] as [key, label]}<div><dt><Kbd>{key}</Kbd></dt><dd>{label}</dd></div>{/each}</dl><p class="keyboard-scope">{m.keyboard_scope()}</p>
     {/if}
     {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
   </Dialog.Content>

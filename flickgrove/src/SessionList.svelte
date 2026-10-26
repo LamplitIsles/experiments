@@ -100,7 +100,15 @@
       else if (dx > 40) revealedId = null;
     }
   }
-  export function visibleIds() { return visible.map(a => a.id); }
+  export function visibleIds() { return navigationEntries.map(entry => entry.id); }
+  export function openVisible(id: string) { const entry = navigationEntries.find(entry => entry.id === id); if (entry) { openEntry(id, entry.pinned); void reveal(id, entry.pinned); } }
+  export function switchVisible(event: KeyboardEvent) {
+    const index = navigationEntries.findIndex(entry => entry.id === selectedId);
+    const number = /^(?:Digit|Numpad)([1-9])$/.exec(event.code);
+    const position = number ? Number(number[1]) - 1 : index < 0 ? (event.code === "KeyJ" ? 0 : navigationEntries.length - 1) : (index + (event.code === "KeyJ" ? 1 : -1) + navigationEntries.length) % navigationEntries.length;
+    const entry = navigationEntries[position];
+    if (entry) { event.preventDefault(); openVisible(entry.id); }
+  }
   export function closeTarget() { const entry = document.activeElement?.closest<HTMLElement>("[data-agent-id][data-location]"); return agents.find(a => a.id === (entry?.dataset.agentId ?? focusedId) && a.role === "orc")?.id ?? null; }
   let list = $state<HTMLElement>(null!);
   const roots = $derived.by(() => {
@@ -141,7 +149,7 @@
   });
   $effect(() => { if (focusedId && !visible.some(a => a.id === focusedId)) focusedId = null; });
   function toggle(id: string, shortcut = false) { if (expanded.includes(id) && agents.find(a => a.id === selectedId)?.ownerId === id) openEntry(id, shortcut); expanded = expanded.includes(id) ? expanded.filter(v => v !== id) : [...expanded, id]; }
-  export async function reveal(id: string) { await tick(); list?.querySelector<HTMLButtonElement>(`[data-location="tree"][data-agent-id="${id}"]`)?.scrollIntoView({ block: "nearest" }); }
+  export async function reveal(id: string, pinned = false) { await tick(); list?.querySelector<HTMLButtonElement>(`[data-location="${pinned ? "pinned" : "tree"}"][data-agent-id="${id}"]`)?.scrollIntoView({ block: "nearest" }); }
   export function expandFocused() { if (document.activeElement?.closest('[data-location="pinned"]')) return; const agent = agents.find(a => a.id === (selectedId ?? focusedId)); if (agent?.role === "orc") toggle(agent.id); }
   function focusGroup(key: string) {
     const button = list.querySelector<HTMLButtonElement>(`[data-org="${key}"] > .org-disclosure`);
@@ -192,6 +200,13 @@
   const pinnedRoots = $derived(pinnedIds.flatMap(id => agents.find(a => a.id === id && a.role === "orc") ?? []));
   function treeEntries(root: Agent) { return [root, ...(root.role === "orc" && expanded.includes(root.id) ? agents.filter(a => a.ownerId === root.id) : [])]; }
   const pinnedVisible = $derived(pinnedRoots.flatMap(treeEntries));
+  const navigationEntries = $derived.by(() => {
+    const seen = new Set<string>();
+    return [...pinnedVisible.map(a => ({ id: a.id, pinned: true })), ...visible.map(a => ({ id: a.id, pinned: false }))].filter(entry => {
+      if (seen.has(entry.id)) return false;
+      seen.add(entry.id); return true;
+    });
+  });
   function openEntry(id: string, pinned: boolean) { currentEntry = { id, source: pinned ? "pinned" : "tree" }; onopen(id); }
   async function togglePin(agent: Agent, shortcut: boolean) {
     const removing = pinnedIds.includes(agent.id);

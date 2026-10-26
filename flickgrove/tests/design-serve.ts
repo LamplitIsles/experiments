@@ -376,7 +376,7 @@ async function reset(mode = "working") {
     unit.app.dispose();
   }
   units = [];
-  orgFixture = mode === "org-groups";
+  orgFixture = ["org-groups", "org-groups-idle"].includes(mode);
   projectsDelay = 0;
   projectsFailure = false;
   branchFixture = mode === "branches";
@@ -412,7 +412,12 @@ async function reset(mode = "working") {
   sendMode = "accepted";
   sendGate.resolve();
   sendGate = Promise.withResolvers<void>();
-  const workers = !["no-workers", "idle", "host-selection"].includes(mode);
+  const workers = ![
+    "no-workers",
+    "idle",
+    "org-groups-idle",
+    "host-selection",
+  ].includes(mode);
   current = unit(
     "NUC",
     true,
@@ -488,7 +493,15 @@ async function reset(mode = "working") {
     () => "http://127.0.0.1:14319",
   );
   units.push(current);
-  if (!["empty", "idle", "no-workers", "host-selection"].includes(mode)) {
+  if (
+    ![
+      "empty",
+      "idle",
+      "org-groups-idle",
+      "no-workers",
+      "host-selection",
+    ].includes(mode)
+  ) {
     await current.app.send(
       "orc",
       "Add streaming voice input and coordinate both projects.",

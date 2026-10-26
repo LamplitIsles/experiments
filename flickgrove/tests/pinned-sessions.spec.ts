@@ -168,41 +168,6 @@ for (const width of [1440, 390])
     ).toEqual(initial);
   });
 
-test("removed global shortcuts do not cancel runtime events or change selection", async ({
-  page,
-  request,
-}) => {
-  await request.post(origin + "/fixture/reset", { data: { mode: "dense" } });
-  await page.goto(origin);
-  await expect(heading(page)).toHaveText("Streaming voice input");
-  for (const target of ["body", ".composer textarea"]) {
-    const results = await page.locator(target).evaluate((el) => {
-      const combinations = [
-        ...["KeyJ", "KeyK"].map((code) => ({
-          code,
-          key: code.slice(-1).toLowerCase(),
-          altKey: true,
-        })),
-        ...Array.from({ length: 9 }, (_, i) => i + 1).flatMap((i) => [
-          { code: `Digit${i}`, key: String(i), metaKey: true },
-          { code: `Digit${i}`, key: String(i), ctrlKey: true },
-        ]),
-      ];
-      return combinations.map((init) => {
-        const event = new KeyboardEvent("keydown", {
-          ...init,
-          bubbles: true,
-          cancelable: true,
-        });
-        el.dispatchEvent(event);
-        return event.defaultPrevented;
-      });
-    });
-    expect(results).toEqual(Array(20).fill(false));
-    await expect(heading(page)).toHaveText("Streaming voice input");
-  }
-});
-
 test("idle, offline and authoritative close retain or prune only appropriate pins", async ({
   page,
   request,
@@ -220,7 +185,7 @@ test("idle, offline and authoritative close retain or prune only appropriate pin
   ).toBeVisible();
   await expect(
     page.locator(".pinned-sessions .session-members"),
-  ).toHaveAttribute("aria-label", "1 working");
+  ).toHaveAttribute("title", "2 open Workers · 1 working");
   await expect(rows(page, "pinned")).toHaveCount(1);
   await request.post(origin + "/fixture/change", { data: { outage: true } });
   await expect(page.locator(".connection-banner")).toBeVisible();

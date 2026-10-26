@@ -676,3 +676,60 @@ test.describe("touch unknown close", () => {
     expect(after.lookup).toEqual(before.lookup);
   });
 });
+
+test("Pin AltX unknown refusal preserves folded org and never replays", async ({
+  page,
+  request,
+}) => {
+  const origin = "http://127.0.0.1:14327";
+  const { target } = await (
+    await request.post(origin + "/fixture/reset")
+  ).json();
+  const before = await (await request.get(origin + "/fixture/info")).json();
+  await page.goto(origin);
+  const row = page.locator(
+    `.session-open[data-location="tree"][data-agent-id="${target}"]`,
+  );
+  await row.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
+  await page.locator('.session-open[data-location="pinned"]').click();
+  await page.locator(".org-disclosure").click();
+  const input = page.getByRole("textbox", { name: "Message Orc", exact: true });
+  await input.fill("Unknown close keeps this draft");
+  await input.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(2, 7));
+  await input.press("Alt+KeyX");
+  await expect(
+    page.getByRole("heading", { name: action, exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Alt+KeyJ");
+  await page.keyboard.press("Control+Digit2");
+  await expect(
+    page.getByRole("heading", { name: action, exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "../.scratch/visible-session-shortcuts/unknown-pin.png",
+    animations: "disabled",
+  });
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".org-disclosure")).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  await expect(
+    page.locator('.session-open[aria-current="true"]'),
+  ).toHaveAttribute("data-location", "pinned");
+  await expect(input).toHaveValue("Unknown close keeps this draft");
+  expect(
+    await input.evaluate((el: HTMLTextAreaElement) => [
+      el.selectionStart,
+      el.selectionEnd,
+    ]),
+  ).toEqual([2, 7]);
+  await page.reload();
+  await expect(page.locator(".agent-detail")).toBeVisible();
+  const after = await (await request.get(origin + "/fixture/info")).json();
+  expect(after.inputs).toBe(before.inputs);
+  expect(after.closeCalls).toBe(before.closeCalls + 1);
+  expect(after.closed).toBe(false);
+  expect(after.lookup).toEqual(before.lookup);
+});
