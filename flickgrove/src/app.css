@@ -840,6 +840,14 @@ pre {
   gap: 8px;
   font-variant-numeric: tabular-nums;
 }
+.output-speed dd {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.output-speed [data-speed-help-trigger] {
+  color: var(--muted-foreground);
+}
 .sent {
   color: #a3ceb0;
 }

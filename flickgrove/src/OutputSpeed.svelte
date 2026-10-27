@@ -3,7 +3,15 @@
   import type { Agent, OutputSpeed } from "./contracts";
   import * as m from "./paraglide/messages";
   import { untrack } from "svelte";
-  let { agent, hostId, connected }: { agent: Agent; hostId?: string; connected: boolean } = $props();
+  import { CircleHelp } from "@lucide/svelte";
+  import * as Popover from "$lib/components/ui/popover/index.js";
+  import { buttonVariants } from "$lib/components/ui/button/button.svelte";
+  import { choiceLayer } from "./choice-layer.svelte";
+  let { agent, hostId, connected, portalTarget }: { agent: Agent; hostId?: string; connected: boolean; portalTarget: HTMLElement } = $props();
+  let activeHelp = $state<string | null>(null);
+  let rowsAnchor = $state<HTMLDListElement>();
+  const helpId = $props.id();
+  choiceLayer(helpId, () => activeHelp !== null, () => activeHelp = null);
   const tier = $derived(agent.serviceTier === "priority" || agent.serviceTier === "fast" ? "fast" : agent.serviceTier === "default" ? "standard" : null);
   const key = $derived(JSON.stringify([hostId, agent.id, agent.model, tier]));
   let value = $state<OutputSpeed | null>(null);
@@ -47,10 +55,18 @@
 
 <div class="output-speed">
   <h3>{m.output_speed()} · tok/s</h3>
-  <dl class="weekly-source">
+  <dl class="weekly-source" bind:this={rowsAnchor}>
     {#each rows as [label, window]}
       {@const help = `${m.output_speed_help()} ${agent.model ?? "—"} · ${tier === "fast" ? "Fast" : tier === "standard" ? "Standard" : "—"}. ${m.output_speed_samples({ count: window?.samples ?? 0 })}${current?.status === "unavailable" ? ` ${m.output_speed_unavailable()}` : ""}`}
-      <div title={help} aria-label={`${label}: ${window?.tps == null ? "—" : window.tps.toFixed(1)} tok/s. ${help}`}><dt>{label}</dt><dd>{window?.tps == null ? "—" : window.tps.toFixed(1)}</dd></div>
+      <div><dt>{label}</dt><dd>
+        <span>{window?.tps == null ? "—" : window.tps.toFixed(1)}</span>
+        <Popover.Root open={activeHelp === label} onOpenChange={open => { if (open) activeHelp = label; else if (activeHelp === label) activeHelp = null; }}>
+          <Popover.Trigger data-speed-help-trigger aria-label={m.output_speed_details({ window: label })} class={buttonVariants({ variant: "ghost", size: "icon-xs" })}><CircleHelp aria-hidden="true" /></Popover.Trigger>
+          <Popover.Content data-speed-help portalProps={{ to: portalTarget }} customAnchor={rowsAnchor} align="end" sideOffset={6} collisionPadding={16} class="w-72 max-w-[calc(100vw-2rem)] break-words p-3 text-xs leading-relaxed" onEscapeKeydown={event => event.stopPropagation()} onInteractOutside={event => { if (event.target instanceof Element && event.target.closest('[data-speed-help-trigger]')) event.preventDefault(); }}>
+            {help}
+          </Popover.Content>
+        </Popover.Root>
+      </dd></div>
     {/each}
   </dl>
 </div>

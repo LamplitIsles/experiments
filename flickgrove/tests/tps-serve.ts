@@ -64,8 +64,21 @@ for (const speed of ["priority", "default"]) {
   );
 }
 const runtime = new FakeRuntime();
+const models = runtime.models.bind(runtime);
+runtime.models = async () => [
+  ...(await models()),
+  {
+    id: "model".repeat(35),
+    name: "Long model",
+    efforts: ["medium"],
+    defaultEffort: "medium",
+    isDefault: false,
+    fastTier: null,
+  },
+];
 let heldReads = 0;
 let forceLoading = false;
+let distinctWindows = false;
 const tpsReads: unknown[] = [];
 let quotaFailure = false,
   remaining = 72,
@@ -108,6 +121,12 @@ const service = new HostService(app, {
 const original = service.tps.bind(service);
 service.tps = ((id: string, refresh?: boolean) => {
   const result = original(id, refresh);
+  if (distinctWindows)
+    result.summary = {
+      hour: { tps: 11, samples: 1 },
+      fourHours: { tps: 22, samples: 2 },
+      week: { tps: 33, samples: 3 },
+    };
   if (forceLoading) result.status = "loading";
   if (liveness) tpsReads.push({ at: Date.now(), id, ...result });
   if (delay) heldReads++;
@@ -120,6 +139,7 @@ for (const [title, model, fast] of [
   ["Fast fixture", "sol", true],
   ["Standard fixture", "sol", false],
   ["Empty fixture", "luna", false],
+  ["Long model fixture", "model".repeat(35), false],
 ] as const) {
   const a = await app.createOrc("alpha", {
     fast,
@@ -132,7 +152,9 @@ for (const [title, model, fast] of [
 const options = {
   service,
   origin: () => origin,
-  assets: resolve("../.scratch/codex-tps-workspace/assets"),
+  assets: resolve(
+    process.env.GROVE_TPS_ASSETS ?? "../.scratch/codex-tps-workspace/assets",
+  ),
 };
 const handler = createHandler(app, options),
   upgrade = createUpgrade(app, options);
@@ -156,6 +178,7 @@ const server = Bun.serve<SocketData>({
     if (url.pathname === "/fixture/control" && req.method === "POST") {
       const p = await req.json();
       if ("forceLoading" in p) forceLoading = p.forceLoading;
+      if ("distinctWindows" in p) distinctWindows = p.distinctWindows;
       if ("quotaFailure" in p) quotaFailure = p.quotaFailure;
       if ("remaining" in p) remaining = p.remaining;
       if ("delay" in p) delay = p.delay;

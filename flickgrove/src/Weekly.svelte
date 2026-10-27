@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { navigation, setSurface } from "./navigation.svelte";
+  import { navigation, setSurface, back } from "./navigation.svelte";
   import { X } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { weeklyCache, weeklyKey, loadWeekly, acceptWeekly, requestWeekly } from "./weekly-cache.svelte";
@@ -9,7 +9,7 @@
   import type { Agent } from "./contracts";
   let { hostId, connected, agent }: { hostId?: string; connected: boolean; agent?: Agent | null } = $props();
   let speed = $state<OutputSpeed>();
-  const value = $derived(weeklyCache[weeklyKey(hostId)] ?? null); const open = $derived(navigation.surfaces.includes("weekly")); let sequence = 0; let root: HTMLDivElement;
+  const value = $derived(weeklyCache[weeklyKey(hostId)] ?? null); const open = $derived(navigation.surfaces.includes("weekly")); let sequence = 0; let root = $state<HTMLDivElement>();
   const remaining = $derived(value?.remaining ?? null);
   const used = $derived(remaining === null ? null : 100 - remaining);
   const measuresId = $props.id();
@@ -20,6 +20,11 @@
     ? Math.max(0, Math.min(100, (now / 1000 - (reset - weekSeconds)) / weekSeconds * 100)) : null);
   const measures = $derived(`${m.quota_used()}: ${used === null ? m.weekly_unknown() : `${Math.round(used)}%`}${elapsed === null ? "" : `; ${m.period_elapsed()}: ${Math.round(elapsed)}%`}`);
   let mounted = true;
+  async function closeWeekly() {
+    if (!open) return;
+    if (navigation.surfaces.at(-1) === "choice") await back();
+    setSurface("weekly", false);
+  }
   async function refresh() {
     const seq = ++sequence; const host = hostId;
     if (!connected) { acceptWeekly(host); return; }
@@ -42,19 +47,19 @@
     <circle class="ring-track" cx="18" cy="18" r="12.5"/><circle class="ring-value" cx="18" cy="18" r="12.5" pathLength="100" stroke-dasharray={`${used ?? 0} 100`}/>
   </svg>
 {/snippet}
-<svelte:window onclick={e => { if (e.target instanceof Node && root && !root.contains(e.target)) setSurface("weekly", false); }} />
+<svelte:window onclick={e => { if (e.target instanceof Node && root && !root.contains(e.target)) void closeWeekly(); }} />
 <!-- Escape belongs to the focused quota control before global session/detail shortcuts. -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<div class="weekly-control" role="group" aria-label={m.weekly_usage()} bind:this={root} onkeydown={e => { if (open && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setSurface("weekly", false); } }}>
+<div class="weekly-control" role="group" aria-label={m.weekly_usage()} bind:this={root} onkeydown={e => { if (open && e.key === "Escape" && navigation.surfaces.at(-1) !== "choice") { e.preventDefault(); e.stopPropagation(); setSurface("weekly", false); } }}>
   <span id={measuresId} class="sr-only">{measures}</span>
-  <button class="weekly-button" aria-label={m.weekly_usage()} aria-describedby={measuresId} aria-expanded={open} onclick={() => setSurface("weekly", !open)}>
+  <button class="weekly-button" aria-label={m.weekly_usage()} aria-describedby={measuresId} aria-expanded={open} onclick={() => open ? void closeWeekly() : setSurface("weekly", true)}>
     {@render rings()}<strong>{used === null ? "—" : `${Math.round(used)}%`}</strong>
   </button>
-  {#if open}<section class="weekly-popover" aria-label={m.weekly_usage()}><header><h2>{m.weekly_usage()}</h2><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => setSurface("weekly", false)}><X /></Button></header>
+  {#if open}<section class="weekly-popover" aria-label={m.weekly_usage()}><header><h2>{m.weekly_usage()}</h2><Button variant="ghost" size="icon-sm" aria-label={m.close()} onclick={() => void closeWeekly()}><X /></Button></header>
     <div role="group" aria-label={measures} class="weekly-number" class:host-warning={remaining !== null && remaining <= 20}>{@render rings()}<div><strong>{used === null ? "—" : `${Math.round(used)}%`}</strong><span>{remaining === null ? m.weekly_unknown() : m.quota_used()}</span></div></div>
     {#if remaining === null}<p>{m.weekly_unknown_help()}</p>{/if}
     <dl class="weekly-source">{#if elapsed !== null}<div><dt>{m.period_elapsed()}</dt><dd>{Math.round(elapsed)}%</dd></div>{/if}{#if typeof reset === "number" && Number.isFinite(reset) && reset > 0}<div><dt>{m.reset_label()}</dt><dd>{new Date(reset * 1000).toLocaleString()}</dd></div>{/if}{#if value?.accountId}<div><dt>{m.account_label()}</dt><dd>{value.accountId}</dd></div>{/if}<div><dt>{m.source_label()}</dt><dd>{value?.source ?? "—"}</dd></div></dl>
-    {#if agent && agent.backend !== "pi"}<OutputSpeed {agent} {hostId} {connected} bind:this={speed} />{/if}
+    {#if root && agent && agent.backend !== "pi"}<OutputSpeed {agent} {hostId} {connected} portalTarget={root} bind:this={speed} />{/if}
     <Button class="weekly-refresh" variant="ghost" size="sm" onclick={() => { void refresh(); speed?.refresh(); }} disabled={!connected}>{m.refresh_usage()}</Button>
   </section>{/if}
 </div>
