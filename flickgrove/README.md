@@ -198,6 +198,12 @@ prompt_file = "prompts/spec.md"
 
 The same fields apply independently to `[reviewers.standards]`, `[reviewers.high_risk_spec]`, `[reviewers.penpot]` and `[researcher]`. Orc and future Worker defaults belong to application preferences, never skill/tool arguments. Restore uses the captured role configuration rather than new global defaults. Pi preserves project AGENTS and skills, including Grove's shipped skills, and the SDK's local coding tools. Passive skill discovery reads installed managed npm packages under `agentDir/npm/node_modules`, installed git/local packages, and configured project/user skills using the official resolver's skip policy and package filters. It neither installs missing/mismatched packages nor launches npm/git discovery. Legacy global npm/pnpm package locations are not searched by passive reads; execution retains Pi's official resource discovery and installation behavior. Fixed role instructions remain authoritative. Arbitrary execution extensions, including another native subagent entry point, are not loaded automatically.
 
+### DeepSeek search and fetch
+
+Pi sessions include `web_search` and `web_fetch` from the vendored `pi-deepseek-search` 1.2.2 implementation ([source and license](server/vendor/pi-deepseek-search/UPSTREAM.md)). They are available regardless of the selected model and do not depend on an installed Pi plugin. Grove excludes this npm package from its Pi resource discovery, so a missing configured copy is not installed; other third-party extensions remain disabled. MCP tools keep their `mcp__<server>__` names and cannot replace these tools.
+
+The tools resolve the DeepSeek key through Pi's ModelRegistry first, then `DEEPSEEK_API_KEY` or `ANTHROPIC_AUTH_TOKEN` as upstream does. A missing key fails the tool call, not the session. The default backend uses DeepSeek's standalone Search and Fetch APIs; `DEEPSEEK_SEARCH_BACKEND=server` uses an additional DeepSeek model request for search (`DEEPSEEK_SEARCH_MODEL`, default `deepseek-flash`), while fetch remains standalone. These requests can incur provider charges. Query/domain validation, retries, result formatting and errors follow the vendored version; terminal-only renderers are omitted, and credentials echoed in provider output are redacted. Stop and session close cancel in-flight calls, and interrupted calls are not replayed automatically. Changes to the installed Pi plugin do not update the vendored version.
+
 ### Official codemode and MCP
 
 Executing Pi sessions install Durable's official codemode and tool_search factories, with the official CodemodeSandbox and CodingTools/NodeExecutionEnv. Codemode and search are available with no MCP configuration. The fixed MCP extension uses official pi-mcp discovery, stdio/Streamable HTTP transports, cancellation and close; it is not a general coding-agent extension host.
@@ -218,14 +224,14 @@ Each Pi agent owns one native SQLite store under `agentDir/grove-durable/` and a
 
 Stop targets the observed agent's native run and queued scope. Accepted inputs withdrawn by Stop remain accepted and display their later cancellation result; Grove does not resend them. Ordinary shutdown checkpoints unfinished work for restart. Business Close retains existing idle/question/report/unknown guards and releases resources before committing closure; closed members do not automatically resume. A memory-only native database snapshot supports bounded read-only history/body/image pages without opening a Harness, extensions or a missing database. Both backends retain their qualified identities and per-item clientId association for folded reports. Shipped Codex migrations remain unchanged, and this replacement adds no domain migration or old Pi JSONL conversion.
 
-Settings used by execution are the captured backend/provider/model/effort, effective `images.blockImages`, AGENTS/skills/resource trust and package filters, default coding-tool selection, shell path/prefix, steering/follow-up modes, retry/provider transport/timeouts and compaction thresholds. Model/effort changes affect the next run; the current run keeps its native agent selection. Thinking budgets are passed through ModelRuntime. TUI-only settings and third-party extension behavior do not create additional execution paths.
+Settings used by execution are the captured backend/provider/model/effort, effective `images.blockImages`, AGENTS/skills/resource trust and package filters, default coding-tool selection, shell path/prefix, steering/follow-up modes, retry/provider transport/timeouts and compaction thresholds. Model/effort changes affect the next run; the current run keeps its native agent selection. Thinking budgets are passed through ModelRuntime. TUI-only settings and unrelated third-party extension behavior do not create additional execution paths.
 
 Fast remains a tree preference and affects only supporting members/models. Pi currently keeps the default tier, while a Codex member can still use Fast. Codex weekly usage is shown only for Codex surfaces and is never presented as Pi usage. Pi image capability follows the selected model; native image history remains readable. No cross-backend quota or billing aggregation is provided.
 
 Verification uses real SDK sessions with local fake streaming providers, test-owned homes/auth/configuration and temporary tools/projects. Run from `flickgrove`:
 
 ```sh
-bun test server/pi-durable.test.ts server/pi-recovery.test.ts server/pi-mcp.test.ts server/pi-native.test.ts server/pi-boundaries.test.ts server/pi-skills.test.ts server/mixed-runtime.test.ts
+bun test server/pi-deepseek-search.test.ts server/pi-durable.test.ts server/pi-recovery.test.ts server/pi-mcp.test.ts server/pi-native.test.ts server/pi-boundaries.test.ts server/pi-skills.test.ts server/mixed-runtime.test.ts
 bun run build
 bunx playwright test -c tests/mixed.config.ts
 # On machines without the Playwright Chrome channel:

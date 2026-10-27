@@ -48,6 +48,7 @@ import { roleTools, toolDefinitions } from "./tools";
 import { PiMetadata, PiOperation, PiWithdrawal } from "./pi-documents";
 import { openPiStorage, acquirePiWriter } from "./pi-storage";
 import { openPiMcp } from "./pi-mcp";
+import { createDeepSeekSearch } from "./pi-deepseek-search";
 import { parseTitle, titlePrompt } from "./thread-title";
 import {
   DeliveryRejected,
@@ -229,10 +230,31 @@ export async function openPiSession(
         ...options,
         thinkingBudgets: settings.getThinkingBudgets(),
       });
+    // This capability is built in. Exclude the upstream package from resource
+    // discovery so Pi does not install it when a configured copy is missing.
+    const globalResources = settings.getGlobalSettings();
+    const projectResources = settings.getProjectSettings();
+    for (const resources of [globalResources, projectResources])
+      resources.packages = resources.packages?.filter((entry) => {
+        const source = typeof entry === "string" ? entry : entry.source;
+        return !/^npm:pi-deepseek-search(?:@[^\s]+)?$/.test(source);
+      });
+    const resourceSettings = SettingsManager.fromStorage(
+      {
+        withLock(scope, read) {
+          read(
+            JSON.stringify(
+              scope === "global" ? globalResources : projectResources,
+            ),
+          );
+        },
+      },
+      { projectTrusted: settings.isProjectTrusted() },
+    );
     const loader = new DefaultResourceLoader({
       cwd,
       agentDir: options.agentDir,
-      settingsManager: settings,
+      settingsManager: resourceSettings,
       noExtensions: true,
       disabledBuiltinExtensions: ["mcp", "codemode", "tool-search"],
       noThemes: true,
@@ -275,6 +297,7 @@ export async function openPiSession(
     });
     registry.install(createCodemodeExtension({ sandbox }));
     registry.install(createToolSearchExtension());
+    registry.install(createDeepSeekSearch(models));
     mcp = await openPiMcp({
       agentDir: options.agentDir,
       cwd,
