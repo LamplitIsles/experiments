@@ -85,8 +85,7 @@
     catch(e) { if(active){imageStorage=false;imageError=`Image storage unavailable. Text messages still work. ${(e as Error).message}`;} }
     finally {if(active)ready=true;}
   }
-  let restoration:Promise<void>;
-  onMount(()=>{restoration=refreshDraft(); const recover=(e:Event)=>{if((e as CustomEvent).detail===agentId)void refreshDraft(true);};window.addEventListener("grove-image-recovery",recover);return()=>{active=false;window.removeEventListener("grove-image-recovery",recover);};});
+  onMount(()=>{void refreshDraft(); const recover=(e:Event)=>{if((e as CustomEvent).detail===agentId)void refreshDraft(true);};window.addEventListener("grove-image-recovery",recover);return()=>{active=false;window.removeEventListener("grove-image-recovery",recover);};});
   $effect(()=>{
     const snapshot=images; const urls:string[]=[];let disposed=false;
     void Promise.all(snapshot.map(i=>imagePreview(i.file))).then(blobs=>{
@@ -132,10 +131,10 @@
     void insertSkill({name, description:""});
   }
   async function send() {
-    if(!ready && restoration)await restoration;
     if(suspended || voiceBusy || composing || (!text.trim() && !images.length) || !connected || stopping || preparing || !ready) return;
     if(images.length){imageError=intakeError([],images.map(i=>i.file));if(imageError)return;}
     const value=text.trim(); const frozen=$state.snapshot(images);const version=revision;const id=crypto.randomUUID();
+    input?.blur();
     submitting=true;preparing=true;
     try {
       if(frozen.length) await saveImages(operationKey(agentId,id),frozen,value);
@@ -153,7 +152,6 @@
       } catch { /* The submission is already journalled; draft cleanup cannot block sending. */ }
       if(active && version===revision){ images=[];text='';revision++; }
       void onsend(agentId,value,id,frozen);
-      await tick(); input?.focus();
     } catch(e){imageError=(e as Error).message;}finally{if(active){submitting=false;preparing=false;}}
   }
   function openSkills() {

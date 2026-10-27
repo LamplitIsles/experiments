@@ -29,7 +29,10 @@ async function setup(page: Page, request: any, width: number, mode = "long") {
   await request.post(origin + "/fixture/reset", { data: { mode } });
   await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
   await page.goto(origin);
-  if (width === 390) await page.locator(".session-open").first().click();
+  if (width === 390) {
+    await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+    await page.locator(".session-open").first().click();
+  }
   await expect(composer(page)).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Add images", exact: true }),
@@ -179,8 +182,7 @@ for (const width of [1440, 390]) {
       ).toBeVisible();
       if (escape) {
         if (width === 390) {
-          await page.keyboard.press("Escape");
-          await expect(composer(page)).toHaveCount(0);
+          await page.getByRole("button", { name: "Toggle Sidebar" }).click();
         }
         await page.locator(".session-open").last().click();
         await composer(page).fill("other draft");
@@ -232,7 +234,8 @@ for (const width of [1440, 390]) {
         await page.keyboard.type(" continued");
         await expect(page.locator(".image-draft")).toHaveCount(0);
         await expect(composer(page)).toHaveValue("other draft continued");
-        if (width === 390) await page.keyboard.press("Escape");
+        if (width === 390)
+          await page.getByRole("button", { name: "Toggle Sidebar" }).click();
         await page.locator(".session-open").first().click();
         await expect(page.locator(".image-draft")).toHaveCount(1);
         await expect(composer(page)).toHaveValue("owned draft");

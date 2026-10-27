@@ -67,6 +67,8 @@ The opt-in native probe uses real App Server/stdio executor processes, test-owne
 
 Spec **#3685**, discussion **#3683**: below the draft, the first row has Add images, voice and Skill search on desktop and mobile; Stop Orc and Send stay at the right. The second row contains Discuss, Implement, Review, Re-review, Research and Diagnose (order spec **#3727**). On mobile only that second row scrolls horizontally. Skills prepare the invocation at the saved caret; sending still requires an explicit action.
 
+On desktop and mobile, starting a valid ordinary message with Enter or Send releases the Composer input focus, leaving the conversation open. Click the input or press **I** to focus it again. This focus change does not confirm message acceptance; failed and unknown submissions retain their existing recovery behavior.
+
 Each Peer that needs voice must independently configure its server-side key file in the existing runtime configuration (`~/.config/flickgrove/config.toml`, or `--config PATH`):
 
 ```toml

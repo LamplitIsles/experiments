@@ -57,11 +57,14 @@ test("IME confirmation keeps the draft; a subsequent ordinary Enter sends", asyn
   });
   expect(await sends()).toBe(0);
   await expect(input).toHaveValue("中文草稿");
+  await expect(input).toBeFocused();
   await input.press("Shift+Enter");
   expect(await sends()).toBe(0);
   await expect(input).toHaveValue("中文草稿\n");
+  await expect(input).toBeFocused();
   await input.press("Enter");
   await expect(input).toHaveValue("");
+  await expect(input).not.toBeFocused();
   expect(await sends()).toBe(1);
   await expect(
     page.locator(".user-message").filter({ hasText: "中文草稿" }),
