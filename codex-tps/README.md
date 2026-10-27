@@ -18,8 +18,10 @@ const { summary, metrics } = await analyzer.analyze(
 
 Reuse an analyzer to reuse its bounded in-memory file cache. Files with changed
 identity, size, mtime or ctime are streamed again in full; this is not an append
-index. Callers run the library in their own background process and own deadlines
-and process disposal. No cache or ledger is written to disk.
+index. The cache retains samples at or after the beginning of the seven-day
+window; moving the supplied clock backwards reparses files when necessary.
+Callers run the library in their own background process and own deadlines and
+process disposal. No cache or ledger is written to disk.
 
 Log-estimated output speed is **sum(output tokens) / sum(response seconds)** over
 generated samples with reliable usage and timing. Samples may include partial
@@ -50,11 +52,11 @@ No usable sample returns `null`, not zero. Sample counts are not success counts.
 Settings snapshots following a turn context describe that turn; later standalone
 settings updates cannot relabel an already running response.
 
-The scanner uses 64 KiB reads with a cooperative yield, ignores symlink entries,
+The scanner uses 1 MiB reads with a cooperative yield, ignores symlink entries,
 checks canonical containment and opens files read-only with `O_NOFOLLOW`. It
 reads a file-size snapshot and defers trailing partial lines. Budgets are 20,000
-directory entries, 10,000 files, 512 MiB read per scan, 1 MiB per line and 100,000
-samples; the file cache retains at most 256 files / 100,000 samples. Budget
+directory entries, 10,000 files, 32 GiB read per scan, 1 MiB per line and 100,000
+window-relevant samples; the file cache retains at most 10,000 files / 100,000 samples. Budget
 exhaustion fails the scan; callers retain their previous successful result.
 This bounds work rather than promising that every retained history fits a scan.
 

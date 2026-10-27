@@ -24,9 +24,9 @@ const LIMIT = {
   files: 10000,
   entries: 20000,
   samples: 100000,
-  bytes: 512 * 1024 * 1024,
+  bytes: 32 * 1024 * 1024 * 1024,
   line: 1024 * 1024,
-  cache: 256,
+  cache: 10000,
 };
 type Row = { timestamp?: unknown; type?: string; payload?: any };
 const label = (value: unknown): string =>
@@ -37,6 +37,7 @@ const label = (value: unknown): string =>
 // item, as in the documented codex-tps rule. Never use turn duration.
 export class ResponseParser {
   readonly samples: Sample[] = [];
+  constructor(private readonly earliest = -Infinity) {}
   private session = "";
   private turn = "";
   private model = "";
@@ -164,6 +165,7 @@ export class ResponseParser {
       this.start !== null &&
       this.end !== null &&
       this.end > this.start &&
+      this.end >= this.earliest &&
       Number.isSafeInteger(output) &&
       (output as number) > 0
     ) {
@@ -217,11 +219,12 @@ export function summarize(
   return { hour: one(3600000), fourHours: one(14400000), week: one(604800000) };
 }
 
-type Cached = { stamp: string; samples: Sample[] };
+type Cached = { stamp: string; earliest: number; samples: Sample[] };
 export class LogAnalyzer {
   private cache = new Map<string, Cached>();
   async analyze(root: string, selection: Selection, now = Date.now()) {
     root = await realpath(root);
+    const earliest = now - 604800000;
     const started = performance.now();
     const metrics = { files: 0, bytes: 0, reused: 0, elapsedMs: 0 };
     const samples: Sample[] = [];
@@ -250,9 +253,10 @@ export class LogAnalyzer {
           const stamp = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
           live.add(path);
           let parsed = this.cache.get(path);
-          if (parsed?.stamp === stamp) metrics.reused++;
+          if (parsed?.stamp === stamp && parsed.earliest <= earliest)
+            metrics.reused++;
           else {
-            const parser = new ResponseParser();
+            const parser = new ResponseParser(earliest);
             // O_NOFOLLOW closes the final-component lstat/open symlink race.
             const file = await open(
               path,
@@ -266,10 +270,11 @@ export class LogAnalyzer {
                 opened.dev !== stat.dev
               )
                 throw new Error("Log changed during open");
-              const buffer = Buffer.allocUnsafe(65536);
+              const buffer = Buffer.allocUnsafe(1024 * 1024);
               let pending = Buffer.alloc(0),
                 skip = false,
-                offset = 0;
+                offset = 0,
+                sinceYield = 0;
               // Snapshot size excludes unbounded appends; trailing partial JSON
               // is deferred until a subsequent changed-file scan.
               while (offset < stat.size) {
@@ -282,29 +287,33 @@ export class LogAnalyzer {
                 if (!bytesRead) break;
                 metrics.bytes += bytesRead;
                 offset += bytesRead;
+                sinceYield += bytesRead;
                 if (metrics.bytes > LIMIT.bytes)
                   throw new Error("Read budget exceeded");
                 const chunk = buffer.subarray(0, bytesRead);
                 let from = 0;
-                for (let i = 0; i < chunk.length; i++)
-                  if (chunk[i] === 10) {
-                    const line = chunk.subarray(from, i);
-                    if (!skip && pending.length + line.length <= LIMIT.line) {
-                      try {
-                        parser.push(
-                          JSON.parse(
-                            Buffer.concat([pending, line]).toString("utf8"),
-                          ),
-                        );
-                      } catch (error) {
-                        if (!(error instanceof SyntaxError)) throw error;
-                        parser.invalidate();
-                      }
-                    } else parser.invalidate();
-                    pending = Buffer.alloc(0);
-                    skip = false;
-                    from = i + 1;
-                  }
+                for (
+                  let i = chunk.indexOf(10, from);
+                  i !== -1;
+                  i = chunk.indexOf(10, from)
+                ) {
+                  const line = chunk.subarray(from, i);
+                  if (!skip && pending.length + line.length <= LIMIT.line) {
+                    try {
+                      parser.push(
+                        JSON.parse(
+                          Buffer.concat([pending, line]).toString("utf8"),
+                        ),
+                      );
+                    } catch (error) {
+                      if (!(error instanceof SyntaxError)) throw error;
+                      parser.invalidate();
+                    }
+                  } else parser.invalidate();
+                  pending = Buffer.alloc(0);
+                  skip = false;
+                  from = i + 1;
+                }
                 if (!skip) {
                   const rest = chunk.subarray(from);
                   if (pending.length + rest.length > LIMIT.line) {
@@ -312,7 +321,10 @@ export class LogAnalyzer {
                     skip = true;
                   } else pending = Buffer.concat([pending, rest]);
                 }
-                await Bun.sleep(1);
+                if (sinceYield >= 16 * 1024 * 1024) {
+                  sinceYield = 0;
+                  await Bun.sleep(1);
+                }
               }
               const after = await file.stat();
               parsed = {
@@ -320,6 +332,7 @@ export class LogAnalyzer {
                   after.size === stat.size && after.mtimeMs === stat.mtimeMs
                     ? stamp
                     : "changed",
+                earliest,
                 samples: parser.samples,
               };
             } finally {
@@ -334,6 +347,14 @@ export class LogAnalyzer {
               retained += value.samples.length;
               if (retained > LIMIT.samples) this.cache.delete(cachedPath);
             }
+          }
+          // Cached samples age out as the window advances. Record the new
+          // boundary so a caller moving the clock backwards reparses the file.
+          if (parsed.earliest < earliest) {
+            parsed.samples = parsed.samples.filter(
+              (sample) => sample.generatedAt >= earliest,
+            );
+            parsed.earliest = earliest;
           }
           for (const sample of parsed.samples) {
             samples.push(sample);

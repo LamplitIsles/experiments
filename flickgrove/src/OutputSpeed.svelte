@@ -27,10 +27,10 @@
         value = { ...next, summary: next.summary ?? previous?.summary ?? null };
         speedValues.delete(capturedKey); speedValues.set(capturedKey, value);
         while (speedValues.size > 16) speedValues.delete(speedValues.keys().next().value!);
-        // One preceding task and this selection each have a 20s service deadline.
-        // 90 bounded polls cover both plus polling/transport slack; never queue work.
+        // One preceding task and this selection each have a 90s service deadline.
+        // 370 bounded polls cover both plus polling/transport slack; never queue work.
         if (next.status === "loading") {
-          if (++polls < 90) timer = setTimeout(() => void read(false), 500);
+          if (++polls < 370) timer = setTimeout(() => void read(false), 500);
           else { value = { ...value, status: "unavailable" }; speedValues.set(capturedKey, value); }
         }
       } catch {

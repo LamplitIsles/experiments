@@ -254,7 +254,7 @@ streaming analysis. Grove starts one lazy background child only when Usage
 requests statistics, sharing duplicate work and a 60-second result cache. It
 does not scan at service startup or in the send path. The child retains bounded
 file summaries, reparses changed files, exits after 90 seconds idle, and has a
-20-second task deadline plus a 256 MiB RSS guard. Shutdown and timeouts terminate
+90-second task deadline plus a 256 MiB RSS guard. Shutdown and timeouts terminate
 only Grove's owned analysis PID. It has no provider/auth/config read or runtime
 send/resume operation. The trusted root follows `CODEX_HOME` or host
 `HOME/.codex`; browsers provide only an existing instance-qualified agent ID,

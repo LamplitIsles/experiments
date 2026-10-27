@@ -23,7 +23,7 @@ test("B selected behind slow valid A reaches its own completed result without Re
     .click();
   await page.getByRole("button", { name: "Weekly usage", exact: true }).click();
   await expect(page.locator(".output-speed dd")).toHaveText(["—", "—", "—"]);
-  // Actual production deadlines: A 18s < 20s, then B 18s < 20s.
+  // A and B both finish inside the production deadline.
   // Wait past both, without further selection, refresh or remount.
   await page.waitForTimeout(38000);
   const backend = await (await page.request.get("/fixture/result")).json();
@@ -70,7 +70,7 @@ test("exhausted finite polling surfaces unavailable and stops without an extra s
     .click();
   const before = await (await page.request.get("/fixture/info")).json();
   await page.getByRole("button", { name: "Weekly usage", exact: true }).click();
-  for (let i = 1; i <= 90; i++) {
+  for (let i = 1; i <= 370; i++) {
     await expect
       .poll(
         async () =>
@@ -93,7 +93,7 @@ test("exhausted finite polling surfaces unavailable and stops without an extra s
   console.log(
     JSON.stringify({
       polls: after.tpsReads.length - before.tpsReads.length,
-      virtualMs: 55000,
+      virtualMs: 195000,
       sends: after.inputs.length,
       unavailable: true,
     }),

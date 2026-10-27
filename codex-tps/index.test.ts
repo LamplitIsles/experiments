@@ -208,6 +208,112 @@ test("streaming read-only scanner reuses unmodified files, deduplicates archive,
   }
 });
 
+test("old history does not exhaust the sample budget for a recent matching response", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-tps-old-history-"));
+  try {
+    await mkdir(join(root, "sessions"));
+    const oldStart = -8 * 24 * 60 * 60 * 1000;
+    const rows = cycle("old", oldStart)
+      .slice(0, 4)
+      .map((item) => JSON.stringify(item));
+    for (let i = 0; i <= 100000; i++) {
+      rows.push(
+        JSON.stringify(
+          row(
+            "response_item",
+            { type: "message", role: "assistant" },
+            oldStart + i * 2 + 1,
+          ),
+        ),
+      );
+      rows.push(
+        JSON.stringify(
+          row(
+            "event_msg",
+            {
+              type: "token_count",
+              info: {
+                last_token_usage: { output_tokens: 1 },
+                total_token_usage: { output_tokens: i + 1 },
+              },
+            },
+            oldStart + i * 2 + 2,
+          ),
+        ),
+      );
+    }
+    const recent = cycle("recent", -2000);
+    recent[6].payload.info.total_token_usage.output_tokens = 100002;
+    rows.push(...recent.map((item) => JSON.stringify(item)));
+    await writeFile(
+      join(root, "sessions", "history.jsonl"),
+      rows.join("\n") + "\n",
+    );
+    const result = await new LogAnalyzer().analyze(
+      root,
+      { model: "model", tier: "standard" },
+      now,
+    );
+    expect(result.summary.hour).toEqual({ tps: 2, samples: 1 });
+    expect(result.summary.week.samples).toBe(1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}, 30000);
+
+test("moving the clock backwards reparses cached history needed by the earlier window", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-tps-clock-"));
+  try {
+    await mkdir(join(root, "sessions"));
+    const old = cycle("old", -9 * 24 * 60 * 60 * 1000);
+    const recent = cycle("recent", -2000);
+    recent[6].payload.info.total_token_usage.output_tokens = 4;
+    await writeFile(
+      join(root, "sessions", "history.jsonl"),
+      [...old, ...recent].map((item) => JSON.stringify(item)).join("\n") + "\n",
+    );
+    const analyzer = new LogAnalyzer();
+    const selected = { model: "model", tier: "standard" as const };
+    expect(
+      (await analyzer.analyze(root, selected, now)).summary.week.samples,
+    ).toBe(1);
+    const earlier = await analyzer.analyze(
+      root,
+      selected,
+      now - 3 * 24 * 60 * 60 * 1000,
+    );
+    expect(earlier.summary.week.samples).toBe(1);
+    expect(earlier.metrics.bytes).toBeGreaterThan(0);
+    expect(
+      (await analyzer.analyze(root, selected, now)).summary.hour.samples,
+    ).toBe(1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a retained history larger than the old cache does not reread unchanged files", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-tps-cache-"));
+  try {
+    await mkdir(join(root, "sessions"));
+    const data =
+      (await native("paginated"))
+        .map((item) => JSON.stringify(item))
+        .join("\n") + "\n";
+    for (let i = 0; i < 257; i++)
+      await writeFile(join(root, "sessions", `${i}.jsonl`), data);
+    const analyzer = new LogAnalyzer();
+    const clock = Date.parse("2026-10-23T15:36:51Z");
+    const cold = await analyzer.analyze(root, selection, clock);
+    const hot = await analyzer.analyze(root, selection, clock);
+    expect(hot.summary).toEqual(cold.summary);
+    expect(hot.metrics.bytes).toBe(0);
+    expect(hot.metrics.reused).toBe(257);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("owned native completed35 + incomplete36 are two log-estimate samples, with response/cumulative/archive deduplication", async () => {
   const data = await Bun.file(
     new URL("./fixtures/native-incomplete.jsonl", import.meta.url),

@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, mkdir, writeFile, rm, readFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  open,
+  writeFile,
+  rm,
+  readFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OutputSpeedService } from "./tps";
@@ -41,6 +48,61 @@ async function logs(root: string) {
   await writeFile(join(root, "sessions", "native.jsonl"), bytes);
   return bytes;
 }
+test("large retained history does not hide a matching recent speed through Chord", async () => {
+  const root = await mkdtemp(join(tmpdir(), "grove-tps-large-"));
+  const home = join(root, "codex");
+  await logs(home);
+  const large = await open(join(home, "sessions", "large.jsonl"), "w");
+  await large.truncate(513 * 1024 * 1024);
+  await large.close();
+  const runtime = new FakeRuntime();
+  const app = new Workspace({
+    directory: join(root, "state"),
+    runtime,
+    projects: async () => [{ alias: "alpha", name: "Alpha", path: root }],
+    branches: { read: async () => null },
+  });
+  let origin = "";
+  const service = new HostService(app, {
+    directory: join(root, "state"),
+    origin: () => origin,
+    outputSpeed: { root: home },
+  });
+  const server = servePeer(app, {
+    service,
+    hostname: "127.0.0.1",
+    port: 0,
+    origin: () => origin,
+  });
+  origin = `http://127.0.0.1:${server.port}`;
+  const client = await openGrove(
+    socketWithHeaders(origin.replace("http:", "ws:") + "/api/socket", {
+      Origin: origin,
+    }),
+    () => {},
+    () => {},
+  );
+  try {
+    const agent = await app.createOrc("alpha", {
+      fast: true,
+      orc: { model: "sol", effort: "medium" },
+      worker: { model: "sol", effort: "medium" },
+    });
+    const id = qualify(service.identity.id, agent.id);
+    await client.call("tps", { id });
+    await until(() => service.tps(id).status !== "loading", 30000);
+    const result = await client.call<OutputSpeed>("tps", { id });
+    expect(result.status).toBe("ready");
+    expect(result.summary?.hour.samples).toBe(2);
+    expect(result.summary?.hour.tps).toBeCloseTo(63 / 1.695, 6);
+  } finally {
+    client.close();
+    service.dispose();
+    await server.stop(true);
+    app.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 35000);
 test("real HTTP/HostService/Chord runs only lazy background analysis, shares TTL and keeps numeric projections read-only", async () => {
   const root = await mkdtemp(join(tmpdir(), "grove-tps-api-"));
   const home = join(root, "codex");

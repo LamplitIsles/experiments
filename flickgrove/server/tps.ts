@@ -80,7 +80,7 @@ export class OutputSpeedService {
     entry.status = "loading";
     const timer = setTimeout(
       () => this.fail(),
-      this.options.timeoutMs ?? 20000,
+      this.options.timeoutMs ?? 90000,
     );
     this.task = { key, entry, timer };
     this.diagnostics.tasks++;
