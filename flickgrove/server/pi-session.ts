@@ -48,6 +48,7 @@ import { roleTools, toolDefinitions } from "./tools";
 import { PiMetadata, PiOperation, PiWithdrawal } from "./pi-documents";
 import { openPiStorage, acquirePiWriter } from "./pi-storage";
 import { openPiMcp } from "./pi-mcp";
+import { parseTitle, titlePrompt } from "./thread-title";
 import {
   DeliveryRejected,
   StaleTurn,
@@ -145,11 +146,14 @@ export async function openPiSession(
   let closed = false,
     closing: Promise<void> | undefined,
     watch: ConversationWatch | undefined;
+  let titleGeneration: AbortController | undefined;
+  let titleRevision = 0;
   let sending: Promise<unknown> = Promise.resolve(),
     projecting: Promise<void> = Promise.resolve();
   const cleanup = () =>
     (closing ??= (async () => {
       closed = true;
+      titleGeneration?.abort();
       await sending;
       const watchResults = await Promise.allSettled([watch?.stop()]);
       await projecting.catch(() => {});
@@ -484,13 +488,15 @@ export async function openPiSession(
             });
           }
         } else if (entry.kind === "pi.assistant") {
+          const text = entryText(entry);
+          if (!text.trim()) continue;
           dispatch({
             type: "item",
             turnId: active,
             item: {
               id: String(entry.id),
               type: "agentMessage",
-              text: entryText(entry),
+              text,
             },
           });
         } else if (entry.kind === "grove.question") {
@@ -666,6 +672,7 @@ export async function openPiSession(
         return { ...current };
       },
       async rename(title) {
+        titleRevision++;
         await root.commit(async (tx) => {
           (await tx.doc(PiMetadata)).title = title;
         }, ctx);
@@ -873,8 +880,79 @@ export async function openPiSession(
           mcpClosed = true;
         });
       },
-      async title() {
-        return undefined;
+      async title(input) {
+        if (closed) return;
+        const revision = titleRevision;
+        const selection = {
+          provider: current.provider!,
+          model: current.model,
+          effort: current.effort,
+        };
+        const model = validate(selection);
+        const controller = new AbortController();
+        titleGeneration = controller;
+        const timeout = setTimeout(() => controller.abort(), 30_000);
+        timeout.unref?.();
+        try {
+          const aborted = new Promise<undefined>((resolve) => {
+            controller.signal.addEventListener(
+              "abort",
+              () => resolve(undefined),
+              { once: true },
+            );
+          });
+          const response = await Promise.race([
+            models
+              .streamSimple(
+                model,
+                {
+                  systemPrompt:
+                    'Return only a JSON object with one string property named "title".',
+                  messages: [
+                    {
+                      role: "user",
+                      content: titlePrompt(input),
+                      timestamp: Date.now(),
+                    },
+                  ],
+                },
+                { signal: controller.signal, maxTokens: 256 },
+              )
+              .result(),
+            aborted,
+          ]);
+          if (
+            !response ||
+            response.stopReason !== "stop" ||
+            controller.signal.aborted ||
+            closed
+          )
+            return;
+          const title = parseTitle(
+            response.content
+              .filter((part) => part.type === "text")
+              .map((part) => part.text)
+              .join(""),
+          );
+          if (!title) return;
+          let saved = false;
+          await root.commit(async (tx) => {
+            const metadata = await tx.doc(PiMetadata);
+            if (
+              !closed &&
+              !controller.signal.aborted &&
+              titleRevision === revision &&
+              metadata.title === "New session"
+            ) {
+              metadata.title = title;
+              saved = true;
+            }
+          }, ctx);
+          return saved && titleRevision === revision ? title : undefined;
+        } finally {
+          clearTimeout(timeout);
+          if (titleGeneration === controller) titleGeneration = undefined;
+        }
       },
       close: cleanup,
     };

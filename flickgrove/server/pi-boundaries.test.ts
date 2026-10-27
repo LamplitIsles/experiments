@@ -63,7 +63,28 @@ async function fixture(
     hostname: "127.0.0.1",
     port: 0,
     async fetch(req) {
-      bodies.push(await req.json());
+      const body = (await req.json()) as (typeof bodies)[number];
+      if (
+        body.messages.some(
+          (message) =>
+            message.role === "system" &&
+            typeof message.content === "string" &&
+            message.content.startsWith("Return only a JSON object"),
+        )
+      ) {
+        const chunk = (delta: object, finish_reason: string | null) =>
+          `data: ${JSON.stringify({ id: "title", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
+        return new Response(
+          chunk(
+            { role: "assistant", content: '{"title":"Fixture title"}' },
+            null,
+          ) +
+            chunk({}, "stop") +
+            "data: [DONE]\n\n",
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      bodies.push(body);
       const plan = codemode && bodies.length === 1;
       const chunk = (delta: object, finish_reason: string | null) =>
         `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason }] })}\n\n`;

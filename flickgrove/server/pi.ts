@@ -374,6 +374,12 @@ export class PiRuntime implements Runtime {
             mediaType: part.mimeType,
           });
         }
+        if (
+          entry.kind === "pi.assistant" &&
+          !entryText(entry).trim() &&
+          !images.length
+        )
+          continue;
         messages.push({
           id: data?.itemId ?? String(entry.id),
           role:
