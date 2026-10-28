@@ -36,7 +36,7 @@ This step is complete when every stale conclusion has a proportionate review sur
 
 - For focused review, send with reviewer_send to only the affected original Reviewer with the reviewed-HEAD-to-current-HEAD delta, the originating finding or requirement, and relevant verification evidence. Ask it to confirm or reject only that bounded change.
 - For full re-review, send with reviewer_send to the original Standards and Spec Reviewers with the current complete diff and updated sources. Their retained axis context is useful evidence; a new reviewer is a fallback only when the original cannot be resumed.
-- Delegate the smallest relevant checks to the original Worker and read their current-head evidence. Reviewers do not run tests, builds or browsers.
+- Obtain the smallest relevant checks from the category owner: Orc runs its own checks and assigns Worker-owned checks to the original Worker. Read their current-head evidence. Reviewers do not run tests, builds or browsers.
 
 Reviewers remain separated by axis. A replacement reviewer receives only its axis evidence and the prior review state.
 
@@ -48,4 +48,4 @@ Report `stop`, `focused review`, or `full re-review`; the reviewed HEAD and curr
 
 Use explicit spec/fixedPoint/reviewedHead in reviewer_send. List/read after uncertain admission, never automatically replay. Keep original profile/prompt snapshots, targets and axes; report current HEAD with Reviewer IDs. End turn after confirmed dispatch and await asynchronous reports. Close through reviewer_close only after conclusions are settled.
 
-Implementation belongs to Worker, independent target-bound review to Reviewer, and bounded evidence investigation to Researcher under `grove-research`. Researchers do not replace review axes or implement fixes. Use Grove collaboration tools; native collaboration is disabled in managed sessions.
+Orc owns frontend UI, database schema and migrations, one-off ops scripts, and prompts/agent instructions; Worker owns other implementation. Each owner handles its tests and fixes. Independent target-bound review belongs to Reviewer; bounded evidence investigation belongs to Researcher under `grove-research`. Researchers do not replace review axes or implement fixes. Use Grove collaboration tools; native collaboration is disabled in managed sessions.

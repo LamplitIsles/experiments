@@ -5,7 +5,7 @@ description: Break a plan, spec, or conversation into FlickNote implementation t
 
 # To Tickets
 
-Break a plan, spec, or conversation into a set of **tickets** — tracer-bullet vertical slices, each declaring the tickets that **block** it. When the source is a spec, every ticket belongs to that spec's single PR; tickets are execution units on one feature branch, not PR boundaries.
+When the user requests tickets, break a plan, spec, or conversation into **tickets** — tracer-bullet vertical outcomes, each declaring the tickets that **block** it. When the source is a spec, every ticket belongs to that spec's single PR; tickets are execution units on one feature branch, not PR boundaries.
 
 Create one FlickNote note per new ticket through MCP `note_add`, numbered from `01` in dependency order. The leading H1 becomes the note title; the stored `content` is the ticket body. Each note names its repository and feature, and records dependencies as `Blocked by:` using ticket note IDs. Use `Status: ready-for-agent` for newly published tickets. Omit the `project` argument unless the user requests a destination. Do not create remote tracker issues.
 
@@ -29,14 +29,15 @@ Break the work into **tracer bullet** tickets.
 
 <vertical-slice-rules>
 
-- Each slice cuts a narrow but COMPLETE path through every layer (schema, API, UI, tests) — vertical, NOT a horizontal slice of one layer
+- Each slice delivers a narrow, complete outcome across the layers it actually needs, with corresponding verification
 - A completed slice is demoable or verifiable on its own
 - Each slice is sized to fit in a single fresh context window
 - Any necessary prefactoring is the minimum needed to unlock a requested slice
+- Record category ownership and any serial handoffs within a mixed slice: Orc owns frontend UI, database schema and migrations, one-off ops scripts, and prompts/agent instructions; the sole Worker owns other implementation. Each owner handles its tests and review fixes.
 
 </vertical-slice-rules>
 
-Give each ticket its **blocking edges** — the other tickets that must complete before it can start. A ticket with no blockers can start immediately. Do not add a blocking edge merely to force a comfortable execution order: independent tickets should remain on the same frontier so the sole implementation Worker can choose the next unblocked slice.
+Give each ticket its **blocking edges** — the other tickets that must complete before it can start. A ticket with no blockers can start immediately. Do not add a blocking edge merely to force a comfortable execution order: independent tickets should remain on the same frontier. Orc manages the frontier and coordinates the owners serially on the shared checkout, preserving their changes.
 
 Treat the current repository — monorepo or otherwise — as the default atomic change boundary. For a cross-cutting mechanical edit, prefer one ticket or independently green end-to-end slices. Introduce temporary old/new forms only when there is evidence of an external consumer or a real multi-deployment boundary that cannot change atomically.
 
@@ -48,7 +49,7 @@ Choose the granularity and blocking edges yourself from the vertical-slice rules
 
 For a spec, create one note per ticket in dependency order. Add the returned IDs to a `## Tickets` section in the spec note after all notes exist. Each ticket references the spec ID, and its `Blocked by:` lists the prerequisite ticket IDs and titles. For tickets drafted directly from a conversation or plan, omit the spec reference and do not invent one. Read back the notes to verify their content and links. Keep all tickets for one spec on the same feature branch for one PR.
 
-Work the **frontier**: any ticket whose blockers are all done. For a purely linear chain that means top to bottom.
+Orc coordinates the **frontier**: any ticket whose blockers are all done. For mixed tickets, sequence the category owners and their handoffs without turning those handoffs into artificial ticket dependencies. For a purely linear chain that means top to bottom.
 
 <ticket-template>
 
@@ -59,6 +60,8 @@ Feature: <slug>
 Spec: #<note ID, only when sourced from a spec>
 
 **What to build:** the end-to-end behaviour this ticket makes work, from the user's perspective — not a layer-by-layer implementation list.
+
+**Ownership and handoffs:** applicable Orc and Worker categories and their serial handoffs; each owner verifies and fixes its work.
 
 **Blocked by:** the IDs/titles of the tickets that gate this one, or "None — can start immediately".
 

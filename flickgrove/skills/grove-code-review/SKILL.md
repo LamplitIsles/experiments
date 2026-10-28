@@ -8,7 +8,7 @@ Review the diff between `HEAD` and the repository's default branch, unless the u
 - **Standards** — does the code conform to this repo's documented coding standards?
 - **Spec** — does the code faithfully implement the originating issue / spec?
 
-On the initial review, Standards and Spec run as **independent Grove Reviewers** so they don't pollute each other's context. Later rounds resume only reviewers whose conclusions became stale.
+Before every PR's initial independent review, Orc substantively reviews the whole final diff, spec, evidence and complexity and resolves deterministic issues through their category owner. On the initial review, Standards and Spec run as **independent Grove Reviewers** so they don't pollute each other's context. Later rounds resume only reviewers whose conclusions became stale.
 
 Implementation specs live in FlickNote. Use MCP for note lookup and full content; a forge issue or note summary is not the spec.
 
@@ -39,7 +39,7 @@ Look for the originating spec, in this order:
 
 1. A FlickNote note ID the user passed. Read its full stored `content` with MCP `note_get`.
 2. A spec note ID in the PR description, branch context, or conversation. Read the full content with `note_get`.
-3. Search FlickNote with `note_find` using the repository and feature, then read the matching candidate with `note_get`. If multiple candidates remain, ask for the ID. If no spec exists, the **Spec** Reviewer will skip and report "no spec available".
+3. Search FlickNote with `note_find` using the repository and feature, then read the matching candidate with `note_get`. If multiple candidates remain, ask for the ID. If no spec exists for a PR, establish the agreed requirements before review; report missing requirements as a blocker rather than skipping the Spec axis. For a non-PR review with no spec, the **Spec** Reviewer may skip and report "no spec available".
 
 Pass the fetched FlickNote spec content to the Spec reviewer; a note ID alone may not be readable in its context. If MCP cannot read an identified note, report the blocker rather than silently skipping the Spec axis.
 
@@ -75,9 +75,9 @@ Route normal changes to profiles `standards` and `spec`; high-risk changes to `s
 
 Start fresh contexts per initial axis, in parallel when possible, passing registered project, title, profile, spec reference, fixedPoint, reviewedHead and the complete axis-specific task/evidence below. Keep axes independent. Each task includes the exact fixed diff command, commit list and current HEAD. Reviewer reports carry their actual Reviewer ID and complete review target; an old PASS never covers a newer HEAD.
 
-Reviewers are read-only: they read actual code, diff, full FlickNote spec, standards and existing logs/screenshots; they do not run tests, builds, browsers or other verification. Worker supplies head-bound evidence; if missing, Orc delegates evidence collection to the same Worker before acceptance. Prompt behavior is not a permission guarantee.
+Reviewers are read-only: they read actual code, diff, full FlickNote spec, standards and existing logs/screenshots; they do not run tests, builds, browsers or other verification. The appropriate implementation owner supplies head-bound evidence; Orc gathers its own category's missing evidence and sends Worker-owned evidence requests to the same Worker before acceptance. Prompt behavior is not a permission guarantee.
 
-For changed UI, give the Spec Reviewer the applicable visual and interaction requirements and the Worker's actual screenshots and interaction evidence at relevant viewports and states. Use isolated test data. Missing evidence leaves the affected requirements unverified.
+For changed UI, give the Spec Reviewer the applicable visual and interaction requirements and Orc's actual screenshots and interaction evidence at relevant viewports and states. Use isolated test data. Missing evidence leaves the affected requirements unverified.
 
 For later rounds follow `grove-review-again`: use reviewer_send to the original axis Reviewer with explicit fixedPoint/spec/reviewedHead, bounded delta, finding and evidence. Restore the same Reviewer with its saved profile/prompt snapshot. Replace only an unavailable axis. Use questionIds only for explicit delegated answers. List/read after uncertain start/send before deciding recovery; never blindly repeat admissions. Reports are asynchronous, so end the Orc turn after confirmed dispatch and await reports rather than polling. Keep Reviewers open until review is settled, then request reviewer_close; respect report/question/delivery guards and interrupted/unknown outcome inspection.
 
@@ -102,7 +102,7 @@ Give every reviewer this **evidence and proportionality discipline**:
 - The full fetched contents and ID of the FlickNote spec.
 - The brief: "Apply the evidence and proportionality discipline above. Report: (a) requirements the spec asked for that are missing or partial; (b) behaviour in the diff that wasn't asked for (scope creep); (c) requirements that look implemented but where the implementation looks wrong. Quote the spec line for each finding. For every retained finding include the smallest fix and estimated changed LOC. Under 500 words."
 
-If the spec is missing, skip the Spec Reviewer and note this in the final report.
+For a non-PR review only, if the spec is missing, skip the Spec Reviewer and note this in the final report.
 
 **Focused adjudication** — do not add ensemble reviewers or duplicate an existing axis with another full review. When a potential merge blocker remains materially uncertain, first use deterministic evidence when available. If model judgement is still required, resume the original reviewer for that axis and send only the finding, its cited hunk, the governing requirement, and relevant test evidence. Replace it with the named reviewer for that axis only when the original target cannot be resumed. Keep the result under the finding's original axis; adjudication confirms or rejects evidence and never reranks Standards against Spec.
 
@@ -110,7 +110,7 @@ If the spec is missing, skip the Spec Reviewer and note this in the final report
 
 Before presenting findings, run the evidence and proportionality discipline yourself. Remove findings whose premise is contradicted or whose cost is disproportionate to expected value. Downgrade unresolved hypothetical risks to labelled assumptions requiring confirmation; do not let them expand scope. Any approval-gated migration, compatibility, cutover, dual-running, heavy environment, or similar mechanism must remain unimplemented unless the user explicitly agrees.
 
-Present the surviving reports under `## Standards` and `## Spec` headings, lightly cleaned as needed. For changed UI, assess the Worker’s visual and interaction evidence against the applicable requirements; identify any unverified surfaces. Keep the axes separate so neither masks the other. Every finding must include its smallest proportionate fix and rough changed-LOC range; also state non-code setup effort when material.
+Present the surviving reports under `## Standards` and `## Spec` headings, lightly cleaned as needed. For changed UI, assess the owner's visual and interaction evidence against the applicable requirements; identify any unverified surfaces. Keep the axes separate so neither masks the other. Every finding must include its smallest proportionate fix and rough changed-LOC range; also state non-code setup effort when material.
 
 When any judgement call remains, add `## Decisions required` before merge readiness. For each decision, separate verified facts from the unresolved premise, ask one focused question, recommend the simplest supported choice, and quantify the compatibility or migration code that choice adds or removes. Findings with no unresolved human choice stay in their original axis and are safe for an implementation workflow to fix automatically.
 
@@ -147,4 +147,4 @@ A change can pass one axis and fail the other:
 
 Reporting them separately stops one axis from masking the other.
 
-Implementation belongs to Worker, independent target-bound review to Reviewer, and bounded evidence investigation to Researcher under `grove-research`. Researchers do not replace review axes or implement fixes. Use Grove collaboration tools; native collaboration is disabled in managed sessions.
+Orc owns frontend UI, database schema and migrations, one-off ops scripts, and prompts/agent instructions; Worker owns other implementation. Each owner handles its tests and fixes. Independent target-bound review belongs to Reviewer; bounded evidence investigation belongs to Researcher under `grove-research`. Researchers do not replace review axes or implement fixes. Use Grove collaboration tools; native collaboration is disabled in managed sessions.

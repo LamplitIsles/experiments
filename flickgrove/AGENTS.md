@@ -13,7 +13,7 @@
 
 ## Managed collaboration
 
-- Orc coordinates, investigates and discusses; all code development and repairs go to its implementation Worker, without a small-fix exception. Reviewer reads code/spec/existing evidence and does not edit reviewed files or run tests, builds or browsers. Missing verification is Worker work.
+- Orc investigates and decides the scope and approach before dispatch. Orc owns frontend UI, database schema and migrations, one-off ops scripts, and prompts/agent instructions; one Worker owns other implementation. Each owner handles its tests and review fixes. Mixed work uses one PR and serial work in the shared checkout, preserving others' changes. Orc substantively self-reviews the whole diff, spec, evidence and complexity before independent whole-PR Standards + Spec review. One-off ops without a PR receives Orc self-review; its execution still requires authorization. Reviewer reads code/spec/existing evidence and does not edit reviewed files or run tests, builds or browsers; missing evidence goes to its owner.
 - Use the shipped `grove-` workflows and Grove Reviewer lifecycle. Keep original reviewers and target-bound conclusions for focused re-review. Model/effort and axis prompt defaults live in local instance configuration; global skill/config files stay untouched.
 - Reviewer runtime, native discovery and browser checks must use test-owned configuration, homes and state. Do not use credentials or paid turns to validate discovery, roles or UI.
 
