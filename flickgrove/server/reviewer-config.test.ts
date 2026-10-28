@@ -15,6 +15,30 @@ test("configuration initializes missing files, retains customization, retries pa
   try {
     await initializeReviewerConfig(path);
     const original = await readFile(path, "utf8");
+    expect(Object.keys((await readReviewerConfig(path)).reviewers)).toEqual([
+      "standards",
+      "spec",
+      "high_risk_spec",
+    ]);
+    const highRisk = await reviewerSnapshot(path, "high_risk_spec");
+    expect(highRisk).toMatchObject({
+      backend: "codex",
+      model: "gpt-6.1-terra",
+      effort: "xhigh",
+    });
+    await writeFile(
+      path,
+      original.replace('model = "gpt-6.1-terra"', 'model = "custom-model"'),
+    );
+    expect((await reviewerSnapshot(path, "high_risk_spec")).model).toBe(
+      "custom-model",
+    );
+    expect(highRisk.model).toBe("gpt-6.1-terra");
+    const customized = `${original}\n[reviewers.penpot]\nmodel = "old"\nprompt_file = "missing-old.md"\n`;
+    await writeFile(path, customized);
+    await initializeReviewerConfig(path);
+    expect(await readFile(path, "utf8")).toBe(customized);
+    await writeFile(path, original);
     expect((await readReviewerConfig(path)).orc.prompt_file).toBe(
       "prompts/orc.md",
     );

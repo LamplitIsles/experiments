@@ -159,7 +159,7 @@ const agent = z.object({
   id,
   reviewTarget: z
     .object({
-      profile: z.enum(["standards", "spec", "high_risk_spec", "penpot"]),
+      profile: z.enum(["standards", "spec", "high_risk_spec"]),
       spec: z.string(),
       fixedPoint: z.string(),
       reviewedHead: z.string(),

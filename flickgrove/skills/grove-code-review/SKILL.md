@@ -1,6 +1,6 @@
 ---
 name: grove-code-review
-description: Review a branch or work-in-progress diff against the repository's default branch, or an explicit fixed point, along separate Standards and Spec axes, plus Penpot fidelity when the changed UI has a Penpot design; then assess how far it is from merge.
+description: Review a branch or work-in-progress diff against the repository's default branch, or an explicit fixed point, along separate Standards and Spec axes; then assess how far it is from merge.
 ---
 
 Review the diff between `HEAD` and the repository's default branch, unless the user supplies another fixed point:
@@ -8,7 +8,7 @@ Review the diff between `HEAD` and the repository's default branch, unless the u
 - **Standards** — does the code conform to this repo's documented coding standards?
 - **Spec** — does the code faithfully implement the originating issue / spec?
 
-On the initial review, Standards and Spec run as **independent Grove Reviewers** so they don't pollute each other's context. When the changed UI has a corresponding Penpot design, add an independent **Penpot** axis. Later rounds resume only reviewers whose conclusions became stale.
+On the initial review, Standards and Spec run as **independent Grove Reviewers** so they don't pollute each other's context. Later rounds resume only reviewers whose conclusions became stale.
 
 Implementation specs live in FlickNote. Use MCP for note lookup and full content; a forge issue or note summary is not the spec.
 
@@ -67,23 +67,17 @@ Each smell reads _what it is_ → _how to fix_; match it against the diff:
 - **Middle Man** — a class or function that mostly just delegates onward. → cut it, call the real target direct.
 - **Refused Bequest** — a subclass or implementer that ignores or overrides most of what it inherits. → drop the inheritance, use composition.
 
-### 3a. Establish the conditional Penpot surface
-
-Enable the Penpot axis only when the diff changes a rendered UI surface and the user, spec, PR, or verified project context identifies a corresponding Penpot design. A backend-only change, a generic Penpot mention, or an unrelated design file does not trigger it. Record why the axis applies, or why it is skipped.
-
-The parent owns the design brief before dispatch. Resolve the exact file/page/board IDs and map each changed screen or state to its board. Summarize the required hierarchy, content, layout, colors, typography, icons, controls, and navigation. Include later user-approved deviations with their source; those take precedence over older boards. Send this concrete brief, not merely “follow Penpot.” If the applicable design cannot be located or read, report the missing evidence and keep that surface unverified.
-
-Prepare design renders and actual implementation screenshots for the same viewport, theme, state and representative synthetic data, tied to the reviewed HEAD. Reuse already captured authoritative design evidence; query Penpot only for a specific missing board or unresolved detail. An official SVG rendered locally is acceptable when image export fails; state the method. Node dumps, source inspection and passing tests alone do not establish visual fidelity. Use isolated preview/test state; real user data and production mutations are outside review.
-
 ### 4. Start or continue independent Grove Reviewers
 
 Discover current reviewer_start/list/read/send/close and reviewer_report schemas. Never use native spawn_agent or an implementation Worker as a Reviewer. An Orc owns each Reviewer; the Reviewer cannot create/close others. Reviewer profile configuration belongs to the execution Peer, not this skill.
 
-Route normal changes to profiles `standards` and `spec`; high-risk changes to `standards` and `high_risk_spec`. High risk includes authentication/authorization, owner isolation, money, persistence, concurrency, delivery guarantees, state machines and cross-runtime execution contracts. Diff size alone is not risk. Conditional matched Penpot designs add the independent `penpot` profile.
+Route normal changes to profiles `standards` and `spec`; high-risk changes to `standards` and `high_risk_spec`. High risk includes authentication/authorization, owner isolation, money, persistence, concurrency, delivery guarantees, state machines and cross-runtime execution contracts. Diff size alone is not risk.
 
 Start fresh contexts per initial axis, in parallel when possible, passing registered project, title, profile, spec reference, fixedPoint, reviewedHead and the complete axis-specific task/evidence below. Keep axes independent. Each task includes the exact fixed diff command, commit list and current HEAD. Reviewer reports carry their actual Reviewer ID and complete review target; an old PASS never covers a newer HEAD.
 
 Reviewers are read-only: they read actual code, diff, full FlickNote spec, standards and existing logs/screenshots; they do not run tests, builds, browsers or other verification. Worker supplies head-bound evidence; if missing, Orc delegates evidence collection to the same Worker before acceptance. Prompt behavior is not a permission guarantee.
+
+For changed UI, give the Spec Reviewer the applicable visual and interaction requirements and the Worker's actual screenshots and interaction evidence at relevant viewports and states. Use isolated test data. Missing evidence leaves the affected requirements unverified.
 
 For later rounds follow `grove-review-again`: use reviewer_send to the original axis Reviewer with explicit fixedPoint/spec/reviewedHead, bounded delta, finding and evidence. Restore the same Reviewer with its saved profile/prompt snapshot. Replace only an unavailable axis. Use questionIds only for explicit delegated answers. List/read after uncertain start/send before deciding recovery; never blindly repeat admissions. Reports are asynchronous, so end the Orc turn after confirmed dispatch and await reports rather than polling. Keep Reviewers open until review is settled, then request reviewer_close; respect report/question/delivery guards and interrupted/unknown outcome inspection.
 
@@ -110,22 +104,13 @@ Give every reviewer this **evidence and proportionality discipline**:
 
 If the spec is missing, skip the Spec Reviewer and note this in the final report.
 
-**Penpot Reviewer task** — include:
-
-- Reviewed HEAD, fixed point, diff command and changed UI surface.
-- The parent's concrete design brief, exact file/page/board IDs, and sourced user-approved deviations.
-- Matched design/implementation screenshot pairs and the reproduction steps or isolated preview location; identify missing pairs explicitly.
-- The brief: "Review only Penpot fidelity. Visually compare every changed screen/state against its mapped design at matching viewports. Check hierarchy, spacing/alignment, typography, colors, assets/icons, controls, and designed navigation/interactions. Read the Worker's isolated observable interaction evidence; never operate a browser. Report a coverage table (board, actual screenshot/state, pass/deviation/mismatch/unverified), then concrete mismatches with both evidence references, smallest proportionate fix and changed-LOC estimate. Separate approved deviations from defects; mark unavailable evidence unverified rather than passing it. Apply the shared evidence/proportionality discipline. Keep findings under 500 words; the coverage table may be separate. Do not invent a redesign or repeat general Standards/Spec review."
-
-The parent inspects the comparison evidence and validates reported discrepancies before aggregation. Successful design API calls or an implementer's claim of fidelity are not acceptance evidence.
-
 **Focused adjudication** — do not add ensemble reviewers or duplicate an existing axis with another full review. When a potential merge blocker remains materially uncertain, first use deterministic evidence when available. If model judgement is still required, resume the original reviewer for that axis and send only the finding, its cited hunk, the governing requirement, and relevant test evidence. Replace it with the named reviewer for that axis only when the original target cannot be resumed. Keep the result under the finding's original axis; adjudication confirms or rejects evidence and never reranks Standards against Spec.
 
 ### 5. Aggregate
 
 Before presenting findings, run the evidence and proportionality discipline yourself. Remove findings whose premise is contradicted or whose cost is disproportionate to expected value. Downgrade unresolved hypothetical risks to labelled assumptions requiring confirmation; do not let them expand scope. Any approval-gated migration, compatibility, cutover, dual-running, heavy environment, or similar mechanism must remain unimplemented unless the user explicitly agrees.
 
-Present the surviving reports under `## Standards` and `## Spec` headings, plus `## Penpot` when triggered, lightly cleaned as needed. Include Penpot coverage and any unverified surfaces; do not declare design fidelity for surfaces without comparison evidence. Keep the axes separate so neither masks the other. Every finding must include its smallest proportionate fix and rough changed-LOC range; also state non-code setup effort when material.
+Present the surviving reports under `## Standards` and `## Spec` headings, lightly cleaned as needed. For changed UI, assess the Worker’s visual and interaction evidence against the applicable requirements; identify any unverified surfaces. Keep the axes separate so neither masks the other. Every finding must include its smallest proportionate fix and rough changed-LOC range; also state non-code setup effort when material.
 
 When any judgement call remains, add `## Decisions required` before merge readiness. For each decision, separate verified facts from the unresolved premise, ask one focused question, recommend the simplest supported choice, and quantify the compatibility or migration code that choice adds or removes. Findings with no unresolved human choice stay in their original axis and are safe for an implementation workflow to fix automatically.
 
@@ -151,7 +136,7 @@ Keep blockers separate from recommended reinforcement. Name repository-specific 
 
 A judgement-call smell is not automatically a blocker; place it under recommended reinforcement unless it materially affects safe or correct merging.
 
-End with a one-line count of findings per axis and the worst issue within each axis, if any. Record the reviewed HEAD, applicable reviewer target IDs, and Penpot board/render/screenshot references and approved deviations in the review result so a later `$grove-review-again` or `$grove-code-review` can resume them without reconstructing review state.
+End with a one-line count of findings per axis and the worst issue within each axis, if any. Record the reviewed HEAD, reviewer target IDs and relevant visual evidence in the review result so a later `$grove-review-again` or `$grove-code-review` can resume them without reconstructing review state.
 
 ## Why separate axes
 
@@ -159,8 +144,6 @@ A change can pass one axis and fail the other:
 
 - Code that follows every standard but implements the wrong thing → **Standards pass, Spec fail.**
 - Code that does exactly what the issue asked but breaks the project's conventions → **Spec pass, Standards fail.**
-
-- Correct behavior and clean code with a visually different page → **Penpot fail**, when that axis applies.
 
 Reporting them separately stops one axis from masking the other.
 

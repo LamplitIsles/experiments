@@ -8,7 +8,6 @@ export const reviewerProfiles = [
   "standards",
   "spec",
   "high_risk_spec",
-  "penpot",
 ] as const;
 const profileSchema = z.object({
   backend: z.enum(["codex", "pi"]).default("codex"),
@@ -34,7 +33,6 @@ const configSchema = z.object({
     standards: profileSchema,
     spec: profileSchema,
     high_risk_spec: profileSchema,
-    penpot: profileSchema,
   }),
 });
 export interface ReviewerSnapshot {

@@ -13,7 +13,7 @@ Identify:
 
 - the last reviewed HEAD;
 - the current HEAD and exact delta since that review;
-- the original Standards and Spec reviewer targets, and the Penpot target/design evidence when that axis applied;
+- the original Standards and Spec reviewer targets and relevant visual evidence;
 - the findings or conclusions affected by the delta.
 
 Use a recorded commit or reliable turn history for the reviewed HEAD. If no completed review exists, route to an initial `$grove-code-review`. If the prior reviewer targets are unavailable, retain the reviewed HEAD and replace only the missing reviewer when review work is actually needed.
@@ -35,7 +35,7 @@ This step is complete when every stale conclusion has a proportionate review sur
 ## Run the selected review
 
 - For focused review, send with reviewer_send to only the affected original Reviewer with the reviewed-HEAD-to-current-HEAD delta, the originating finding or requirement, and relevant verification evidence. Ask it to confirm or reject only that bounded change.
-- For full re-review, send with reviewer_send to the original Standards and Spec Reviewers with the current complete diff and updated sources. Reopen the conditional Penpot reviewer only when changed UI or design requirements invalidate its prior comparisons; supply updated screenshot pairs and the concrete brief required by `grove-code-review` step 3a. Their retained axis context is useful evidence; a new reviewer is a fallback only when the original cannot be resumed.
+- For full re-review, send with reviewer_send to the original Standards and Spec Reviewers with the current complete diff and updated sources. Their retained axis context is useful evidence; a new reviewer is a fallback only when the original cannot be resumed.
 - Delegate the smallest relevant checks to the original Worker and read their current-head evidence. Reviewers do not run tests, builds or browsers.
 
 Reviewers remain separated by axis. A replacement reviewer receives only its axis evidence and the prior review state.

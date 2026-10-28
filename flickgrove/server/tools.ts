@@ -3,7 +3,7 @@ export const sessionTitle = z.string().trim().min(1).max(120);
 const message = z.string().trim().min(1).max(100_000);
 const workerId = z.string().min(1);
 const reviewerId = z.string().min(1);
-const profile = z.enum(["standards", "spec", "high_risk_spec", "penpot"]);
+const profile = z.enum(["standards", "spec", "high_risk_spec"]);
 const target = {
   spec: z.string().trim().min(1).max(500),
   fixedPoint: z.string().trim().min(1).max(500),

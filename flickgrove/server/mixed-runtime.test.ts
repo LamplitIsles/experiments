@@ -179,13 +179,7 @@ test("real Pi and Codex adapter form both mixed trees, with questions, reports, 
     .replace(/^model = .*$/gm, 'model = "fake"')
     .replace(/^reasoning_effort = .*$/gm, 'reasoning_effort = "off"');
   await writeFile(configPath, config);
-  for (const role of [
-    "standards",
-    "spec",
-    "high_risk_spec",
-    "penpot",
-    "researcher",
-  ])
+  for (const role of ["standards", "spec", "high_risk_spec", "researcher"])
     await writeFile(
       join(home, "config", "prompts", role + ".md"),
       snapshot.prompt,
@@ -408,12 +402,7 @@ test("real Pi and Codex adapter form both mixed trees, with questions, reports, 
     ).toBe(true);
     // Every configured reviewer profile and Researcher takes the native Pi path.
     const target = { spec: "#4298", fixedPoint: "base", reviewedHead: "head" };
-    for (const profile of [
-      "standards",
-      "spec",
-      "high_risk_spec",
-      "penpot",
-    ] as const) {
+    for (const profile of ["standards", "spec", "high_risk_spec"] as const) {
       plans.push(
         {
           name: "reviewer_report",

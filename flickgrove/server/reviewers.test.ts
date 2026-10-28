@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DeliveryRejected } from "./runtime";
@@ -11,6 +11,63 @@ import { createHandler, createUpgrade } from "./http";
 import { groveWebsocket } from "./chord-socket";
 import { openGrove } from "../src/chord-client";
 import { socketWithHeaders } from "./socket-testing";
+import { initializeReviewerConfig, reviewerSnapshot } from "./reviewer-config";
+
+test("new Reviewers capture current configuration while existing snapshots remain unchanged", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "grove-reviewer-config-"));
+  const path = join(directory, "config", "config.toml");
+  await initializeReviewerConfig(path);
+  const runtime = new FakeRuntime();
+  const models = runtime.models.bind(runtime);
+  runtime.models = async () => [
+    ...(await models()),
+    ...["gpt-6.1-terra", "custom-model"].map((id) => ({
+      id,
+      name: id,
+      efforts: ["xhigh"],
+      defaultEffort: "xhigh",
+      isDefault: false,
+      fastTier: null,
+    })),
+  ];
+  const app = new Workspace({
+    directory: join(directory, "state"),
+    runtime,
+    projects: async () => fixtureProjects,
+    reviewerSnapshot: (profile) => reviewerSnapshot(path, profile),
+  });
+  try {
+    const orc = await app.createOrc("alpha");
+    const token = runtime.agents.get(orc.id)!.token;
+    const request = {
+      project: "alpha",
+      title: "Spec",
+      profile: "high_risk_spec",
+      spec: "#4772",
+      fixedPoint: "base",
+      reviewedHead: "head",
+      message: "Review",
+    };
+    const first = (await app.tool(token, "reviewer_start", request)) as Detail;
+    const config = await readFile(path, "utf8");
+    await writeFile(
+      path,
+      config.replace('model = "gpt-6.1-terra"', 'model = "custom-model"'),
+    );
+    const second = (await app.tool(token, "reviewer_start", request)) as Detail;
+    expect(runtime.agents.get(first.id)!.reviewerSnapshot).toMatchObject({
+      model: "gpt-6.1-terra",
+      effort: "xhigh",
+    });
+    expect(runtime.agents.get(second.id)!.reviewerSnapshot).toMatchObject({
+      model: "custom-model",
+      effort: "xhigh",
+    });
+  } finally {
+    app.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 async function until(check: () => boolean) {
   for (let i = 0; i < 200; i++) {
@@ -66,6 +123,10 @@ test("Reviewer lifecycle crosses real Peer/Chord with target-bound reports, isol
     const orc = await app.createOrc("alpha");
     const other = await app.createOrc("beta");
     const token = runtime.agents.get(orc.id)!.token;
+    await expect(
+      app.tool(token, "reviewer_start", { ...start, profile: "penpot" }),
+    ).rejects.toThrow();
+    expect(await app.tool(token, "reviewer_list", {})).toEqual([]);
     const a = (await app.tool(token, "reviewer_start", start)) as Detail;
     const b = (await app.tool(token, "reviewer_start", {
       ...start,

@@ -1,10 +1,6 @@
 export type Backend = "codex" | "pi";
 export type Role = "orc" | "worker" | "reviewer" | "researcher";
-export type ReviewerProfile =
-  | "standards"
-  | "spec"
-  | "high_risk_spec"
-  | "penpot";
+export type ReviewerProfile = "standards" | "spec" | "high_risk_spec";
 export interface ReviewTarget {
   profile: ReviewerProfile;
   spec: string;

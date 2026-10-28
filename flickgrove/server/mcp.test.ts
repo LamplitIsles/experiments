@@ -59,6 +59,7 @@ test("a real stdio MCP client discovers role tools and delegates through the aut
     const orc = await app.createOrc("alpha");
     const client = await connect(runtime.agents.get(orc.id)!.token);
     expect((await client.listTools()).tools.map((t) => t.name)).toEqual([
+      "orc_handoff",
       "researcher_start",
       "researcher_list",
       "researcher_read",
@@ -133,6 +134,17 @@ test("a real stdio MCP client discovers role tools and delegates through the aut
       researchQuestion: "Which fact is verified?",
     });
     const target = { spec: "#3573", fixedPoint: "base", reviewedHead: "head" };
+    const invalidReview = await client.callTool({
+      name: "reviewer_start",
+      arguments: {
+        ...target,
+        project: "alpha",
+        profile: "penpot",
+        title: "Removed profile",
+        message: "Read branch",
+      },
+    });
+    expect(invalidReview.isError).toBe(true);
     const review = await client.callTool({
       name: "reviewer_start",
       arguments: {

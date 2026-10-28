@@ -15,7 +15,7 @@ Use the execution host's `flickgrove` MCP tools for Worker lifecycle. Discover t
 2. Resolve the repository's registered Organon alias on this execution host. `worker_start` selects a registered project, not an arbitrary cwd or a remote host. Confirm its checkout matches the spec. A different execution host requires an Orc there; do not assume a Hub-visible project is available locally.
 3. Inspect tracked and untracked changes. Record pre-existing dirty paths and their initial diff; preserve them. Documentation-only changes, including `CONTEXT.md`, do not block the checkout. Assess other changes for implementation overlap.
 4. Build ticket order from numbers, statuses and `Blocked by:` fields, or use the spec's acceptance criteria directly when it has no tickets. Record the starting branch and `HEAD` as the fixed review point.
-5. For changed rendered UI with a corresponding Penpot design, read [Penpot design handoff](references/penpot-handoff.md) and complete Orc preparation before dispatch. Record applicable references in the spec. A generic mention or unrelated design does not trigger this branch.
+5. For changed rendered UI, establish the applicable visual and interaction requirements and give the Worker the evidence needed to verify them.
 
 Use the registered checkout by default; the Worker creates the feature branch there. While it runs, Orc keeps repository files unchanged. For overlapping dirty changes, resolve the overlap without discarding user work; request a decision only if it cannot be resolved within scope. FlickGrove has no pane, tab or worktree lifecycle API. If isolation is necessary and authorized, prepare an isolated checkout through the repository's supported tooling and register it on the execution host before dispatch. Record ownership and cleanup responsibility for any checkout created for this run.
 
@@ -33,7 +33,7 @@ The bootstrap names the spec and all ticket note IDs and states:
 - the registered checkout, branch, fixed starting commit and one-PR boundary;
 - live services, deployments, credentials, paid providers and external messages remain untouched unless explicitly in scope;
 - it follows repository implementation instructions, keeps `.scratch` untracked, updates ticket workflow statuses through FlickNote MCP, verifies observable behavior, commits scoped Conventional Commits, pushes with `og`, creates/updates the single PR with typed Organon tools, includes the spec ID in its description, and writes `.scratch/<feature>/implementation-report.md`;
-- for Penpot, the prepared bundle, concrete screen/state brief, approved deviations, comparison requirements and missing evidence;
+- for changed UI, the applicable visual and interaction requirements and required verification evidence;
 - it uses `worker_report` for progress, blockers and completion. Completion starts `IMPL_COMPLETE`, identifies the spec, reviewed commit, PR URL and absolute report path, and is sent only after the whole assignment is implemented and verified. A blocker starts `IMPL_BLOCKED` with evidence and the decision required. It reports to Orc and leaves agent lifecycle to Orc.
 
 `worker_report` routes to the owning Orc without waiting for Orc readiness. A final answer or idle state alone is not the completion handoff. On uncertain report delivery, inspect the retained conversation/delivery evidence before explicitly retrying or reconciling; do not replay mutations blindly.
@@ -47,7 +47,7 @@ When requirements change, update the spec and affected tickets through FlickNote
 After `IMPL_COMPLETE`:
 
 1. Read the report and verify the diff from the fixed starting `HEAD` against every acceptance criterion; confirm the reported commit is current.
-2. Run `grove-code-review` against that fixed point with its Grove Reviewers in independent contexts. Implementation stays with the sole Grove Worker. Reviewer models, reasoning and customizable prompts come from the execution Peer runtime configuration; fixed role/owner/report/close rules remain application-owned. Reviewers only read the diff, full spec and existing evidence; they never run tests, builds or browsers. Missing evidence is assigned to the Worker. For Penpot, inspect actual design/implementation comparison evidence before acceptance; missing evidence stays unverified.
+2. Run `grove-code-review` against that fixed point with its Grove Reviewers in independent contexts. Implementation stays with the sole Grove Worker. Reviewer models, reasoning and customizable prompts come from the execution Peer runtime configuration; fixed role/owner/report/close rules remain application-owned. Reviewers only read the diff, full spec and existing evidence; they never run tests, builds or browsers. Missing evidence is assigned to the Worker. For changed UI, inspect the Worker’s visual and interaction evidence before acceptance; missing evidence stays unverified.
 3. Consolidate deterministic findings into one `worker_send` to the same Implementation Worker. Require updated evidence, report and `IMPL_COMPLETE` for the fix round.
 4. Bring unresolved judgement calls about external consumers, retained data, compatibility, migration, cutover or product behavior to the user with the smallest supported recommendation.
 5. Use `grove-review-again` to reopen only stale conclusions until no merge blocker or unresolved judgement remains.
