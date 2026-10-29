@@ -15,5 +15,5 @@
     <ChevronRight class="report-chevron" aria-hidden="true" />
     <span class="report-summary"><span class="report-heading"><strong>{heading}</strong><span>{(kind ?? m.worker_report())}</span><MessageTime {at} /></span><span class="report-preview">{preview}</span></span>
   </summary>
-  {#if expanded}<div class="report-content"><MessageBody {text} {bodyRef} agentId={owningAgentId ?? agentId ?? ""} fileAgentId={agentId} {readPath} expand={true} /></div>{/if}
+  {#if expanded}<div class="report-content"><MessageBody {text} {bodyRef} agentId={owningAgentId ?? agentId ?? ""} fileAgentId={agentId} {readPath} expand={true} copyMessage={true} /></div>{/if}
 </details>

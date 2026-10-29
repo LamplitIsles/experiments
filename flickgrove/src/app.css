@@ -413,6 +413,24 @@ pre {
   border-radius: 6px;
   font-size: 12px;
 }
+.code-block {
+  position: relative;
+}
+.code-block pre {
+  padding-top: 48px;
+}
+.copy-button {
+  color: var(--muted-foreground);
+}
+.copy-message {
+  margin-top: 4px;
+}
+.copy-code {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: #18181b;
+}
 .markdown :not(pre) > code {
   padding: 2px 4px;
   background: #303036;

@@ -6,7 +6,8 @@
   import { markedMermaid } from "@humanspeak/svelte-markdown/extensions/mermaid";
   import MermaidDiagram from "./MermaidDiagram.svelte";
   import MathFormula from "./MathFormula.svelte";
-  import { HighlightedCode, HIGHLIGHT_CONTEXT_KEY } from "@humanspeak/svelte-markdown/extensions/tanstack-highlight";
+  import { HIGHLIGHT_CONTEXT_KEY } from "@humanspeak/svelte-markdown/extensions/tanstack-highlight";
+  import CopyableCode from "./CopyableCode.svelte";
   import { codeHighlighter } from "./code-highlighter";
   import { localFile } from "./local-file";
   import MarkdownLink from "./MarkdownLink.svelte";
@@ -15,6 +16,6 @@
   setContext(HIGHLIGHT_CONTEXT_KEY, codeHighlighter);
   const sanitizeUrl: SanitizeUrlFn = (url, context) => agentId && context.type === "link" && localFile(url) ? url : defaultSanitizeUrl(url, context);
   const extensions = [chatMathExtension(), markedMermaid()];
-  const renderers = { ...defaultRenderers, link: MarkdownLink, html: buildUnsupportedHTML(), inlineKatex: MathFormula, blockKatex: MathFormula, mermaid: MermaidDiagram, code: HighlightedCode };
+  const renderers = { ...defaultRenderers, link: MarkdownLink, html: buildUnsupportedHTML(), inlineKatex: MathFormula, blockKatex: MathFormula, mermaid: MermaidDiagram, code: CopyableCode };
 </script>
 <div class="markdown"><SvelteMarkdown source={text} {extensions} {renderers} {sanitizeUrl} /></div>

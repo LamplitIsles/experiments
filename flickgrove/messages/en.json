@@ -1,4 +1,8 @@
 {
+  "copy_message": "Copy message",
+  "copy_code": "Copy code",
+  "copied": "Copied",
+  "copy_failed": "Copy failed. Please try again.",
   "toggle_sidebar": "Toggle Sidebar",
   "sidebar_help": "Choose or create a session.",
   "product": "FlickGrove",

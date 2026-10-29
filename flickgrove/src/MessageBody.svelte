@@ -4,7 +4,8 @@
   import { reading } from "./api";
   import * as m from "./paraglide/messages";
   import Markdown from "./Markdown.svelte";
-  let { text, bodyRef, agentId, readPath, expand = false, fileAgentId = agentId }: { text: string; bodyRef?: string; agentId: string; readPath?: string; expand?: boolean; fileAgentId?: string } = $props();
+  import CopyButton from "./CopyButton.svelte";
+  let { text, bodyRef, agentId, readPath, expand = false, fileAgentId = agentId, copyMessage = false }: { text: string; bodyRef?: string; agentId: string; readPath?: string; expand?: boolean; fileAgentId?: string; copyMessage?: boolean } = $props();
   let body = $state<string>();
   let loading = $state(false), error = $state("");
   const abort = new AbortController();
@@ -21,5 +22,5 @@
   $effect(() => { if (expand && bodyRef) void load(); });
   onMount(() => () => abort.abort());
 </script>
-{#if !bodyRef || body !== undefined}<Markdown text={body ?? text} agentId={fileAgentId} />
+{#if !bodyRef || body !== undefined}<Markdown text={body ?? text} agentId={fileAgentId} />{#if copyMessage && (body ?? text)}<CopyButton text={body ?? text} label={m.copy_message()} class="copy-message" />{/if}
 {:else}<div class="message-body">{#if error}<p class="inline-error" role="alert">{error}</p>{/if}<Button variant="ghost" size="sm" disabled={loading} onclick={load}>{loading ? m.loading_message() : error ? m.retry() : m.read_full_message()}</Button></div>{/if}
