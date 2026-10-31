@@ -16,7 +16,7 @@ Identify:
 - the original Standards and Spec reviewer targets and relevant visual evidence;
 - the findings or conclusions affected by the delta.
 
-Use a recorded commit or reliable turn history for the reviewed HEAD. If no completed review exists, route to an initial `$grove-code-review`. If the prior reviewer targets are unavailable, retain the reviewed HEAD and replace only the missing reviewer when review work is actually needed.
+Use a recorded commit or reliable turn history for the reviewed HEAD. For a task primarily changing frontend user experience, wait for the user to explicitly request the initial review or a new review after further UX iteration before starting this workflow or dispatching independent Reviewers. If no completed review exists, route to an initial `$grove-code-review`. If the prior reviewer targets are unavailable, retain the reviewed HEAD and replace only the missing reviewer when review work is actually needed.
 
 This step is complete when the post-review delta and every prior conclusion it could affect are named.
 
@@ -46,6 +46,6 @@ This step is complete when each reopened conclusion is resolved and the current 
 
 Report `stop`, `focused review`, or `full re-review`; the reviewed HEAD and current HEAD; reused or replaced reviewer targets; reopened conclusions; checks run; and remaining blockers.
 
-Use explicit spec/fixedPoint/reviewedHead in reviewer_send. List/read after uncertain admission, never automatically replay. Keep original profile/prompt snapshots, targets and axes; report current HEAD with Reviewer IDs. End turn after confirmed dispatch and await asynchronous reports. Close through reviewer_close only after conclusions are settled.
+Use explicit spec/fixedPoint/reviewedHead in reviewer_send. List/read after uncertain admission, never automatically replay. Keep original profile/prompt snapshots, targets and axes; report current HEAD with Reviewer IDs. End turn after confirmed dispatch and await asynchronous reports. For PR-related Reviewers, request reviewer_close after conclusions settle and the PR is confirmed merged, unless the user explicitly requests earlier closure. For non-PR review, close after conclusions settle; retain existing lifecycle guards.
 
 Orc owns frontend UI, database schema and migrations, one-off ops scripts, and prompts/agent instructions; Worker owns other implementation. Each owner handles its tests and fixes. Independent target-bound review belongs to Reviewer; bounded evidence investigation belongs to Researcher under `grove-research`. Researchers do not replace review axes or implement fixes. Use Grove collaboration tools; native collaboration is disabled in managed sessions.

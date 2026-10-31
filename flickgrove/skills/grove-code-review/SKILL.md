@@ -3,6 +3,8 @@ name: grove-code-review
 description: Review a branch or work-in-progress diff against the repository's default branch, or an explicit fixed point, along separate Standards and Spec axes; then assess how far it is from merge.
 ---
 
+For a task primarily changing frontend user experience, Orc starts this skill and independent Reviewers only after the user explicitly requests review. Until then, continue implementation and own verification, present the result and await UX feedback or a review request. Independent PR review remains required before merge.
+
 Review the diff between `HEAD` and the repository's default branch, unless the user supplies another fixed point:
 
 - **Standards** — does the code conform to this repo's documented coding standards?
@@ -79,7 +81,7 @@ Reviewers are read-only: they read actual code, diff, full FlickNote spec, stand
 
 For changed UI, give the Spec Reviewer the applicable visual and interaction requirements and Orc's actual screenshots and interaction evidence at relevant viewports and states. Use isolated test data. Missing evidence leaves the affected requirements unverified.
 
-For later rounds follow `grove-review-again`: use reviewer_send to the original axis Reviewer with explicit fixedPoint/spec/reviewedHead, bounded delta, finding and evidence. Restore the same Reviewer with its saved profile/prompt snapshot. Replace only an unavailable axis. Use questionIds only for explicit delegated answers. List/read after uncertain start/send before deciding recovery; never blindly repeat admissions. Reports are asynchronous, so end the Orc turn after confirmed dispatch and await reports rather than polling. Keep Reviewers open until review is settled, then request reviewer_close; respect report/question/delivery guards and interrupted/unknown outcome inspection.
+For later rounds follow `grove-review-again`: use reviewer_send to the original axis Reviewer with explicit fixedPoint/spec/reviewedHead, bounded delta, finding and evidence. Restore the same Reviewer with its saved profile/prompt snapshot. Replace only an unavailable axis. Use questionIds only for explicit delegated answers. List/read after uncertain start/send before deciding recovery; never blindly repeat admissions. Reports are asynchronous, so end the Orc turn after confirmed dispatch and await reports rather than polling. For a PR review, retain Reviewers until conclusions settle and that PR is confirmed merged, unless the user explicitly requests earlier closure; review completion or pending approval alone is not a merge. For non-PR review, request reviewer_close after conclusions settle. Respect report/question/delivery guards and interrupted/unknown outcome inspection.
 
 Give every reviewer this **evidence and proportionality discipline**:
 
