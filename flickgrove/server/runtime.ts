@@ -24,7 +24,7 @@ export interface RuntimeItem {
       }[]
     | null;
 }
-export type RuntimeEvent = { threadId?: string } & (
+export type RuntimeEvent = { threadId?: string; replayed?: boolean } & (
   | { type: "working"; turnId: string }
   | {
       type: "submission";
@@ -39,6 +39,7 @@ export type RuntimeEvent = { threadId?: string } & (
       type: "completed";
       turnId: string;
       status: string;
+      recoveredActivityAt?: number;
       error?: string;
       errorKind?: "capacity" | "error";
     }

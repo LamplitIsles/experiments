@@ -52,6 +52,7 @@ export const sessions = sqliteTable(
     recovery: json<RecoveryContext>("recovery").notNull(),
     task: json<TaskContext>("task").notNull(),
     diagnostics: json<SessionDiagnostics>("diagnostics").notNull(),
+    lastActivityAt: integer("last_activity_at"),
     treeFast: integer("tree_fast", { mode: "boolean" }),
   },
   (t) => [

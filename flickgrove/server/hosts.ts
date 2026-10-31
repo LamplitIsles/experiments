@@ -40,6 +40,7 @@ function qualified<T extends Agent>(host: Host, a: T): T {
     userHandoff: a.userHandoff,
     finalFailure: a.finalFailure,
     workingSince: a.workingSince,
+    lastActivityAt: a.lastActivityAt,
     threadId: a.threadId,
     turnId: a.turnId,
     error: a.error,

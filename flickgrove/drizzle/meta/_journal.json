@@ -15,6 +15,13 @@
       "when": 1792375878962,
       "tag": "0001_mixed_backend",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793441543844,
+      "tag": "0002_recent_activity",
+      "breakpoints": true
     }
   ]
 }

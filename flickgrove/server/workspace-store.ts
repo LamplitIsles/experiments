@@ -33,6 +33,7 @@ const sessionKeys = [
   "execution",
   "treeFastError",
   "treeFast",
+  "lastActivityAt",
 ] as const;
 const configKeys = [
   "orcPromptSnapshot",
@@ -94,6 +95,7 @@ function sessionRow(a: RuntimeAgent) {
     task: pick(a, ["reviewTarget", "researchQuestion"]),
     diagnostics: pick(a, ["error", "execution", "treeFastError"]),
     treeFast: a.treeFast ?? null,
+    lastActivityAt: a.lastActivityAt ?? null,
   };
 }
 // Observe entities in place: local references and native callbacks keep the same
@@ -304,6 +306,9 @@ export class WorkspaceStore {
       ...(row.ownerId === null ? {} : { ownerId: row.ownerId }),
       ...(row.threadId === null ? {} : { threadId: row.threadId }),
       ...(row.treeFast === null ? {} : { treeFast: row.treeFast }),
+      ...(row.lastActivityAt === null
+        ? {}
+        : { lastActivityAt: row.lastActivityAt }),
       messages: [],
       deliveries: this.db
         .select()

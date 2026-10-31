@@ -1,4 +1,3 @@
-import { longPress } from "./context-menu-touch";
 import { openSidebar } from "./browser-actions";
 import { expect, test, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -652,24 +651,13 @@ test.describe("touch unknown close", () => {
     await page.setViewportSize({ width: 390, height: 900 });
     await page.goto(unknown);
     await openSidebar(page);
-    await longPress(
-      page,
-      page.locator(`.session-open[data-agent-id="${target}"]`),
-    );
-    await page
-      .getByRole("menuitem", { name: "Close this tree", exact: true })
-      .tap();
-    await expect(page.getByRole("menu")).toHaveCount(0);
+    await page.locator(`[data-swipe-id="${target}"] .session-close`).tap();
     await expect(
       page.getByRole("heading", {
         name: "Abandon unconfirmed submissions and close",
         exact: true,
       }),
     ).toBeVisible();
-    await page.screenshot({
-      path: "../.scratch/context-menu-only/screenshots/390-touch-unknown.png",
-      animations: "disabled",
-    });
     const after = await (await request.get(unknown + "/fixture/info")).json();
     expect(after.closed).toBe(false);
     expect(after.inputs).toBe(before.inputs);
@@ -677,7 +665,7 @@ test.describe("touch unknown close", () => {
   });
 });
 
-test("Pin AltX unknown refusal preserves folded org and never replays", async ({
+test("AltX unknown refusal preserves folded org and never replays", async ({
   page,
   request,
 }) => {
@@ -690,9 +678,7 @@ test("Pin AltX unknown refusal preserves folded org and never replays", async ({
   const row = page.locator(
     `.session-open[data-location="tree"][data-agent-id="${target}"]`,
   );
-  await row.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
-  await page.locator('.session-open[data-location="pinned"]').click();
+  await row.click();
   await page.locator(".org-disclosure").click();
   const input = page.getByRole("textbox", { name: "Message Orc", exact: true });
   await input.fill("Unknown close keeps this draft");
@@ -706,18 +692,14 @@ test("Pin AltX unknown refusal preserves folded org and never replays", async ({
   await expect(
     page.getByRole("heading", { name: action, exact: true }),
   ).toBeVisible();
-  await page.screenshot({
-    path: "../.scratch/visible-session-shortcuts/unknown-pin.png",
-    animations: "disabled",
-  });
   await page.keyboard.press("Escape");
   await expect(page.locator(".org-disclosure")).toHaveAttribute(
     "aria-expanded",
     "false",
   );
-  await expect(
-    page.locator('.session-open[aria-current="true"]'),
-  ).toHaveAttribute("data-location", "pinned");
+  await expect(page.locator('.session-open[aria-current="true"]')).toHaveCount(
+    0,
+  );
   await expect(input).toHaveValue("Unknown close keeps this draft");
   expect(
     await input.evaluate((el: HTMLTextAreaElement) => [

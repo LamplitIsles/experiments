@@ -20,6 +20,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Workspace } from "../server/workspace";
+import { WorkspaceStore } from "../server/workspace-store";
 import { HostService } from "../server/hosts";
 import { createHandler, createUpgrade } from "../server/http";
 import { groveWebsocket, type SocketData } from "../server/chord-socket";
@@ -50,6 +51,7 @@ const orgProjects = [
   { alias: "local", name: "Local", path: join(directory, "local") },
 ];
 let orgFixture = false;
+let activityFixture = false;
 let projectsDelay = 0;
 let projectsFailure = false;
 const defaults = {
@@ -121,6 +123,23 @@ function unit(
       }),
     );
     db.close();
+    if (activityFixture) {
+      const store = new WorkspaceStore(
+        join(stateDirectory, "workspace.sqlite"),
+      );
+      const update = store.sqlite.query(
+        "UPDATE sessions SET last_activity_at = ? WHERE id = ?",
+      );
+      for (const [id, hours] of [
+        ["orc", 0.5],
+        ["reader-orc", 3],
+        ["extra-day", 12],
+        ["extra-week", 72],
+        ["extra-old", 216],
+      ] as const)
+        update.run(Date.now() - hours * 3_600_000, id);
+      store.close();
+    }
   }
   const runtime = new FakeRuntime();
   for (const a of agents) {
@@ -293,6 +312,7 @@ function agent(
     id,
     role,
     title,
+    ...(activityFixture ? { threadId: `thread-${id}` } : {}),
     project: {
       ...(orgFixture ? orgProjects : projects)[project],
       ...(orgFixture && project === 2 ? { alias: "historic-forge-alias" } : {}),
@@ -377,6 +397,7 @@ async function reset(mode = "working") {
   }
   units = [];
   orgFixture = ["org-groups", "org-groups-idle"].includes(mode);
+  activityFixture = mode === "activity";
   projectsDelay = 0;
   projectsFailure = false;
   branchFixture = mode === "branches";
@@ -417,6 +438,7 @@ async function reset(mode = "working") {
     "idle",
     "org-groups-idle",
     "host-selection",
+    "activity",
   ].includes(mode);
   current = unit(
     "NUC",
@@ -426,6 +448,13 @@ async function reset(mode = "working") {
       : [
           agent("orc", "orc", "Streaming voice input", 0),
           agent("reader-orc", "orc", "Reader performance", 1),
+          ...(activityFixture
+            ? [
+                agent("extra-day", "orc", "Earlier today", 0),
+                agent("extra-week", "orc", "Earlier this week", 0),
+                agent("extra-old", "orc", "Old session", 0),
+              ]
+            : []),
           ...(workers
             ? [
                 agent(
@@ -500,6 +529,7 @@ async function reset(mode = "working") {
       "org-groups-idle",
       "no-workers",
       "host-selection",
+      "activity",
     ].includes(mode)
   ) {
     await current.app.send(

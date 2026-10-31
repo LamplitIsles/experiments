@@ -187,6 +187,8 @@ export interface Agent {
   state: WorkState;
   execution?: { kind: "capacity" | "error"; retrying: boolean };
   workingSince?: number;
+  /** Most recent observed work in this Orc's tree, in Unix milliseconds. */
+  lastActivityAt?: number;
   threadId?: string;
   turnId?: string;
   error?: string;

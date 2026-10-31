@@ -77,7 +77,7 @@
   "key_send": "Send, or insert a selected suggestion",
   "key_newline": "Add a new line",
   "key_questions": "Switch questions in question navigation",
-  "keyboard_scope": "Session switching uses Pinned (including expanded members), then the expanded original list, once per session. Navigation pauses while typing, during IME and foreground panels. Option/Alt + X also works in Composer.",
+  "keyboard_scope": "Session switching uses Recent activity (including expanded members), then the expanded original list, once per session. Navigation pauses while typing, during IME and foreground panels. Option/Alt + X also works in Composer.",
   "notification_input": "{title} needs your input",
   "notification_handoff": "{title} is waiting for your next instruction",
   "notification_error": "{title} needs attention",
@@ -195,9 +195,8 @@
   "output_speed_help": "Log estimate across local matching responses, all reasoning efforts; includes reasoning tokens and first-token wait, excludes tool execution; may include partial or interrupted output. 1w is the rolling past seven days.",
   "output_speed_samples": "{count} samples.",
   "output_speed_unavailable": "Speed statistics unavailable.",
-  "pinned": "Pinned",
-  "pin": "Pin",
-  "unpin": "Unpin",
-  "key_visible_number": "Open visible session 1–9 (Pinned first)",
+  "recent_activity": "Recent activity",
+  "activity_window": "Activity window",
+  "key_visible_number": "Open visible session 1–9 (recent activity first)",
   "key_visible_cycle": "Next / previous visible session, wrapping"
 }

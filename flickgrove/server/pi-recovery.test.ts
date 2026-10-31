@@ -13,7 +13,7 @@ import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import { tmpdir } from "node:os";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
+import { ROOT_CONVERSATION_ID, type TaskId } from "@earendil-works/pi-durable";
 import { openPiSession, piSessionPath } from "./pi-session";
 import { readPiStorage, acquirePiWriter } from "./pi-storage";
 import { PiRuntime } from "./pi";
@@ -67,6 +67,7 @@ test("Durable accepted/queued work resumes without resubmission; scoped Stop wit
   await writeFile(join(agentDir, "auth.json"), "{}");
   let hold = true,
     toolPlan = false,
+    fail = false,
     requests = 0;
   const upstream = Bun.serve({
     hostname: "127.0.0.1",
@@ -74,6 +75,11 @@ test("Durable accepted/queued work resumes without resubmission; scoped Stop wit
     async fetch(req) {
       await req.json();
       requests++;
+      if (fail)
+        return Response.json(
+          { error: { message: "fixture failure" } },
+          { status: 400 },
+        );
       const chunk = (delta: object, finish_reason: string | null) =>
         `data: ${JSON.stringify({ id: "owned", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
       if (toolPlan)
@@ -291,6 +297,126 @@ test("Durable accepted/queued work resumes without resubmission; scoped Stop wit
         .filter((m) => m.role === "user")
         .map((m) => m.clientId),
     ).toEqual(["first", "second"]);
+    const second = accepted.find((s) => s.requestId === "second");
+    if (second?.type !== "input" || second.status !== "done")
+      throw new Error("Queued input did not complete");
+    const queuedStore = await readPiStorage(
+      piSessionPath(sessionDir, threadId),
+    );
+    const queuedAnswer = await queuedStore.entry(
+      ROOT_CONVERSATION_ID,
+      second.answer,
+      BACKGROUND_CONTEXT,
+    );
+    const queuedTask = await queuedStore.task(
+      queuedAnswer!.entry.byTaskId!,
+      BACKGROUND_CONTEXT,
+    );
+    await queuedStore.close(BACKGROUND_CONTEXT);
+    expect(queuedTask?.endedAt).toEqual(expect.any(Number));
+    const callsBeforeQueuedRecovery = requests;
+    await handle.close();
+    const queuedReplay: RuntimeEvent[] = [];
+    handle = await openPiSession(
+      {
+        ...agent,
+        threadId,
+        turnId: String(second.id),
+        state: "working",
+        deliveries: [
+          {
+            id: "second",
+            text: "same text",
+            source: "user",
+            status: "sent",
+            at: 2,
+            questionIds: [],
+            turnId: String(second.id),
+          },
+        ],
+      },
+      (event) => queuedReplay.push(event),
+      options,
+    );
+    expect(queuedReplay.find((e) => e.type === "completed")).toMatchObject({
+      turnId: String(second.id),
+      replayed: true,
+      recoveredActivityAt: queuedTask!.endedAt,
+    });
+    expect(requests).toBe(callsBeforeQueuedRecovery);
+    fail = true;
+    const failed = await handle.send("fail me", undefined, [], "fail-first");
+    await until(async () =>
+      (await records(threadId)).some(
+        (s) => s.requestId === "fail-first" && s.status === "unanswered",
+      ),
+    );
+    const failureStore = await readPiStorage(
+      piSessionPath(sessionDir, threadId),
+    );
+    const failedTask = await failureStore.task(
+      Number(failed) as TaskId,
+      BACKGROUND_CONTEXT,
+    );
+    await failureStore.close(BACKGROUND_CONTEXT);
+    expect(failedTask?.state).toMatchObject({
+      status: "terminal",
+      outcome: { status: "failed" },
+    });
+    expect(failedTask?.endedAt).toEqual(expect.any(Number));
+    await handle.close();
+    const failedReplay: RuntimeEvent[] = [];
+    handle = await openPiSession(
+      {
+        ...agent,
+        threadId,
+        turnId: failed,
+        state: "working",
+        deliveries: [],
+      },
+      (event) => failedReplay.push(event),
+      options,
+    );
+    expect(failedReplay.find((e) => e.type === "completed")).toMatchObject({
+      type: "completed",
+      turnId: failed,
+      replayed: true,
+      recoveredActivityAt: failedTask!.endedAt,
+    });
+    const failedInput = (await records(threadId)).find(
+      (s) => s.requestId === "fail-first",
+    )!;
+    await handle.close();
+    const failedInputReplay: RuntimeEvent[] = [];
+    handle = await openPiSession(
+      {
+        ...agent,
+        threadId,
+        turnId: String(failedInput.id),
+        state: "working",
+        deliveries: [
+          {
+            id: "fail-first",
+            text: "fail me",
+            source: "user",
+            status: "sent",
+            at: 1,
+            questionIds: [],
+            turnId: String(failedInput.id),
+          },
+        ],
+      },
+      (event) => failedInputReplay.push(event),
+      options,
+    );
+    expect(failedInputReplay.find((e) => e.type === "completed")).toMatchObject(
+      {
+        turnId: String(failedInput.id),
+        replayed: true,
+        recoveredActivityAt: failedTask!.endedAt,
+      },
+    );
+    fail = false;
     // A stopped run cannot cancel a later submission, and another owner keeps running.
     hold = true;
     other = await openPiSession({ ...agent, id: "other" }, () => {}, options);
@@ -318,6 +444,78 @@ test("Durable accepted/queued work resumes without resubmission; scoped Stop wit
       (s) => s.requestId === "stop-first",
     )!;
     expect(unanswered.status).toBe("unanswered");
+    const terminalStore = await readPiStorage(
+      piSessionPath(sessionDir, threadId),
+    );
+    const stoppedTask = await terminalStore.task(
+      Number(stopped) as TaskId,
+      BACKGROUND_CONTEXT,
+    );
+    await terminalStore.close(BACKGROUND_CONTEXT);
+    expect(stoppedTask?.state).toMatchObject({
+      status: "terminal",
+      outcome: { status: "aborted" },
+    });
+    expect(stoppedTask?.endedAt).toEqual(expect.any(Number));
+    await handle.close();
+    const stoppedReplay: RuntimeEvent[] = [];
+    handle = await openPiSession(
+      {
+        ...agent,
+        threadId,
+        turnId: stopped,
+        state: "working",
+        deliveries: [
+          {
+            id: "stop-first",
+            text: "stop me",
+            source: "user",
+            status: "sent",
+            at: 1,
+            questionIds: [],
+            turnId: stopped,
+          },
+        ],
+      },
+      (event) => stoppedReplay.push(event),
+      options,
+    );
+    expect(stoppedReplay.find((e) => e.type === "completed")).toMatchObject({
+      type: "completed",
+      turnId: stopped,
+      replayed: true,
+      recoveredActivityAt: stoppedTask!.endedAt,
+    });
+    await handle.close();
+    const stoppedInputReplay: RuntimeEvent[] = [];
+    handle = await openPiSession(
+      {
+        ...agent,
+        threadId,
+        turnId: String(unanswered.id),
+        state: "working",
+        deliveries: [
+          {
+            id: "stop-first",
+            text: "stop me",
+            source: "user",
+            status: "sent",
+            at: 1,
+            questionIds: [],
+            turnId: String(unanswered.id),
+          },
+        ],
+      },
+      (event) => stoppedInputReplay.push(event),
+      options,
+    );
+    expect(
+      stoppedInputReplay.find((e) => e.type === "completed"),
+    ).toMatchObject({
+      turnId: String(unanswered.id),
+      replayed: true,
+      recoveredActivityAt: stoppedTask!.endedAt,
+    });
     if (unanswered.entry) {
       const stoppedWindow = await reader.messageWindow(threadId, {
         operation: "stop-first",

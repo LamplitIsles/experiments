@@ -194,6 +194,7 @@ const agent = z.object({
     .object({ kind: z.enum(["capacity", "error"]), retrying: z.boolean() })
     .optional(),
   workingSince: z.number().optional(),
+  lastActivityAt: z.number().optional(),
   error: z.string().optional(),
   readingRevision: z.number().optional(),
   historyCursor: z.string().optional(),

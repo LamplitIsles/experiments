@@ -11,7 +11,7 @@
   import { readingCache, reading } from "./api";
   import { retainReading } from "./reading-cache";
   import { retainTranscriptPositions } from "./transcript-state";
-  import { LocalConnection, preferences } from "./connection";
+  import { LocalConnection, preferences, readPreference, writePreference } from "./connection";
   import { onMount, tick, untrack } from "svelte";
   import * as Select from "$lib/components/ui/select/index.js";
   import { projectReference, mergeProjectCatalogue } from "./project-identity";
@@ -45,9 +45,10 @@
   const savedSelection = preferences.selection;
   let treeOrder = $state(preferences.treeOrder);
   $effect(() => { preferences.treeOrder = $state.snapshot(treeOrder); });
+  const savedActivityWindow = readPreference<unknown>("activity-window", "1d");
+  let activityWindow = $state<"1h" | "4h" | "1d" | "1w">(savedActivityWindow === "1h" || savedActivityWindow === "4h" || savedActivityWindow === "1w" ? savedActivityWindow : "1d");
+  $effect(() => { writePreference("activity-window", activityWindow); });
   let remembered = $state<Record<string, string>>(savedSelection.sessions);
-  let pinned = $state(preferences.pinned);
-  $effect(() => { preferences.pinned = pinned; });
   let selectedId = $state<string | null>(savedSelection.sessions[savedSelection.host] ?? null);
   let navigationReady = $state(false); let connectionReady = $state(false);
   let detail = $state<Detail | null>(null); let skills = $state<Skill[]>([]);
@@ -165,12 +166,7 @@
     value = { ...value, agents: [...value.agents, ...retained], hosts: value.hosts?.map(h => !h.connected && !h.lastSeen ? { ...h, lastSeen: snapshot.hosts?.find(old => old.id === h.id)?.lastSeen } : h) };
     observeQuestions(value.agents, selectedId);
     if (selectedId && !value.agents.some(a => a.id === selectedId)) lostSelection = selectedId;
-    const pins = { ...pinned };
-    for (const key of Object.keys(pins)) pins[key] = pins[key].filter(id => !value.agents.some(a => a.id === id && a.role !== "orc"));
     if (authoritative) {
-      for (const host of value.hosts ?? []) {
-        if (host.connected) pins[host.id] = (pins[host.id] ?? []).filter(id => value.agents.some(a => a.id === id));
-      }
       const order = { ...treeOrder };
       for (const host of value.hosts ?? []) {
         if (!host.connected) continue;
@@ -180,7 +176,6 @@
       }
       treeOrder = order;
     }
-    pinned = pins;
     snapshot = value;
     if (authoritative) for (const host of value.hosts ?? []) {
       if (!host.connected) continue;
@@ -555,7 +550,7 @@
     const initialId = navigation.details.at(-1);
     if (initialId) { instanceId = initialId.split(":")[0]; remembered = { ...remembered, [instanceId]: initialId }; }
     const media = matchMedia("(min-width: 701px)");
-    const resize = () => { desktop = media.matches; const dismissSidebar = () => { if (navigation.surfaces.includes("sidebar")) removeSidebarDrawer(); }; if (navigation.surfaces.includes("session-menu")) void back().then(dismissSidebar); else dismissSidebar(); };
+    const resize = () => { desktop = media.matches; if (navigation.surfaces.includes("sidebar")) removeSidebarDrawer(); };
     media.addEventListener("change", resize);
     let disposed=false;
     client=new LocalConnection(value=>{
@@ -588,7 +583,7 @@
     window.addEventListener("compositionend", compositionEnd);
     const timer = setInterval(() => now = Date.now(), 1000);
     const permission = () => { if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission().catch(() => {}); };
-    const completionTab = (e: KeyboardEvent) => { if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey && e.target !== document.body && !(e.target instanceof HTMLElement && e.target.closest('[data-sidebar="sidebar"], [data-sidebar="trigger"], .session-menu-row, [role=menu], .question-panel, .history-controls, [data-choice-layer], [data-slot=select-content], [data-slot=select-trigger], [data-choice-trigger]'))) e.preventDefault(); };
+    const completionTab = (e: KeyboardEvent) => { if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey && e.target !== document.body && !(e.target instanceof HTMLElement && e.target.closest('[data-sidebar="sidebar"], [data-sidebar="trigger"], [role=menu], .question-panel, .history-controls, [data-choice-layer], [data-slot=select-content], [data-slot=select-trigger], [data-choice-trigger]'))) e.preventDefault(); };
     window.addEventListener("keydown", completionTab, true);
     const installer = (e: Event) => { e.preventDefault(); install = e as Event & { prompt: () => Promise<void> }; };
     window.addEventListener("pointerdown", permission, { once: true }); window.addEventListener("keydown", permission, { once: true }); window.addEventListener("keydown", keydown); window.addEventListener("beforeinstallprompt", installer);
@@ -603,7 +598,7 @@
 <div class="workbench" class:close-recovery-layout={closeRecovery.entries.some(i => modal !== "abandon-close" || abandon?.id !== i.agentId)}>
 <main>
   <Sidebar.Root>
-  <SessionList bind:this={sessionList} agents={visibleAgents} {projects} {projectsLoading} {instanceId} pinnedIds={pinned[instanceId] ?? []} onpin={ids => pinned = { ...pinned, [instanceId]: ids }} rootOrder={treeOrder[instanceId] ?? []} onreorder={ids => treeOrder = { ...treeOrder, [instanceId]: ids }} {hosts} {selectedId} {loading} {connected} {closingId} closeError={selectedId === closeError?.id && navigation.surfaces.at(-1) !== "sidebar" ? null : closeError} onclosetree={closeTree} onopen={open} onnew={() => show("new")}>
+  <SessionList bind:this={sessionList} agents={visibleAgents} {projects} {projectsLoading} {instanceId} {activityWindow} onactivitywindow={value => activityWindow = value} {now} rootOrder={treeOrder[instanceId] ?? []} onreorder={ids => treeOrder = { ...treeOrder, [instanceId]: ids }} {hosts} {selectedId} {loading} {connected} {closingId} closeError={selectedId === closeError?.id && navigation.surfaces.at(-1) !== "sidebar" ? null : closeError} onclosetree={closeTree} onopen={open} onnew={() => show("new")}>
     {#if !connected && !loading}<div class="connection-banner" role="status"><strong>{m.reconnecting()}</strong><span>{m.offline_help()}</span><Button variant="ghost" size="sm" onclick={load}>{m.retry()}</Button></div>{/if}
   </SessionList>
   </Sidebar.Root>

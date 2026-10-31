@@ -307,6 +307,13 @@ export class Workspace {
       if (message.role === "assistant" && message.turnId === a.turnId)
         completed.ids.add(message.id);
   }
+  private activity(a: RuntimeAgent, at = Date.now()) {
+    const root = a.ownerId
+      ? this.state.agents.find((owner) => owner.id === a.ownerId)
+      : a;
+    if (!root || root.closed || root.role !== "orc") return;
+    if (at > (root.lastActivityAt ?? 0)) root.lastActivityAt = at;
+  }
   private event(a: RuntimeAgent, event: RuntimeEvent) {
     if (
       a.closed ||
@@ -336,6 +343,7 @@ export class Workspace {
       return;
     } else if (event.type === "working") {
       if (a.turnId === event.turnId) return;
+      if (!event.replayed) this.activity(a);
       if (a.ownerId) this.cancelHandoff(a.ownerId);
       this.handoffs.delete(a.id);
       this.publishedHandoffs.delete(a.id);
@@ -380,6 +388,14 @@ export class Workspace {
             m.id === item.id ||
             (m.provisional && item.clientId && m.clientId === item.clientId),
         );
+        if (
+          !event.replayed &&
+          event.turnId === a.turnId &&
+          matched < 0 &&
+          d?.status !== "sent" &&
+          !this.completedTurns.has(`${a.id}/${event.turnId}`)
+        )
+          this.activity(a);
         const message: Message = {
           id: item.id,
           clientId: item.clientId,
@@ -429,6 +445,8 @@ export class Workspace {
         // Persisted question identities already prove an evicted repeat.
         if (!newQuestions.length && !a.messages.some((m) => m.id === item.id))
           return;
+        if (newQuestions.length && !event.replayed && event.turnId === a.turnId)
+          this.activity(a);
         if (!a.messages.some((m) => m.id === item.id))
           a.messages.push({
             id: item.id,
@@ -463,6 +481,7 @@ export class Workspace {
       } else if (item.text) {
         if (a.messages.some((m) => m.id === item.id)) return;
         if (this.completedItems.get(a.id)?.ids.has(item.id)) return;
+        if (!event.replayed && event.turnId === a.turnId) this.activity(a);
         const message: Message = {
           id: item.id,
           text: item.text,
@@ -475,6 +494,9 @@ export class Workspace {
     } else if (event.type === "completed") {
       this.completedTurns.add(`${a.id}/${event.turnId}`);
       if (a.turnId === event.turnId) {
+        if (!event.replayed) this.activity(a);
+        else if (event.recoveredActivityAt !== undefined)
+          this.activity(a, event.recoveredActivityAt);
         const candidate = this.handoffs.get(a.id);
         if (
           candidate?.turnId === event.turnId &&
@@ -1671,6 +1693,7 @@ export class Workspace {
         });
       d.status = "sent";
       d.turnId = turnId;
+      this.activity(a);
       for (const q of a.questions)
         if (questionIds.includes(q.id)) {
           q.state = "answered";

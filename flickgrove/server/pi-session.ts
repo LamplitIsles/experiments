@@ -47,6 +47,7 @@ import { roleInstructions } from "./role-instructions";
 import { roleTools, toolDefinitions } from "./tools";
 import { PiMetadata, PiOperation, PiWithdrawal } from "./pi-documents";
 import { openPiStorage, acquirePiWriter } from "./pi-storage";
+import { recoveredPiActivity } from "./pi-completion";
 import { openPiMcp } from "./pi-mcp";
 import { createDeepSeekSearch } from "./pi-deepseek-search";
 import { parseTitle, titlePrompt } from "./thread-title";
@@ -175,8 +176,10 @@ export async function openPiSession(
           "Pi resources could not be released",
         );
     })());
+  // The first native snapshot includes history, not newly observed activity.
+  let replaying = true;
   const dispatch = (event: RuntimeEvent) => {
-    if (!closed) notify({ ...event, threadId: id });
+    if (!closed) notify({ ...event, threadId: id, replayed: replaying });
   };
   try {
     let models: ModelRuntime;
@@ -456,6 +459,16 @@ export async function openPiSession(
       if (closed) return;
       const nativeNext = liveOf(value)?.run?.taskId;
       const next = nativeNext === undefined ? undefined : String(nativeNext);
+      // The initial snapshot may contain work committed before its observer ran.
+      const recoveredEnd =
+        replaying && !next && persistedTurn
+          ? await recoveredPiActivity(
+              storage!,
+              root.id,
+              persistedTurn,
+              agent.deliveries,
+            )
+          : undefined;
       if (next && next !== runId) {
         runInputs = new Set(liveOf(value)?.run?.inputs ?? []);
         runId = next;
@@ -626,6 +639,9 @@ export async function openPiSession(
         dispatch({
           type: "completed",
           turnId: settledRun,
+          ...(recoveredEnd === undefined
+            ? {}
+            : { recoveredActivityAt: recoveredEnd }),
           status: interrupted ? "interrupted" : failed ? "failed" : "completed",
           ...(failed
             ? {
@@ -641,6 +657,7 @@ export async function openPiSession(
       }
     };
     await project(watch.value);
+    replaying = false;
     watch.start((value) => {
       projecting = project(value);
       return projecting;
