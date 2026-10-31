@@ -69,6 +69,27 @@ async function close(page: Page) {
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(page.getByRole("heading", { name: action })).toBeVisible();
 }
+async function swipeClose(page: Page, target: string) {
+  const row = page.locator(`[data-swipe-id="${target}"]`);
+  const box = (await row.boundingBox())!;
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x: box.x + 250, y: box.y + 20 }],
+  });
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchMove",
+    touchPoints: [{ x: box.x + 160, y: box.y + 20 }],
+  });
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
+  await cdp.detach();
+  await row
+    .getByRole("button", { name: "Close this tree", exact: true })
+    .click();
+}
 for (const [name, viewport] of [
   ["desktop", { width: 1440, height: 900 }],
   ["mobile", { width: 390, height: 844 }],
@@ -84,25 +105,7 @@ for (const [name, viewport] of [
     await seed(page, target, other);
     if (name === "mobile") {
       await page.goBack();
-      const row = page.locator(`[data-swipe-id="${target}"]`);
-      const box = (await row.boundingBox())!;
-      const cdp = await page.context().newCDPSession(page);
-      await cdp.send("Input.dispatchTouchEvent", {
-        type: "touchStart",
-        touchPoints: [{ x: box.x + 250, y: box.y + 20 }],
-      });
-      await cdp.send("Input.dispatchTouchEvent", {
-        type: "touchMove",
-        touchPoints: [{ x: box.x + 160, y: box.y + 20 }],
-      });
-      await cdp.send("Input.dispatchTouchEvent", {
-        type: "touchEnd",
-        touchPoints: [],
-      });
-      await cdp.detach();
-      await row
-        .getByRole("button", { name: "Close this tree", exact: true })
-        .click();
+      await swipeClose(page, target);
       await expect(page.getByRole("heading", { name: action })).toBeVisible();
     } else await close(page);
     expect(await journal(page, target)).toBe(1);
@@ -651,7 +654,7 @@ test.describe("touch unknown close", () => {
     await page.setViewportSize({ width: 390, height: 900 });
     await page.goto(unknown);
     await openSidebar(page);
-    await page.locator(`[data-swipe-id="${target}"] .session-close`).tap();
+    await swipeClose(page, target);
     await expect(
       page.getByRole("heading", {
         name: "Abandon unconfirmed submissions and close",

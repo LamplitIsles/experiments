@@ -15,7 +15,7 @@ for (const width of [1440, 390])
   test(`recent activity filters and remembers the selected window at ${width}`, async ({
     page,
     request,
-  }) => {
+  }, testInfo) => {
     await request.post(origin + "/fixture/reset", {
       data: { mode: "activity" },
     });
@@ -23,23 +23,30 @@ for (const width of [1440, 390])
     await page.goto(origin);
     await openSidebar(page);
     await expect(recent(page).locator("strong")).toHaveText([
-      "Streaming voice input",
-      "Reader performance",
       "Earlier today",
+      "Reader performance",
+      "Streaming voice input",
     ]);
+    await expect(
+      page.getByRole("button", { name: /^Close this tree:/ }),
+    ).toHaveCount(0);
     await choose(page, "1h");
     await expect(recent(page).locator("strong")).toHaveText([
       "Streaming voice input",
     ]);
     await choose(page, "4h");
     await expect(recent(page).locator("strong")).toHaveText([
-      "Streaming voice input",
       "Reader performance",
+      "Streaming voice input",
     ]);
     await choose(page, "1w");
     await expect(recent(page)).toHaveCount(4);
     await expect(tree(page)).toHaveCount(5);
-    await recent(page).first().click();
+    await expect(
+      page.getByRole("option", { name: "1w", exact: true }),
+    ).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath(`${width}-recent.png`) });
+    await recent(page).filter({ hasText: "Streaming voice input" }).click();
     await expect(page.locator(".agent-detail h1")).toHaveText(
       "Streaming voice input",
     );
@@ -47,7 +54,9 @@ for (const width of [1440, 390])
     await expect(
       page.locator('.session-open[aria-current="true"]'),
     ).toHaveCount(1);
-    await expect(recent(page).first()).toHaveAttribute("aria-current", "true");
+    await expect(
+      recent(page).filter({ hasText: "Streaming voice input" }),
+    ).toHaveAttribute("aria-current", "true");
     await page.reload();
     await openSidebar(page);
     await expect(
@@ -58,7 +67,7 @@ for (const width of [1440, 390])
     await expect(page.getByRole("menu")).toHaveCount(0);
   });
 
-test("time expiry preserves detail and keyboard navigation, with an accessible close action", async ({
+test("time expiry preserves detail and keyboard navigation, with shortcut close", async ({
   page,
   request,
 }) => {
@@ -77,10 +86,8 @@ test("time expiry preserves detail and keyboard navigation, with an accessible c
   await page.keyboard.press("Escape");
   await page.keyboard.press("Alt+KeyJ");
   await expect(page.locator(".agent-detail h1")).toBeVisible();
-  const row = tree(page).filter({ hasText: "Earlier this week" }).locator("..");
-  await row
-    .getByRole("button", { name: "Close this tree: Earlier this week" })
-    .click();
+  await tree(page).filter({ hasText: "Earlier this week" }).click();
+  await page.keyboard.press("Alt+KeyX");
   await expect(tree(page).filter({ hasText: "Earlier this week" })).toHaveCount(
     0,
   );
@@ -134,6 +141,26 @@ test("new work appears immediately and remains visible while working", async ({
   ]);
 });
 
+test("recent activity keeps name order when an Orc starts work", async ({
+  page,
+  request,
+}) => {
+  await request.post(origin + "/fixture/reset", { data: { mode: "activity" } });
+  await page.goto(origin);
+  const titles = [
+    "Earlier today",
+    "Reader performance",
+    "Streaming voice input",
+  ];
+  await expect(recent(page).locator("strong")).toHaveText(titles);
+  await recent(page).filter({ hasText: "Reader performance" }).click();
+  const input = page.getByRole("textbox", { name: "Message Orc", exact: true });
+  await input.fill("Start work on this Orc");
+  await input.press("Enter");
+  await expect(page.locator(".detail-status")).toContainText("Working");
+  await expect(recent(page).locator("strong")).toHaveText(titles);
+});
+
 test("shortcuts traverse recent sessions once and respect the composer", async ({
   page,
   request,
@@ -146,13 +173,9 @@ test("shortcuts traverse recent sessions once and respect the composer", async (
     "Reader performance",
   );
   await page.keyboard.press("Control+Digit1");
-  await expect(page.locator(".agent-detail h1")).toHaveText(
-    "Streaming voice input",
-  );
+  await expect(page.locator(".agent-detail h1")).toHaveText("Earlier today");
   const input = page.getByRole("textbox", { name: "Message Orc", exact: true });
   await input.focus();
   await page.keyboard.press("Alt+KeyJ");
-  await expect(page.locator(".agent-detail h1")).toHaveText(
-    "Streaming voice input",
-  );
+  await expect(page.locator(".agent-detail h1")).toHaveText("Earlier today");
 });

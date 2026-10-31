@@ -8,7 +8,7 @@
   import ChoiceSelect from "./ChoiceSelect.svelte";
   import * as Sidebar from "$lib/components/ui/sidebar/index.js";
   import {environmentId} from "./project-identity";
-  import { ChevronDown, ChevronRight, Plus, Zap, MessageCircle, GitBranch, X } from "@lucide/svelte";
+  import { ChevronDown, ChevronRight, Plus, Zap, MessageCircle, GitBranch } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { onMount, tick, untrack, type Snippet } from "svelte";
   import { readPreference, writePreference } from "./connection";
@@ -202,7 +202,7 @@
     const working = (a: Agent) => a.state === "working" || a.state === "stopping";
     return working(root) || agents.some(a => a.ownerId === root.id && working(a)) ||
       (typeof root.lastActivityAt === "number" && root.lastActivityAt >= now - windows[activityWindow]);
-  }).sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0)));
+  }).sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id)));
   function treeEntries(root: Agent) { return [root, ...(root.role === "orc" && expanded.includes(root.id) ? agents.filter(a => a.ownerId === root.id) : [])]; }
   const recentVisible = $derived(recentRoots.flatMap(treeEntries));
   const navigationEntries = $derived.by(() => {
@@ -237,7 +237,6 @@
         <span class="session-meta">{#if agent.role === "orc"}{:else}<span>{agent.role === "reviewer" ? "Reviewer" : agent.role === "researcher" ? "Researcher" : m.worker()}</span>{/if}<span>{agent.backend === "pi" ? "Pi" : "Codex"} · {agent.project.alias}{#if environmentId(agent.project)!=="local"} · {agent.project.environment?.name}{/if}</span>{#if agent.directoryBranch}<span class="session-branch" title={agent.directoryBranch}><GitBranch aria-hidden="true" /><span>{agent.directoryBranch}</span></span>{/if}</span>
       </button>
       {#if agent.role === "orc" && children.length}<button class="session-members worker-disclosure" tabindex="-1" aria-label={children.some(w => w.role !== "worker") ? (expanded.includes(agent.id) ? "Collapse Workers, Reviewers and Researchers" : "Expand Workers, Reviewers and Researchers") : expanded.includes(agent.id) ? m.collapse_workers() : m.expand_workers()} title={(children.some(w => w.role !== "worker") ? `${children.filter(w => w.role === "worker").length} Workers · ${children.filter(w => w.role === "reviewer").length} Reviewers · ${children.filter(w => w.role === "researcher").length} Researchers` : m.current_workers({ count: children.length })) + " · " + m.working_count({ count: working })} aria-expanded={expanded.includes(agent.id)} onclick={() => { if(Date.now() >= suppressClickUntil) toggle(agent.id, shortcut); }}><span>{#if expanded.includes(agent.id)}<ChevronDown />{:else}<ChevronRight />{/if}{children.length}</span>{#if working > 0}<span class="working worker-working-count">{working}<i></i></span>{/if}</button>{/if}
-      {#if agent.role === "orc"}<Button class="session-close" variant="ghost" size="icon-sm" aria-label={`${m.close_tree()}: ${agent.title}`} title={m.close_tree()} disabled={!connected || host?.connected === false || closingId === agent.id} onclick={() => onclosetree(agent.id)}><X size={14} /></Button>{/if}
     </div>
     {#if closeError?.id === agent.id}<p class="tree-close-error" role="alert">{closeError.reason}</p>{/if}
     </div>

@@ -1982,15 +1982,6 @@ button.question-option {
 .recent-heading [data-slot="select-trigger"] {
   width: 76px;
 }
-.orc-item .session-open {
-  padding-right: 44px;
-}
-.session-close {
-  position: absolute;
-  right: 4px;
-  top: 4px;
-  color: var(--muted-foreground);
-}
 .session-open:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: -3px;

@@ -167,9 +167,16 @@ test("Close shortcut uses detail before navigation, blocks surfaces/IME and neve
   await request.post(`${origin}/fixture/reset`, { data: {} });
   await page.reload();
   await page.keyboard.press("Alt+h");
-  await page.getByRole("button", { name: orcName }).click();
+  await page
+    .locator('.session-open[data-location="tree"]')
+    .filter({ hasText: "Streaming voice input" })
+    .click();
   await page.getByRole("button", { name: "Expand Workers" }).first().click();
-  await page.getByRole("button", { name: "Open Voice input Worker" }).click();
+  await page
+    .locator('.session-open[data-location="tree"]')
+    .filter({ hasText: "Voice input" })
+    .last()
+    .click();
   let closes = 0;
   page.on("request", (r) => {
     if (r.url().endsWith("/close")) closes++;
@@ -181,7 +188,7 @@ test("Close shortcut uses detail before navigation, blocks surfaces/IME and neve
 test("mobile swipe only reveals, one row at a time; right/outside collapse and explicit Close preserves guards", async ({
   page,
   request,
-}) => {
+}, testInfo) => {
   await request.post(`${origin}/fixture/reset`, { data: { mode: "dense" } });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(origin);
@@ -191,12 +198,14 @@ test("mobile swipe only reveals, one row at a time; right/outside collapse and e
   await swipe(page, 300, box.y + 30, -150);
   await expect(first.locator(".tree-close-action")).toBeVisible();
   await expect(page.locator(".agent-detail")).toHaveCount(0);
-  await page.screenshot({ path: `${shots}/mobile-swipe.png` });
+  await page.screenshot({ path: testInfo.outputPath("mobile-swipe.png") });
   await first.locator(".tree-close-action").click();
   await expect(first.getByRole("alert")).toContainText(
     "is still working or has an unconfirmed delivery",
   );
-  await page.screenshot({ path: `${shots}/mobile-close-refused.png` });
+  await page.screenshot({
+    path: testInfo.outputPath("mobile-close-refused.png"),
+  });
   await swipe(page, 100, box.y + 30, 150);
   await expect(page.locator(".tree-close-action")).toHaveCount(0);
   await swipe(page, 300, box.y + 30, -150);
@@ -238,15 +247,21 @@ test("mobile swipe only reveals, one row at a time; right/outside collapse and e
   await swipe(page, 300, wb.y + 20, -150);
   await expect(page.locator(".tree-close-action")).toHaveCount(0);
   await request.post(`${origin}/fixture/reset`, {
-    data: { mode: "no-workers" },
+    data: { mode: "activity" },
   });
   await page.reload();
   await openSidebar(page);
-  const clean = (await first.boundingBox())!;
+  const cleanRow = page.locator(".org-group .session-row").filter({
+    has: page.getByRole("button", { name: "Open Earlier today Orc" }),
+  });
+  await cleanRow.scrollIntoViewIfNeeded();
+  const clean = (await cleanRow.boundingBox())!;
   await swipe(page, 300, clean.y + 30, -150);
-  await expect(first.locator(".tree-close-action")).toBeVisible();
-  await first.locator(".tree-close-action").click();
-  await expect(page.getByRole("button", { name: orcName })).toHaveCount(0);
+  await expect(cleanRow.locator(".tree-close-action")).toBeVisible();
+  await cleanRow.locator(".tree-close-action").click();
+  await expect(
+    page.getByRole("button", { name: "Open Earlier today Orc" }),
+  ).toHaveCount(0);
   await expect(page.getByText("Tree closed.", { exact: true })).toBeVisible();
 });
 
