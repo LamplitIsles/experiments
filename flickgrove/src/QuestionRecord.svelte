@@ -4,7 +4,7 @@
   import Questions from "./Questions.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import type { Question } from "./contracts";
-  let { peerOrAgent, params, connected, onpending }: { peerOrAgent: string; params: Record<string,string>; connected: boolean; onpending?: (item: string) => void } = $props();
+  let { peerOrAgent, previewAgentId = peerOrAgent, historyPreview = false, params, connected, onpending }: { peerOrAgent: string; previewAgentId?: string | null; historyPreview?: boolean; params: Record<string,string>; connected: boolean; onpending?: (item: string) => void } = $props();
   let questions = $state<Question[]>([]), loading = $state(true), error = $state(""), revision = $state(0);
   const key = $derived(JSON.stringify([peerOrAgent, params]));
   $effect(() => {
@@ -21,4 +21,4 @@
     return () => controller.abort();
   });
 </script>
-{#if loading}<p class="question-load" role="status">Loading questions…</p>{:else if error}<div class="question-load"><p class="inline-error" role="alert">{error}</p><Button tabindex={0} variant="secondary" size="sm" disabled={!connected} onclick={() => revision++}>Retry</Button></div>{:else}<Questions agentId={peerOrAgent} {questions} readonly />{/if}
+{#if loading}<p class="question-load" role="status">Loading questions…</p>{:else if error}<div class="question-load"><p class="inline-error" role="alert">{error}</p><Button tabindex={0} variant="secondary" size="sm" disabled={!connected} onclick={() => revision++}>Retry</Button></div>{:else}<Questions agentId={peerOrAgent} {previewAgentId} {historyPreview} {questions} readonly />{/if}

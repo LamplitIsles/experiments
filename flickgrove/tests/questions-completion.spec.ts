@@ -44,7 +44,9 @@ for (const width of [1440, 390])
     );
     await page.keyboard.press("Escape");
     await expect(dialog).not.toBeVisible();
-    await expect(panel(page).locator("h3")).toHaveText("foreground question 1");
+    await expect(panel(page).getByRole("heading", { level: 3 })).toHaveText(
+      "foreground question 1",
+    );
     await panel(page).locator("textarea").fill("frozen answer");
     await change(request, { sendMode: "held" });
     await panel(page).locator("textarea").press("Enter");
@@ -85,7 +87,9 @@ test("mobile New/Back and widening preserve questions and foreground hierarchy",
   await expect(field).toHaveValue("New draft");
   await expect(panel(page)).not.toBeVisible();
   await page.goBack();
-  await expect(panel(page).locator("h3")).toHaveText("deferred question 1");
+  await expect(panel(page).getByRole("heading", { level: 3 })).toHaveText(
+    "deferred question 1",
+  );
   await panel(page).locator("textarea").fill("question draft");
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect

@@ -419,6 +419,19 @@ pre {
 .code-block pre {
   padding-top: 48px;
 }
+.code-language {
+  position: absolute;
+  top: 6px;
+  left: 14px;
+  max-width: calc(100% - 64px);
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  line-height: 32px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .copy-button {
   color: var(--muted-foreground);
 }
@@ -1407,10 +1420,13 @@ pre {
   padding: 16px;
   overflow-wrap: anywhere;
 }
-.question-content h3 {
+.question-text {
   font-size: 15px;
   line-height: 1.6;
   margin-bottom: 14px;
+}
+.question-text .markdown {
+  line-height: inherit;
   white-space: pre-wrap;
 }
 .question-position {

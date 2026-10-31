@@ -54,7 +54,7 @@ test("original notification/detail updates/HTTP readiness loop", async ({
   gates[0]();
   const panel = page.locator(".question-panel");
   const visible = await panel
-    .locator("h3")
+    .getByRole("heading", { level: 3 })
     .waitFor({ state: "visible", timeout: 1200 })
     .then(
       () => true,
@@ -80,7 +80,9 @@ test("original notification/detail updates/HTTP readiness loop", async ({
       .getByRole("button", { name: "1 pending question", exact: true })
       .click();
   }
-  await expect(panel.locator("h3")).toHaveText("readiness question 1");
+  await expect(panel.getByRole("heading", { level: 3 })).toHaveText(
+    "readiness question 1",
+  );
   await expect(panel.locator("textarea")).toBeEditable();
   events.push({ event: "editableDOM", ms: Date.now() - started });
   console.log(

@@ -273,10 +273,18 @@ export function resumeFilePreview() {
   deferredPreview.target = undefined;
   openFilePreview(target.agent, target.href);
 }
-export function openFilePreview(agent: string, href: string) {
+export function openFilePreview(
+  agent: string,
+  href: string,
+  historyPreview = false,
+) {
+  const historyReady =
+    historyPreview && navigation.surfaces.at(-1) === "history-preview";
   if (
+    !historyReady &&
     navigation.surfaces.some((s) => s !== "questions" && s !== "file-preview")
   ) {
+    if (historyPreview) return;
     deferredPreview.target = {
       agent,
       href,

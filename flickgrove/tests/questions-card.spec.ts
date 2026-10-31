@@ -64,22 +64,30 @@ for (const width of [1440, 390]) {
       el.setSelectionRange(3, 8),
     );
     await question(request, "batch", 2);
-    await expect(panel(page).locator("h3")).toHaveText("batch question 1");
+    await expect(panel(page).getByRole("heading", { level: 3 })).toHaveText(
+      "batch question 1",
+    );
     await expect(composer(page)).not.toBeVisible();
     await panel(page).locator("textarea").fill("First answer");
     await panel(page).locator("textarea").dispatchEvent("compositionstart");
     await panel(page).locator("textarea").press("Enter");
-    await expect(panel(page).locator("h3")).toHaveText("batch question 1");
+    await expect(panel(page).getByRole("heading", { level: 3 })).toHaveText(
+      "batch question 1",
+    );
     await panel(page).locator("textarea").dispatchEvent("compositionend");
     await panel(page).locator("textarea").press("Enter");
-    await expect(panel(page).locator("h3")).toHaveText("batch question 2");
+    await expect(panel(page).getByRole("heading", { level: 3 })).toHaveText(
+      "batch question 2",
+    );
     await panel(page).locator("textarea").fill("Second answer");
     await panel(page).locator("textarea").press("Shift+Enter");
     await expect(panel(page).locator("textarea")).toHaveValue(
       "Second answer\n",
     );
     await question(request, "queued");
-    await expect(panel(page).locator("h3")).toHaveText("batch question 2");
+    await expect(panel(page).getByRole("heading", { level: 3 })).toHaveText(
+      "batch question 2",
+    );
     await panel(page)
       .getByRole("button", { name: "Collapse questions" })
       .click();
@@ -113,7 +121,9 @@ for (const width of [1440, 390]) {
     await panel(page)
       .getByRole("button", { name: "Send all answers", exact: true })
       .click();
-    await expect(panel(page).locator("h3")).toHaveText("queued question 1");
+    await expect(panel(page).getByRole("heading", { level: 3 })).toHaveText(
+      "queued question 1",
+    );
     expect((await inputs(request)).length).toBe(before + 1);
     const sent = (await inputs(request)).at(-1).text;
     expect(sent).toContain("batch question 1");
@@ -302,7 +312,9 @@ test("marked first recommendation is only a draft; Stop remains independent whil
   await panel(page)
     .getByRole("button", { name: "Stop Orc", exact: true })
     .click();
-  await expect(panel(page).locator("h3")).toHaveText("recommended question 1");
+  await expect(panel(page).getByRole("heading", { level: 3 })).toHaveText(
+    "recommended question 1",
+  );
   expect((await inputs(request)).length).toBe(before);
   // Stop is an execution action, not a question answer or cancellation.
   await change(request, { complete: "interrupted" });

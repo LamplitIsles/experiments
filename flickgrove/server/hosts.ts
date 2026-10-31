@@ -213,8 +213,14 @@ export class HostService {
       })),
     };
   }
-  historySession(alias: string, threadId: string) {
-    return this.workspace.historySession(alias, threadId);
+  async historySession(alias: string, threadId: string) {
+    const session = await this.workspace.historySession(alias, threadId);
+    return {
+      ...session,
+      agentId: session.agentId
+        ? qualify(this.identity.id, session.agentId)
+        : undefined,
+    };
   }
   async historyMessages(alias: string, threadId: string, cursor?: string) {
     return this.workspace.historyMessages(alias, threadId, cursor, (m) =>

@@ -750,11 +750,34 @@ const server = Bun.serve({
         questionRecommended?: boolean;
         laterSubmissions?: number;
         questionLong?: boolean;
+        externalQuestionHistory?: boolean;
         restartHub?: boolean;
         closedAgent?: string;
         append?: { agentId: string; text: string };
       };
       if (body.projectsDelay !== undefined) projectsDelay = body.projectsDelay;
+      if (body.externalQuestionHistory) {
+        const threadId = "external-question-history";
+        current.runtime.historySessions.set(threadId, {
+          threadId,
+          title: "External question history",
+          preview: "Fixture",
+          cwd: current.app.detail("orc").project.path,
+          role: "session",
+          archived: false,
+          source: "cli",
+          updatedAt: Date.now(),
+        });
+        current.runtime.historyItems.set(threadId, [
+          {
+            id: "external-question",
+            questionItemId: "external-question",
+            role: "assistant",
+            text: "External question",
+            at: Date.now(),
+          },
+        ]);
+      }
       if (body.projectsFailure !== undefined)
         projectsFailure = body.projectsFailure;
       if (body.detailDelay !== undefined) detailDelay = body.detailDelay;

@@ -197,14 +197,14 @@
         {#if questionError || batchError}<div class="question-load"><p class="inline-error" role="alert">{questionError || batchError}</p><Button tabindex={0} variant="secondary" size="sm" disabled={!connected} onclick={() => questionRevision++}>Retry</Button></div>{/if}
         {#if questionLoading && !shownQuestions.length}<p class="question-load" role="status">Loading questions…</p>{:else if !shownQuestions.length && !questionError}<p class="question-load" role="status">{!connected ? "Reconnect to load questions." : "No pending questions."}</p>{/if}
         {#if detail.role === "orc"}<Questions agentId={detail.id} questions={shownQuestions} deliveries={shownBatches} selectedItem={pendingItem} recovering={batchLoading || !!batchError} connected={ready && connected && detail.state !== "stopping"} {onanswer} {onretry} />
-        {:else}<div class="delegated-questions">{#each shownQuestions as q}<div><p>{q.text}</p><span>{m.delegated()}</span></div>{/each}</div>{/if}
+        {:else}<div class="delegated-questions">{#each shownQuestions as q}<div><Markdown text={q.text} agentId={detail.id} /><span>{m.delegated()}</span></div>{/each}</div>{/if}
       </div>
     </section>{/if}
     <div class:question-hidden={panelVisible}>
     {#if detail.role === "orc"}<Composer suspended={panelVisible} agentId={detail.id} project={detail.project.alias} centralSkills={!!detail.project.environment && detail.project.environment.id!=="local"} {skills} connected={connected && ready} working={detail.state === "working" && !!detail.turnId} stopping={detail.state === "stopping"} {onstop} {onsend} />{:else}<footer class="read-only"><p>{m.read_only()}</p>{#if owner}<button onclick={() => onopen(owner.id)}>{m.through_orc()}</button>{/if}</footer>{/if}
     </div>
   </div></div>{#if detail.role==="orc"}<MessageOutline agent={detail.id} revision={JSON.stringify([detail.readingRevision,detail.deliveries.map(d=>[d.id,d.status])])} {connected} bind:open={outlineOpen} current={currentAnchor} onselect={async operation=>timeline?.locate(operation)} oncancel={()=>timeline?.cancelNavigation()} onclose={()=>outlineTrigger?.focus({preventScroll:true})} />{/if}</div>
-  {#if navigation.preview}<div class:preview-hidden={navigation.surfaces.at(-1) !== "file-preview"}><FilePreview {connected} agent={navigation.preview.agent} href={navigation.preview.href} onclose={() => void back()} /></div>{/if}
+  {#if navigation.preview && !navigation.surfaces.includes("history-preview")}<div class:preview-hidden={navigation.surfaces.at(-1) !== "file-preview"}><FilePreview {connected} agent={navigation.preview.agent} href={navigation.preview.href} onclose={() => void back()} /></div>{/if}
 </aside>
 
 <style>

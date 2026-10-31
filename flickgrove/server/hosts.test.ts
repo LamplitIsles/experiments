@@ -125,6 +125,35 @@ test("Peer identity survives restart and owns only local state", async () => {
   ).toEqual({ id: f.service.identity.id });
   await expect(other.service.detail(first.id)).rejects.toThrow("another Peer");
 });
+test("single-session history qualifies known identities like the history list", async () => {
+  const { app, runtime, service } = fixture();
+  const agent = await app.createOrc("alpha", settings);
+  const knownThread = agent.threadId!;
+  const unknown = {
+    ...runtime.historySessions.get(knownThread)!,
+    threadId: "unknown-thread",
+  };
+  runtime.historySessions.set(unknown.threadId, unknown);
+
+  const list = (await service.history("alpha", "")).sessions;
+  for (const threadId of [knownThread, unknown.threadId]) {
+    const raw = await app.historySession("alpha", threadId);
+    const single = await service.historySession("alpha", threadId);
+    const listed = list.find((session) => session.threadId === threadId)!;
+    expect(single).toEqual({ ...raw, agentId: listed.agentId });
+    expect(single.agentId).toBe(
+      threadId === knownThread
+        ? qualify(service.identity.id, agent.id)
+        : undefined,
+    );
+  }
+  expect((await app.historySession("alpha", knownThread)).agentId).toBe(
+    agent.id,
+  );
+  await expect(service.historySession("beta", knownThread)).rejects.toThrow(
+    "does not belong",
+  );
+});
 test("captured Worker settings survive workspace restart without browser or global settings", async () => {
   const f = fixture();
   const agent = await f.app.createOrc("alpha", settings);

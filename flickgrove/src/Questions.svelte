@@ -3,11 +3,12 @@
   import { ChevronLeft, ChevronRight, Check } from "@lucide/svelte";
   import { Textarea } from "$lib/components/ui/textarea/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
+  import Markdown from "./Markdown.svelte";
   import { storagePrefix, readingCache } from "./api";
   import { tick, untrack } from "svelte";
   import type { Answer, Delivery, Question } from "./contracts";
   import * as m from "./paraglide/messages";
-  let { agentId, questions, deliveries = [], connected = false, recovering = false, readonly = false, selectedItem, onanswer, onretry }: { agentId: string; questions: Question[]; deliveries?: Delivery[]; connected?: boolean; recovering?: boolean; readonly?: boolean; selectedItem?: string; onanswer?: (answers: Answer[], operationId: string, text?: string) => Promise<void>; onretry?: (id: string) => Promise<void>; } = $props();
+  let { agentId, previewAgentId = agentId, historyPreview = false, questions, deliveries = [], connected = false, recovering = false, readonly = false, selectedItem, onanswer, onretry }: { agentId: string; previewAgentId?: string | null; historyPreview?: boolean; questions: Question[]; deliveries?: Delivery[]; connected?: boolean; recovering?: boolean; readonly?: boolean; selectedItem?: string; onanswer?: (answers: Answer[], operationId: string, text?: string) => Promise<void>; onretry?: (id: string) => Promise<void>; } = $props();
   const storageKey = untrack(() => `${storagePrefix}/questions/${agentId}`);
   type Draft = { selected: string; text: string };
   let drafts = $state<Record<string, Draft>>(untrack(() => {
@@ -72,13 +73,13 @@
 </script>
 <div class="questions-content" role="group" aria-label="Question navigation" bind:this={panel}>
   <div class="question-scroll">
-    {#if frozen}<section class="answer-batch" aria-label={m.answer_batch()} data-operation-id={frozen.id}><p class="batch-status" role="status">{submissionResult(frozen) === "pending" ? m.sending() : frozen.error ?? m.load_failure()}</p>{#each frozen.answers ?? [] as answer}<div class="answered-item"><p>{questions.find(q => q.id === answer.questionId)?.text}</p><span>{answer.answer}</span></div>{/each}{#if submissionResult(frozen) === "rejected"}<Button tabindex={0} variant="secondary" size="sm" disabled={!connected || submitting} onclick={async () => { submitting = true; try { await onretry?.(frozen.id); } finally { submitting = false; } }}>{m.retry()}</Button>{/if}</section>
+    {#if frozen}<section class="answer-batch" aria-label={m.answer_batch()} data-operation-id={frozen.id}><p class="batch-status" role="status">{submissionResult(frozen) === "pending" ? m.sending() : frozen.error ?? m.load_failure()}</p>{#each frozen.answers ?? [] as answer}<div class="answered-item"><Markdown text={questions.find(q => q.id === answer.questionId)?.text ?? ""} agentId={previewAgentId ?? undefined} {historyPreview} /><span>{answer.answer}</span></div>{/each}{#if submissionResult(frozen) === "rejected"}<Button tabindex={0} variant="secondary" size="sm" disabled={!connected || submitting} onclick={async () => { submitting = true; try { await onretry?.(frozen.id); } finally { submitting = false; } }}>{m.retry()}</Button>{/if}</section>
     {:else if current}
       {@const q = current}
       {@const d = draft(q)}
       <section class="question-card" data-question-id={q.id}>
         <div class="question-content">
-          {#if q.title !== "Question"}<p class="question-position">{q.title}</p>{/if}<h3>{q.text}</h3>
+          {#if q.title !== "Question"}<p class="question-position">{q.title}</p>{/if}<div class="question-text" role="heading" aria-level="3"><Markdown text={q.text} agentId={previewAgentId ?? undefined} {historyPreview} /></div>
           <div class="question-options" role="group" aria-label={q.text}>
             {#each q.options as option, i}
               {#if readonly}<div class="question-option" class:chosen={q.answer === option.label}><span class="option-number">{i+1}</span><span>{option.label}{#if option.description}<small>{option.description}</small>{/if}</span>{#if q.answer === option.label}<Check size={16} />{/if}</div>

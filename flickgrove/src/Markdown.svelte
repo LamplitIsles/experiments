@@ -11,10 +11,11 @@
   import { codeHighlighter } from "./code-highlighter";
   import { localFile } from "./local-file";
   import MarkdownLink from "./MarkdownLink.svelte";
-  let { text, agentId }: { text: string; agentId?: string } = $props();
+  let { text, agentId, historyPreview = false }: { text: string; agentId?: string; historyPreview?: boolean } = $props();
   setContext("file-preview-agent", () => agentId);
+  setContext("file-preview-history", () => historyPreview);
   setContext(HIGHLIGHT_CONTEXT_KEY, codeHighlighter);
-  const sanitizeUrl: SanitizeUrlFn = (url, context) => agentId && context.type === "link" && localFile(url) ? url : defaultSanitizeUrl(url, context);
+  const sanitizeUrl: SanitizeUrlFn = (url, context) => (agentId || historyPreview) && context.type === "link" && localFile(url) ? url : defaultSanitizeUrl(url, context);
   const extensions = [chatMathExtension(), markedMermaid()];
   const renderers = { ...defaultRenderers, link: MarkdownLink, html: buildUnsupportedHTML(), inlineKatex: MathFormula, blockKatex: MathFormula, mermaid: MermaidDiagram, code: CopyableCode };
 </script>
